@@ -36,16 +36,35 @@ export function renderEmpire() {
         el.innerHTML = '<p style="color:rgba(255,255,255,0.3);text-align:center;padding:40px 0;">Inga företag ännu! Gå till Butik och köp. 🛒</p>';
         return;
     }
-    el.innerHTML = p.owned.map(id => {
+    el.innerHTML = `<!-- Stash Section -->
+        <div class="stash-section">
+            <div class="stash-info">
+                <span class="stash-icon">🏦</span>
+                <div>
+                    <div class="stash-label">Stash (gömda pengar)</div>
+                    <div class="stash-amount">${formatNum(p.stash || 0)} 💰</div>
+                </div>
+            </div>
+            <div class="stash-actions">
+                <button class="btn-stash" onclick="window.game.showStashModal('deposit')" ${p.money > 0 ? '' : 'disabled'}>📥 Stasha</button>
+                <button class="btn-stash withdraw" onclick="window.game.showStashModal('withdraw')" ${(p.stash || 0) > 0 ? '' : 'disabled'}>📤 Ta ut</button>
+            </div>
+        </div>
+        <p style="font-size:10px;color:rgba(255,255,255,0.2);margin-bottom:16px;">⚠️ Polisen kan göra razzia — allt du INTE stashat försvinner!</p>
+    ` + p.owned.map(id => {
         const biz = SHOPS.find(s => s.id === id);
         const lv = p.levels[id] || 1;
-        const income = calcIncome(biz, lv);
+        const income = calcIncome(biz, lv, p);
         const upgCost = Math.floor(biz.price * lv * 0.6);
         const afford = p.money >= upgCost;
+        const sellPrice = Math.floor(biz.price * 0.5 * lv);
         return `<div class="biz-card">
             <div class="biz-icon">${biz.icon}</div>
             <div class="biz-info"><h4>${biz.name}</h4><p>Lvl ${lv} · ${formatNum(income)} 💰/runda</p></div>
-            <button class="btn-upgrade" onclick="window.game.upgradeBiz('${id}')" ${afford ? '' : 'disabled'}>⬆️ ${formatNum(upgCost)}</button>
+            <div class="biz-buttons">
+                <button class="btn-upgrade" onclick="window.game.upgradeBiz('${id}')" ${afford ? '' : 'disabled'}>⬆️ ${formatNum(upgCost)}</button>
+                <button class="btn-sell" onclick="window.game.sellBiz('${id}')">💸 Sälj ${formatNum(sellPrice)}</button>
+            </div>
         </div>`;
     }).join('');
 }
@@ -57,8 +76,151 @@ export function upgradeBiz(id) {
     const cost = Math.floor(biz.price * lv * 0.6);
     if (p.money < cost) return;
     p.money -= cost; p.levels[id] = lv + 1;
+    p.totalSpent = (p.totalSpent || 0) + cost;
     playSound('coin'); updateHUD(); renderEmpire();
     showToast(`⬆️ ${biz.name} → Lvl ${lv + 1}!`);
+    if (gameState.isOnline) syncState();
+}
+
+// ── Sell Business ──
+export function sellBiz(id) {
+    const p = currentPlayer();
+    const biz = SHOPS.find(s => s.id === id);
+    if (!biz || !p.owned.includes(id)) return;
+    const lv = p.levels[id] || 1;
+    const sellPrice = Math.floor(biz.price * 0.5 * lv);
+
+    // Confirm via overlay
+    const overlay = document.getElementById('overlay-event');
+    if (!overlay) return;
+    overlay.style.display = 'flex';
+    overlay.innerHTML = `<div class="overlay-box">
+        <div style="font-size:48px;margin-bottom:12px;">${biz.icon}</div>
+        <h3 style="font-family:'Outfit';font-weight:900;">Sälj ${biz.name}?</h3>
+        <p style="color:rgba(255,255,255,0.4);margin:8px 0;">Lvl ${lv} · Du får 50% tillbaka</p>
+        <div style="font-size:24px;color:var(--gold);font-family:'Outfit';font-weight:900;margin:12px 0;">+${formatNum(sellPrice)} 💰</div>
+        <div style="display:flex;gap:10px;justify-content:center;">
+            <button class="btn-buy" onclick="window.game.confirmSellBiz('${id}')" style="background:var(--danger);">💸 Sälj!</button>
+            <button class="btn-guest" onclick="document.getElementById('overlay-event').style.display='none'">Avbryt</button>
+        </div>
+    </div>`;
+}
+
+export function confirmSellBiz(id) {
+    const p = currentPlayer();
+    const biz = SHOPS.find(s => s.id === id);
+    if (!biz || !p.owned.includes(id)) return;
+    const lv = p.levels[id] || 1;
+    const sellPrice = Math.floor(biz.price * 0.5 * lv);
+
+    p.money += sellPrice;
+    p.totalEarned = (p.totalEarned || 0) + sellPrice;
+    p.owned = p.owned.filter(x => x !== id);
+    delete p.levels[id];
+
+    document.getElementById('overlay-event').style.display = 'none';
+    playSound('coin');
+    showToast(`💸 Sålde ${biz.name} för ${formatNum(sellPrice)} 💰!`);
+    spawnParticles([biz.icon, '💸', '💰'], 8);
+    updateHUD(); renderEmpire(); renderShop();
+    if (gameState.isOnline) syncState();
+}
+
+// ── Stash System ──
+export function showStashModal(mode) {
+    const p = currentPlayer();
+    const overlay = document.getElementById('overlay-event');
+    if (!overlay) return;
+
+    const max = mode === 'deposit' ? p.money : (p.stash || 0);
+    const title = mode === 'deposit' ? '📥 Stasha pengar' : '📤 Ta ut pengar';
+    const desc = mode === 'deposit'
+        ? 'Göm pengar från polisen. Stashade pengar ger ingen inkomst men överlever razzior!'
+        : 'Ta ut pengar från din stash till fickan.';
+
+    overlay.style.display = 'flex';
+    overlay.innerHTML = `<div class="overlay-box">
+        <div style="font-size:48px;margin-bottom:8px;">🏦</div>
+        <h3 style="font-family:'Outfit';font-weight:900;">${title}</h3>
+        <p style="color:rgba(255,255,255,0.4);font-size:12px;margin:8px 0;">${desc}</p>
+        <div style="margin:16px 0;">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+                <span style="font-size:12px;color:rgba(255,255,255,0.4);">💰 ${mode === 'deposit' ? 'Ficka' : 'Stash'}: ${formatNum(max)}</span>
+            </div>
+            <input type="range" id="stash-slider" min="0" max="${max}" value="${Math.floor(max / 2)}" style="width:100%;accent-color:var(--gold);" oninput="document.getElementById('stash-val').textContent=parseInt(this.value).toLocaleString('sv-SE')">
+            <div style="font-size:24px;color:var(--gold);font-family:'Outfit';font-weight:900;margin-top:8px;"><span id="stash-val">${Math.floor(max / 2).toLocaleString('sv-SE')}</span> 💰</div>
+        </div>
+        <div style="display:flex;gap:10px;justify-content:center;">
+            <button class="btn-buy" onclick="window.game.doStash('${mode}')">${mode === 'deposit' ? '📥 Stasha' : '📤 Ta ut'}</button>
+            <button class="btn-guest" onclick="document.getElementById('overlay-event').style.display='none'">Avbryt</button>
+        </div>
+    </div>`;
+}
+
+export function doStash(mode) {
+    const p = currentPlayer();
+    const slider = document.getElementById('stash-slider');
+    const amount = parseInt(slider?.value || 0);
+    if (amount <= 0) return;
+
+    if (mode === 'deposit') {
+        if (amount > p.money) return;
+        p.money -= amount;
+        p.stash = (p.stash || 0) + amount;
+        showToast(`📥 Stashade ${formatNum(amount)} 💰`);
+    } else {
+        if (amount > (p.stash || 0)) return;
+        p.stash -= amount;
+        p.money += amount;
+        showToast(`📤 Tog ut ${formatNum(amount)} 💰 från stash`);
+    }
+
+    document.getElementById('overlay-event').style.display = 'none';
+    playSound('coin');
+    updateHUD(); renderEmpire();
+    if (gameState.isOnline) syncState();
+}
+
+// ── Police Raid (Razzia) ──
+export function policeRaid() {
+    const p = currentPlayer();
+    const lostMoney = p.money;
+    const lostRep = Math.floor(p.rep * 0.5);
+    const lostBiz = [...p.owned];
+    const savedStash = p.stash || 0;
+
+    // Wipe everything except stash
+    p.money = 0;
+    p.rep = Math.max(0, p.rep - lostRep);
+    p.owned = [];
+    p.levels = {};
+    p.inJail = true;
+    p.jailRoundsLeft = 3;
+    p.jailReason = '🚨 RAZZIA — Polisen tog allt!';
+    p.jailRecord.push({ deal: '🚨 RAZZIA', round: gameState.round });
+
+    // Show dramatic overlay
+    const overlay = document.getElementById('overlay-event');
+    if (overlay) {
+        overlay.style.display = 'flex';
+        overlay.innerHTML = `<div class="overlay-box razzia-box">
+            <div style="font-size:80px;margin-bottom:12px;">🚨</div>
+            <h2 style="font-family:'Outfit';font-weight:900;font-size:28px;color:var(--danger);margin-bottom:8px;">RAZZIA!</h2>
+            <p style="color:rgba(255,255,255,0.5);margin-bottom:16px;">Polisen slog till! Allt du inte stashat är borta...</p>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;text-align:left;margin-bottom:16px;">
+                <div class="razzia-stat"><span style="color:var(--danger);">💰 Förlorade</span><strong>-${formatNum(lostMoney)}</strong></div>
+                <div class="razzia-stat"><span style="color:var(--danger);">⭐ Rykte</span><strong>-${lostRep}</strong></div>
+                <div class="razzia-stat"><span style="color:var(--danger);">🏢 Företag</span><strong>-${lostBiz.length} st</strong></div>
+                <div class="razzia-stat"><span style="color:var(--mehmet);">🏦 Stash (säkrat)</span><strong>${formatNum(savedStash)}</strong></div>
+            </div>
+            ${savedStash > 0 ? '<p style="color:var(--mehmet);font-weight:700;">🏦 Din stash överlevde! Kloka drag.</p>' : '<p style="color:var(--danger);font-weight:700;">Du hade inget stashat... allt borta.</p>'}
+            <button class="btn-guest" onclick="document.getElementById('overlay-event').style.display='none'" style="margin-top:16px;">😭 OK...</button>
+        </div>`;
+    }
+
+    playSound('jail');
+    spawnParticles(['🚨', '👮', '🚔', '💀'], 20);
+    updateHUD(); renderEmpire(); renderShop();
     if (gameState.isOnline) syncState();
 }
 
@@ -150,12 +312,21 @@ export function rollDice() {
     const roll = Math.floor(Math.random() * 6) + 1;
     const ev = EVENTS[Math.floor(Math.random() * EVENTS.length)];
     playSound('dice');
+
+    // Razzia — special handling
+    if (ev.type === 'razzia') {
+        const el = document.getElementById('dice-result');
+        if (el) el.innerHTML = `<div style="font-size:42px;margin-bottom:10px;">🎲 ${roll}</div><h4>${ev.title}</h4><p>${ev.desc}</p>`;
+        policeRaid();
+        return;
+    }
+
     let amt = Math.floor(ev.minAmt + Math.random() * (ev.maxAmt - ev.minAmt));
     if (p.char?.ability === 'event_boost' && (ev.type === 'gain' || ev.type === 'rep')) amt = Math.floor(amt * (1 + p.char.abilityVal));
     if (p.char?.ability === 'save_money' && ev.type === 'loss') amt = Math.floor(amt * (1 - p.char.abilityVal));
     let desc = '';
     switch (ev.type) {
-        case 'gain': p.money += amt; desc = `+${formatNum(amt)} 💰`; break;
+        case 'gain': p.money += amt; p.totalEarned = (p.totalEarned || 0) + amt; desc = `+${formatNum(amt)} 💰`; break;
         case 'loss': p.money = Math.max(0, p.money - amt); desc = `-${formatNum(amt)} 💰`; break;
         case 'rep': p.rep += amt; desc = `+${amt} ⭐`; break;
         case 'rep_loss': p.rep = Math.max(0, p.rep - amt); desc = `-${amt} ⭐`; break;

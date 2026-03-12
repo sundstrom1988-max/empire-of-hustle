@@ -21,6 +21,7 @@ export function createPlayerState(charKey) {
     return {
         charKey, char: charKey ? CHARACTERS[charKey] : null,
         money: 1000, rep: 0, owned: [], levels: {}, cars: [], carPimps: {},
+        stash: 0,
         inJail: false, jailRoundsLeft: 0, jailReason: '', jailRecord: [],
         dealsThisRound: 0, rollsThisRound: 0, pitchesThisRound: 0,
         isAI: false, peerId: null,

@@ -7,7 +7,7 @@ import './styles/components.css';
 
 import { CHARACTERS, SHOPS, STREET_CRED } from './data/gameData.js';
 import { gameState, createPlayerState, currentPlayer, formatNum, saveGame, loadGame } from './game/state.js';
-import { updateHUD, switchTab, renderEmpire, renderShop, upgradeBiz, buyShop, doPitch, rollDice, endTurn, updateTurnBar, calcIncome } from './game/core.js';
+import { renderEmpire, renderShop, buyShop, upgradeBiz, sellBiz, confirmSellBiz, showStashModal, doStash, policeRaid, doPitch, rollDice, endTurn, updateHUD, updateTurnBar, switchTab, calcIncome } from './game/core.js';
 import { renderMarket, doMarketDeal, renderJail, payBail, addRoastWelcome, sendRoastChat, initCBDLeaves } from './features/features.js';
 import { initMinigames, playDiceBattle, playGuessNumber, playSlotMachine, playCoinFlip } from './features/minigames.js';
 import { showPhoneToggle, togglePhone, phoneOpenSMS, phoneOpenChat, sendPhoneSMS, phoneOpenDeals, doPhoneDeal, phoneOpenCars, buyCar, phoneOpenWallet, phoneOpenStatus, renderDashboard } from './features/phone.js';
@@ -66,6 +66,13 @@ function renderApp() {
             <button class="mode-btn" id="mode-multi3" onclick="window.setMode('multi3')">👥 3 Spelare</button>
             <button class="mode-btn" id="mode-ai" onclick="window.setMode('ai')">🤖 vs AI</button>
             ${isFirebaseConfigured() ? '<button class="mode-btn" id="mode-online" onclick="window.setMode(\'online\')">🌐 Online</button>' : ''}
+        </div>
+        <div class="join-section" id="join-section">
+            <p style="font-size:12px;color:rgba(255,255,255,0.4);margin-bottom:8px;">🌐 Har du en rumskod? Gå med i en kompis lobby!</p>
+            <div style="display:flex;gap:8px;align-items:center;justify-content:center;">
+                <input type="text" id="join-code-input" placeholder="Skriv rumskod..." style="padding:10px 16px;border-radius:10px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);color:white;font-family:'Outfit';font-weight:700;font-size:14px;text-transform:uppercase;width:160px;text-align:center;" maxlength="10">
+                <button class="mode-btn" onclick="window.joinOnlineRoom(document.getElementById('join-code-input').value)" style="background:linear-gradient(135deg,#22c55e,#16a34a);border:none;color:white;">🌐 GÅ MED</button>
+            </div>
         </div>
         <button class="btn-start" id="btn-start">⚡ STARTA</button>
     </div>

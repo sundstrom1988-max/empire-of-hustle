@@ -365,6 +365,140 @@ button:active {
     cursor: not-allowed;
 }
 
+.biz-buttons {
+    display: flex;
+    gap: 6px;
+    flex-shrink: 0;
+}
+
+.btn-sell {
+    padding: 8px 12px;
+    border-radius: 10px;
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    background: rgba(239, 68, 68, 0.08);
+    color: #ef4444;
+    font-weight: 700;
+    font-size: 11px;
+    cursor: pointer;
+    transition: all .2s;
+}
+
+.btn-sell:hover {
+    background: rgba(239, 68, 68, 0.2);
+    border-color: #ef4444;
+}
+
+/* ── Stash ── */
+.stash-section {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 18px;
+    border-radius: 14px;
+    background: rgba(34, 197, 94, 0.04);
+    border: 1px solid rgba(34, 197, 94, 0.12);
+    margin-bottom: 8px;
+    gap: 12px;
+}
+
+.stash-info {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.stash-icon {
+    font-size: 28px;
+}
+
+.stash-label {
+    font-family: 'Outfit';
+    font-weight: 700;
+    font-size: 12px;
+    color: rgba(255, 255, 255, 0.4);
+}
+
+.stash-amount {
+    font-family: 'Outfit';
+    font-weight: 900;
+    font-size: 18px;
+    color: var(--mehmet);
+}
+
+.stash-actions {
+    display: flex;
+    gap: 8px;
+}
+
+.btn-stash {
+    padding: 8px 14px;
+    border-radius: 10px;
+    border: 1px solid rgba(34, 197, 94, 0.3);
+    background: rgba(34, 197, 94, 0.1);
+    color: #22c55e;
+    font-family: 'Outfit';
+    font-weight: 700;
+    font-size: 12px;
+    cursor: pointer;
+    transition: all .2s;
+}
+
+.btn-stash:hover:not(:disabled) {
+    background: rgba(34, 197, 94, 0.2);
+}
+
+.btn-stash.withdraw {
+    border-color: rgba(251, 191, 36, 0.3);
+    background: rgba(251, 191, 36, 0.1);
+    color: var(--gold);
+}
+
+.btn-stash.withdraw:hover:not(:disabled) {
+    background: rgba(251, 191, 36, 0.2);
+}
+
+.btn-stash:disabled {
+    opacity: .3;
+    cursor: not-allowed;
+}
+
+/* ── Razzia ── */
+.razzia-box {
+    border-color: rgba(239, 68, 68, 0.3) !important;
+    animation: razziaFlash 0.3s 3;
+}
+
+@keyframes razziaFlash {
+
+    0%,
+    100% {
+        box-shadow: 0 0 20px rgba(239, 68, 68, 0.2);
+    }
+
+    50% {
+        box-shadow: 0 0 60px rgba(239, 68, 68, 0.5);
+    }
+}
+
+.razzia-stat {
+    padding: 10px 12px;
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.razzia-stat span {
+    display: block;
+    font-size: 11px;
+    margin-bottom: 4px;
+}
+
+.razzia-stat strong {
+    font-family: 'Outfit';
+    font-weight: 900;
+    font-size: 16px;
+}
+
 /* ── Shop ── */
 .shop-grid {
     display: grid;

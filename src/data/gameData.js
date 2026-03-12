@@ -31,7 +31,8 @@ export const EVENTS = [
     { title: '🧙 Gargamels Förbannelse', desc: 'Mörk magi kostar pengar', minAmt: 400, maxAmt: 1800, type: 'loss' },
     { title: '🥙 Mehmets Vitsås-Deal', desc: 'Mehmet bjuder på en lukrativ deal', minAmt: 600, maxAmt: 2500, type: 'gain' },
     { title: '💎 Mystisk Skatt!', desc: 'Du hittade en gömd skatt!', minAmt: 2000, maxAmt: 8000, type: 'gain' },
-    { title: '😤 Troll på nätet!', desc: 'Ditt rykte tar en smäll', minAmt: 1, maxAmt: 5, type: 'rep_loss' }
+    { title: '😤 Troll på nätet!', desc: 'Ditt rykte tar en smäll', minAmt: 1, maxAmt: 5, type: 'rep_loss' },
+    { title: '🚨 RAZZIA!', desc: 'Polisen slår till! Allt du inte stashat försvinner!', minAmt: 0, maxAmt: 0, type: 'razzia' }
 ];
 
 export const BLACK_MARKET_DEALS = [
