@@ -59,12 +59,54 @@ export const PITCH_FAIL = [
 ];
 
 export const CARS = [
-    { id: 'cykel', emoji: '🚲', name: 'Cykel', price: 300, boost: 'Gratis transport', boostType: 'none' },
-    { id: 'moped', emoji: '🛵', name: 'Moped EPA', price: 1500, boost: '+5% inkomst', boostType: 'income', val: 0.05 },
-    { id: 'bmw', emoji: '🚗', name: 'BMW E46', price: 5000, boost: '+10% inkomst', boostType: 'income', val: 0.10 },
-    { id: 'mercedes', emoji: '🚙', name: 'Mercedes AMG', price: 15000, boost: '+15% inkomst', boostType: 'income', val: 0.15 },
-    { id: 'lambo', emoji: '🏎️', name: 'Lamborghini', price: 50000, boost: '+20% inkomst', boostType: 'income', val: 0.20 },
-    { id: 'rolls', emoji: '🚘', name: 'Rolls Royce', price: 100000, boost: '+25% inkomst + VIP', boostType: 'income', val: 0.25 }
+    {
+        id: 'cykel', emoji: '🚲', name: 'Cykel', price: 300, boost: 'Gratis transport', boostType: 'none', val: 0, img: 'cars/cykel.png',
+        pimps: [
+            { name: 'Färgglad', cost: 100, bonus: 0.02, desc: 'Custom färg & reflexer' },
+            { name: 'Racing', cost: 300, bonus: 0.03, desc: 'Racing-styre & slicks' },
+            { name: 'Gold Edition', cost: 800, bonus: 0.05, desc: 'Guldkedja & spinners' }
+        ]
+    },
+    {
+        id: 'moped', emoji: '🛵', name: 'Moped EPA', price: 1500, boost: '+5% inkomst', boostType: 'income', val: 0.05, img: 'cars/moped.png',
+        pimps: [
+            { name: 'Custom Lack', cost: 500, bonus: 0.02, desc: 'Metallic-lack & stripes' },
+            { name: 'Turbo Kit', cost: 1500, bonus: 0.04, desc: 'Uppgraderad motor & avgassystem' },
+            { name: 'Chrome Beast', cost: 3000, bonus: 0.06, desc: 'Full krom, LED & subwoofer' }
+        ]
+    },
+    {
+        id: 'bmw', emoji: '🚗', name: 'BMW E46', price: 5000, boost: '+10% inkomst', boostType: 'income', val: 0.10, img: 'cars/bmw.png',
+        pimps: [
+            { name: 'M-Sport', cost: 2000, bonus: 0.03, desc: 'M-paket, sänkt, sportavgas' },
+            { name: 'Drift King', cost: 5000, bonus: 0.05, desc: 'Roll cage, bucket seats, NOS' },
+            { name: 'Stanced', cost: 10000, bonus: 0.08, desc: 'Air ride, widebody, forged rims' }
+        ]
+    },
+    {
+        id: 'mercedes', emoji: '🚙', name: 'Mercedes AMG', price: 15000, boost: '+15% inkomst', boostType: 'income', val: 0.15, img: 'cars/mercedes.png',
+        pimps: [
+            { name: 'Black Series', cost: 5000, bonus: 0.04, desc: 'Matt svart, carbon fiber' },
+            { name: 'AMG Stage 2', cost: 12000, bonus: 0.06, desc: 'ECU-tune, downpipe, intercooler' },
+            { name: 'Brabus 800', cost: 25000, bonus: 0.10, desc: 'Full Brabus-kit, 800hk monster' }
+        ]
+    },
+    {
+        id: 'lambo', emoji: '🏎️', name: 'Lamborghini', price: 50000, boost: '+20% inkomst', boostType: 'income', val: 0.20, img: 'cars/lambo.png',
+        pimps: [
+            { name: 'Neon Wrap', cost: 15000, bonus: 0.05, desc: 'Färg-shift wrap & underglow' },
+            { name: 'SVJ Upgrade', cost: 30000, bonus: 0.08, desc: 'Aero-kit, titanium avgassystem' },
+            { name: 'Liberty Walk', cost: 60000, bonus: 0.12, desc: 'Full Liberty Walk widebody, guld-detaljer' }
+        ]
+    },
+    {
+        id: 'rolls', emoji: '🚘', name: 'Rolls Royce', price: 100000, boost: '+25% inkomst + VIP', boostType: 'income', val: 0.25, img: 'cars/rolls.png',
+        pimps: [
+            { name: 'Starlight', cost: 25000, bonus: 0.06, desc: 'Starlight-tak & champagne-kylare' },
+            { name: 'Mansory', cost: 50000, bonus: 0.10, desc: 'Full Mansory-kit, diamant-interiör' },
+            { name: 'Billionaire', cost: 100000, bonus: 0.15, desc: 'Guld-pläterad, diamanter, ultimate flex' }
+        ]
+    }
 ];
 
 export const SOUNDS = {

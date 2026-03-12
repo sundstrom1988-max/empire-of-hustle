@@ -20,10 +20,15 @@ export const gameState = {
 export function createPlayerState(charKey) {
     return {
         charKey, char: charKey ? CHARACTERS[charKey] : null,
-        money: 1000, rep: 0, owned: [], levels: {}, cars: [],
+        money: 1000, rep: 0, owned: [], levels: {}, cars: [], carPimps: {},
         inJail: false, jailRoundsLeft: 0, jailReason: '', jailRecord: [],
         dealsThisRound: 0, rollsThisRound: 0, pitchesThisRound: 0,
-        isAI: false, peerId: null
+        isAI: false, peerId: null,
+        // Dashboard stats
+        moneyHistory: [1000], totalEarned: 0, totalSpent: 0,
+        successfulDeals: 0, failedDeals: 0,
+        // Gargamel heist
+        heistCooldown: 0, pendingEvidence: [], sabotagedRounds: 0
     };
 }
 

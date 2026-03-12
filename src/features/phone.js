@@ -163,22 +163,214 @@ export function phoneOpenStatus() {
 // Dashboard
 export function renderDashboard() {
     const grid = document.getElementById('dash-grid'); if (!grid) return;
+    const p = currentPlayer();
     const sorted = [...gameState.players].sort((a, b) => b.money - a.money);
-    const maxMoney = Math.max(...gameState.players.map(p => p.money), 1);
-    const ranks = ['🥇', '🥈', '🥉', '4️⃣'];
-    grid.innerHTML = sorted.map((p, i) => {
-        const isYou = gameState.players.indexOf(p) === gameState.currentPlayerIdx;
-        let totalIncome = 0;
-        p.owned.forEach(id => { const biz = SHOPS.find(s => s.id === id); if (biz) totalIncome += biz.income * (p.levels[id] || 1); });
-        return `<div class="dash-card ${isYou ? 'you' : ''}"><div class="dash-rank">${ranks[i] || ''}</div>
-            <div class="dash-header"><div class="dash-avatar" style="border-color:${p.char.color};background:${p.char.color}22;">${p.char.icon}</div>
-            <div class="dash-name" style="color:${p.char.color}">${p.char.name}</div>
-            ${p.isAI ? '<div class="dash-tag ai-tag">🤖 AI</div>' : ''}${isYou ? '<div class="dash-tag" style="background:rgba(34,197,94,0.15);color:var(--mehmet);">DU</div>' : ''}</div>
-            <div class="dash-stats"><div class="dash-stat"><label>Pengar</label><div class="val gold">${formatNum(p.money)}</div></div>
-            <div class="dash-stat"><label>Rykte</label><div class="val pink">⭐ ${p.rep}</div></div>
-            <div class="dash-stat"><label>Företag</label><div class="val">${p.owned.length}</div></div>
-            <div class="dash-stat"><label>Gärri</label><div class="val">${(p.cars || []).length}</div></div></div>
-            <div class="dash-bar"><div class="dash-bar-fill" style="width:${Math.round(p.money / maxMoney * 100)}%;background:${p.char.color};"></div></div>
-        </div>`;
-    }).join('');
+    const myRank = sorted.findIndex(pl => pl === p) + 1;
+    const ranks = ['🥇', '🥈', '🥉', '4️⃣', '5️⃣', '6️⃣'];
+
+    // Calculate total income
+    let totalIncome = 0;
+    p.owned.forEach(id => {
+        const biz = SHOPS.find(s => s.id === id);
+        if (biz) totalIncome += biz.income * (p.levels[id] || 1);
+    });
+
+    // Sabotage warning
+    const sabotaged = p.sabotagedRounds > 0;
+
+    // Next affordable shop
+    const nextShop = SHOPS.filter(s => !p.owned.includes(s.id) && p.money >= s.price).sort((a, b) => a.price - b.price)[0];
+    const almostShop = !nextShop ? SHOPS.filter(s => !p.owned.includes(s.id)).sort((a, b) => a.price - b.price)[0] : null;
+
+    grid.innerHTML = `
+        <!-- OVERVIEW -->
+        <div class="dash-card dash-overview" style="grid-column: 1 / -1;">
+            <div class="dash-rank">${ranks[myRank - 1] || '🏅'}</div>
+            <div class="dash-header">
+                <div class="dash-avatar" style="border-color:${p.char.color};background:${p.char.color}22;">${p.char.icon}</div>
+                <div>
+                    <div class="dash-name" style="color:${p.char.color}">${p.char.name}</div>
+                    <div style="font-size:11px;color:rgba(255,255,255,0.4);">Plats ${myRank} av ${gameState.players.length} · Runda ${gameState.round}</div>
+                </div>
+            </div>
+            <div class="dash-stats" style="grid-template-columns: repeat(4, 1fr);">
+                <div class="dash-stat"><label>Pengar</label><div class="val gold">${formatNum(p.money)}</div></div>
+                <div class="dash-stat"><label>Rykte</label><div class="val pink">⭐ ${p.rep}</div></div>
+                <div class="dash-stat"><label>Inkomst/runda</label><div class="val" style="color:var(--mehmet);">${sabotaged ? '⚠️ ' : ''}${formatNum(totalIncome)}${sabotaged ? ' (saboterad!)' : ''}</div></div>
+                <div class="dash-stat"><label>Häktningar</label><div class="val" style="color:var(--danger);">${p.jailRecord.length}</div></div>
+            </div>
+        </div>
+
+        <!-- MONEY GRAPH -->
+        <div class="dash-card" style="grid-column: 1 / -1;">
+            <h4 class="dash-section-title">📈 Pengakurva</h4>
+            <canvas id="money-graph" width="800" height="200" style="width:100%;height:180px;border-radius:10px;"></canvas>
+        </div>
+
+        <!-- EMPIRE MANAGEMENT -->
+        <div class="dash-card" style="grid-column: 1 / -1;">
+            <h4 class="dash-section-title">🏢 Hantera Imperium</h4>
+            ${p.owned.length === 0
+            ? '<p style="color:rgba(255,255,255,0.3);text-align:center;padding:16px;">Inga företag ännu! Köp via Butik 🛒</p>'
+            : p.owned.map(id => {
+                const biz = SHOPS.find(s => s.id === id);
+                const lv = p.levels[id] || 1;
+                const income = biz.income * lv;
+                const upgCost = Math.floor(biz.price * lv * 0.6);
+                const afford = p.money >= upgCost;
+                return `<div class="dash-biz">
+                        <span class="dash-biz-icon">${biz.icon}</span>
+                        <div class="dash-biz-info">
+                            <strong>${biz.name}</strong>
+                            <small>Lvl ${lv} · ${formatNum(income)} 💰/runda</small>
+                        </div>
+                        <button class="btn-upgrade" onclick="window.game.upgradeBiz('${id}');window.game.renderDashboard()" ${afford ? '' : 'disabled'}>⬆️ ${formatNum(upgCost)}</button>
+                    </div>`;
+            }).join('')
+        }
+        </div>
+
+        <!-- QUICK BUY -->
+        ${nextShop || almostShop ? `<div class="dash-card">
+            <h4 class="dash-section-title">🛒 Snabbköp</h4>
+            ${nextShop ? `<div class="dash-quickbuy">
+                <div class="dqb-icon">${nextShop.icon}</div>
+                <div><strong>${nextShop.name}</strong><br><small style="color:var(--gold);">${formatNum(nextShop.price)} 💰 · +${formatNum(nextShop.income)}/runda</small></div>
+                <button class="btn-buy" onclick="window.game.buyShop('${nextShop.id}');window.game.renderDashboard()">🛒 KÖP</button>
+            </div>` : `<div class="dash-quickbuy">
+                <div class="dqb-icon">${almostShop.icon}</div>
+                <div><strong>${almostShop.name}</strong><br><small style="color:rgba(255,255,255,0.3);">Behöver ${formatNum(almostShop.price)} 💰</small></div>
+                <button class="btn-buy" disabled>🔒 Inte råd</button>
+            </div>`}
+        </div>` : ''}
+
+        <!-- RANKING -->
+        <div class="dash-card">
+            <h4 class="dash-section-title">🏆 Ranking</h4>
+            ${sorted.map((pl, i) => {
+            const isYou = pl === p;
+            let plIncome = 0;
+            pl.owned.forEach(id => { const b = SHOPS.find(s => s.id === id); if (b) plIncome += b.income * (pl.levels[id] || 1); });
+            return `<div class="dash-rank-row ${isYou ? 'you' : ''}" style="--rc:${pl.char.color}">
+                    <span class="drr-pos">${ranks[i] || ''}</span>
+                    <span class="drr-icon">${pl.char.icon}</span>
+                    <span class="drr-name" style="color:${pl.char.color}">${pl.char.name}${isYou ? ' (du)' : ''}${pl.isAI ? ' 🤖' : ''}</span>
+                    <span class="drr-money">💰 ${formatNum(pl.money)}</span>
+                    <span class="drr-extra">⭐${pl.rep} · 🏢${pl.owned.length} · 🚗${(pl.cars || []).length}</span>
+                </div>`;
+        }).join('')}
+        </div>
+
+        <!-- QUICK ACTIONS -->
+        <div class="dash-card" style="grid-column: 1 / -1;">
+            <h4 class="dash-section-title">⚡ Snabbåtgärder</h4>
+            <div class="dash-actions">
+                <button class="dash-action-btn" onclick="window.game.doPitch();window.game.renderDashboard()" ${p.pitchesThisRound >= gameState.maxPitchesPerRound || p.inJail ? 'disabled' : ''}>
+                    💡 Pitcha <small>${gameState.maxPitchesPerRound - p.pitchesThisRound} kvar</small>
+                </button>
+                <button class="dash-action-btn" onclick="window.game.rollDice();window.game.renderDashboard()" ${p.rollsThisRound >= gameState.maxRollsPerRound ? 'disabled' : ''}>
+                    🎲 Rulla <small>${gameState.maxRollsPerRound - p.rollsThisRound} kvar</small>
+                </button>
+                <button class="dash-action-btn" onclick="window.game.switchTab('market',document.querySelectorAll('.tab-btn')[4])">
+                    🕶️ Svarta Marknaden
+                </button>
+                <button class="dash-action-btn" onclick="window.game.endTurn()">
+                    ⏭️ Avsluta tur
+                </button>
+            </div>
+        </div>
+
+        <!-- STATS -->
+        <div class="dash-card" style="grid-column: 1 / -1;">
+            <h4 class="dash-section-title">📋 Statistik</h4>
+            <div class="dash-stats" style="grid-template-columns: repeat(3, 1fr);">
+                <div class="dash-stat"><label>Totalt tjänat</label><div class="val gold">${formatNum(p.totalEarned || 0)}</div></div>
+                <div class="dash-stat"><label>Totalt spenderat</label><div class="val" style="color:var(--danger);">${formatNum(p.totalSpent || 0)}</div></div>
+                <div class="dash-stat"><label>Lyckade deals</label><div class="val" style="color:var(--mehmet);">${p.successfulDeals || 0}</div></div>
+            </div>
+        </div>
+    `;
+
+    // Draw money graph
+    drawMoneyGraph();
+}
+
+function drawMoneyGraph() {
+    const canvas = document.getElementById('money-graph');
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = canvas.offsetWidth * dpr;
+    canvas.height = 180 * dpr;
+    ctx.scale(dpr, dpr);
+    const w = canvas.offsetWidth;
+    const h = 180;
+
+    // Collect all money histories
+    const allHistories = gameState.players.map(p => ({
+        history: p.moneyHistory || [p.money],
+        color: p.char.color,
+        name: p.char.name,
+        isCurrent: p === currentPlayer()
+    }));
+
+    // Find max value and max length
+    let maxVal = 1000;
+    let maxLen = 1;
+    allHistories.forEach(h => {
+        h.history.forEach(v => { if (v > maxVal) maxVal = v; });
+        if (h.history.length > maxLen) maxLen = h.history.length;
+    });
+    maxVal *= 1.1; // padding
+
+    // Background
+    ctx.fillStyle = 'rgba(255,255,255,0.02)';
+    ctx.fillRect(0, 0, w, h);
+
+    // Grid lines
+    ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+    ctx.lineWidth = 0.5;
+    for (let i = 0; i <= 4; i++) {
+        const y = h - (h * i / 4);
+        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
+        ctx.fillStyle = 'rgba(255,255,255,0.2)';
+        ctx.font = '10px Outfit';
+        ctx.fillText(formatNum(Math.floor(maxVal * i / 4)), 4, y - 4);
+    }
+
+    // Draw each player's line
+    allHistories.forEach(({ history, color, isCurrent }) => {
+        if (history.length < 2) return;
+        ctx.beginPath();
+        ctx.strokeStyle = color;
+        ctx.lineWidth = isCurrent ? 3 : 1.5;
+        ctx.globalAlpha = isCurrent ? 1 : 0.4;
+        const stepX = w / Math.max(maxLen - 1, 1);
+        history.forEach((val, i) => {
+            const x = i * stepX;
+            const y = h - (val / maxVal * h);
+            if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+        });
+        ctx.stroke();
+
+        // Glow for current player
+        if (isCurrent) {
+            ctx.shadowColor = color;
+            ctx.shadowBlur = 8;
+            ctx.stroke();
+            ctx.shadowBlur = 0;
+        }
+        ctx.globalAlpha = 1;
+    });
+
+    // Legend
+    let legendX = 10;
+    allHistories.forEach(({ color, name }) => {
+        ctx.fillStyle = color;
+        ctx.fillRect(legendX, h - 16, 10, 10);
+        ctx.fillStyle = 'rgba(255,255,255,0.5)';
+        ctx.font = '10px Outfit';
+        ctx.fillText(name, legendX + 14, h - 7);
+        legendX += ctx.measureText(name).width + 28;
+    });
 }

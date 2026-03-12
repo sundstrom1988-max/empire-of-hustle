@@ -2,6 +2,7 @@ import { CHARACTERS, SHOPS, EVENTS, PITCH_SUCCESS, PITCH_FAIL, CARS } from '../d
 import { gameState, currentPlayer, formatNum, createPlayerState, saveGame } from '../game/state.js';
 import { playSound, spawnParticles, showToast, startMusic } from '../utils/effects.js';
 import { syncState } from '../multiplayer/sync.js';
+import { checkEvidence, showHeistButton } from '../features/gargamel.js';
 
 // ── HUD ──
 export function updateHUD() {
@@ -61,17 +62,31 @@ export function upgradeBiz(id) {
     if (gameState.isOnline) syncState();
 }
 
-export function calcIncome(biz, level) {
+export function calcIncome(biz, level, player) {
     if (!biz) return 0;
-    const p = currentPlayer();
+    const p = player || currentPlayer();
     let base = biz.income * level;
     if (p.char?.ability === 'income_boost') base *= (1 + p.char.abilityVal);
-    // Car bonus
+    // Car bonus (including pimp upgrades)
     let carBonus = 0;
     if (p.cars) {
-        p.cars.forEach(id => { const c = CARS.find(x => x.id === id); if (c?.boostType === 'income') carBonus += c.val; });
+        p.cars.forEach(id => {
+            const c = CARS.find(x => x.id === id);
+            if (c?.boostType === 'income') {
+                carBonus += c.val;
+                // Add pimp bonuses
+                if (p.carPimps && p.carPimps[id] && c.pimps) {
+                    for (let i = 0; i < p.carPimps[id] && i < c.pimps.length; i++) {
+                        carBonus += c.pimps[i].bonus;
+                    }
+                }
+            }
+        });
     }
-    return Math.floor(base * (1 + carBonus));
+    // Sabotage debuff (Gargamel heist)
+    let sabotageMultiplier = 1;
+    if (p.sabotagedRounds > 0) sabotageMultiplier = 0.5;
+    return Math.floor(base * (1 + carBonus) * sabotageMultiplier);
 }
 
 // ── Shop ──
@@ -158,10 +173,14 @@ export function endTurn() {
     let totalIncome = 0;
     p.owned.forEach(id => {
         const biz = SHOPS.find(s => s.id === id);
-        totalIncome += calcIncome(biz, p.levels[id] || 1);
+        totalIncome += calcIncome(biz, p.levels[id] || 1, p);
     });
     p.money += totalIncome;
+    p.totalEarned = (p.totalEarned || 0) + totalIncome;
     if (totalIncome > 0) showToast(`💰 Inkomst: +${formatNum(totalIncome)}`);
+    // Track money history
+    if (!p.moneyHistory) p.moneyHistory = [];
+    p.moneyHistory.push(p.money);
     // Jail countdown
     if (p.inJail) {
         p.jailRoundsLeft--;
@@ -169,6 +188,8 @@ export function endTurn() {
     }
     // Reset round limits
     p.dealsThisRound = 0; p.rollsThisRound = 0; p.pitchesThisRound = 0;
+    // Check evidence timers (Gargamel heist)
+    checkEvidence();
     // Next player
     gameState.currentPlayerIdx = (gameState.currentPlayerIdx + 1) % gameState.players.length;
     if (gameState.currentPlayerIdx === 0) gameState.round++;
@@ -178,6 +199,8 @@ export function endTurn() {
     // Check win
     if (p.money >= gameState.winAmount) { showWin(p); return; }
     updateHUD(); renderEmpire(); renderShop();
+    // Refresh heist button visibility
+    showHeistButton();
     saveGame();
     updateTurnBar();
     if (gameState.isOnline) syncState();

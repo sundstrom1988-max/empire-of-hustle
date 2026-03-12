@@ -13,6 +13,8 @@ import { initMinigames, playDiceBattle, playGuessNumber, playSlotMachine, playCo
 import { showPhoneToggle, togglePhone, phoneOpenSMS, phoneOpenChat, sendPhoneSMS, phoneOpenDeals, doPhoneDeal, phoneOpenCars, buyCar, phoneOpenWallet, phoneOpenStatus, renderDashboard } from './features/phone.js';
 import { initFirebase, isFirebaseConfigured, createRoom, joinRoom, syncState, startOnlineGame } from './multiplayer/sync.js';
 import { playSound, toggleMusic, toggleSfx, showToast, spawnParticles, startMusic } from './utils/effects.js';
+import { showHeistButton, selectHeistTarget, doHeist, sweepEvidence } from './features/gargamel.js';
+import { renderGarage, buyGarageCar, pimpCar } from './features/garage.js';
 
 // ── Expose functions to window for onclick handlers ──
 window.game = {
@@ -22,7 +24,9 @@ window.game = {
     togglePhone, phoneOpenSMS, phoneOpenChat, sendPhoneSMS,
     phoneOpenDeals, doPhoneDeal, phoneOpenCars, buyCar, phoneOpenWallet, phoneOpenStatus,
     renderDashboard, toggleMusic, toggleSfx,
-    refreshUI() { updateHUD(); renderEmpire(); renderShop(); renderMarket(); renderJail(); }
+    refreshUI() { updateHUD(); renderEmpire(); renderShop(); renderMarket(); renderJail(); },
+    selectHeistTarget, doHeist, sweepEvidence,
+    renderGarage, buyGarageCar, pimpCar
 };
 
 // ── Auth helpers ──
@@ -88,6 +92,7 @@ function renderApp() {
             <button class="tab-btn" onclick="window.game.switchTab('shop',this)">🛒 Butik</button>
             <button class="tab-btn" onclick="window.game.switchTab('market',this)">🕶️ Svarta</button>
             <button class="tab-btn" onclick="window.game.switchTab('jail',this)">🔒 Häktet</button>
+            <button class="tab-btn" onclick="window.game.switchTab('garage',this);window.game.renderGarage()">🚗 Garage</button>
             <button class="tab-btn" onclick="window.game.switchTab('minigames',this);window.game.initMinigames()">🎮 Spel</button>
             <button class="tab-btn" onclick="window.game.switchTab('roast',this)">💬 Chatt</button>
             <button class="tab-btn" onclick="window.game.switchTab('dashboard',this);window.game.renderDashboard()">📊 Stats</button>
@@ -100,6 +105,7 @@ function renderApp() {
         <div class="panel" id="panel-shop"><h2 style="font-family:'Outfit';font-weight:900;font-size:24px;margin-bottom:16px;">🛒 Butik</h2><div class="shop-grid" id="shop-grid"></div></div>
         <div class="panel" id="panel-market"><h2 style="font-family:'Outfit';font-weight:900;font-size:24px;margin-bottom:16px;">🕶️ Svarta Marknaden</h2><div id="market-list"></div></div>
         <div class="panel" id="panel-jail"><h2 style="font-family:'Outfit';font-weight:900;font-size:24px;margin-bottom:16px;">🔒 Häktet</h2><div id="jail-content"></div></div>
+        <div class="panel" id="panel-garage"><div id="garage-content"></div></div>
         <div class="panel" id="panel-minigames"><h2 style="font-family:'Outfit';font-weight:900;font-size:24px;margin-bottom:16px;">🎮 Mini-Spel</h2><div class="mini-grid" id="minigames-grid"></div><div id="minigame-result" style="margin-top:20px;text-align:center;"></div></div>
         <div class="panel" id="panel-roast">
             <h2 style="font-family:'Outfit';font-weight:900;font-size:24px;margin-bottom:16px;">💬 Gatan Snackar</h2>
@@ -178,7 +184,7 @@ function renderCharCards() {
 }
 
 // ── Unlock character (enter password) ──
-window.showCharUnlock = function(charKey) {
+window.showCharUnlock = function (charKey) {
     const ch = CHARACTERS[charKey];
     const modal = document.getElementById('login-modal');
     modal.innerHTML = `<div class="login-modal-box">
@@ -194,7 +200,7 @@ window.showCharUnlock = function(charKey) {
     setTimeout(() => document.getElementById('unlock-pass')?.focus(), 100);
 };
 
-window.doCharUnlock = function(charKey) {
+window.doCharUnlock = function (charKey) {
     const pass = document.getElementById('unlock-pass').value;
     const accs = getAccounts();
     if (!accs[charKey] || simpleHash(pass) !== accs[charKey].password) {
@@ -218,7 +224,7 @@ window.doCharUnlock = function(charKey) {
 };
 
 // ── Lock character (set password) ──
-window.showCharLock = function(charKey) {
+window.showCharLock = function (charKey) {
     const ch = CHARACTERS[charKey];
     const modal = document.getElementById('login-modal');
     modal.innerHTML = `<div class="login-modal-box">
@@ -235,7 +241,7 @@ window.showCharLock = function(charKey) {
     setTimeout(() => document.getElementById('lock-pass')?.focus(), 100);
 };
 
-window.doCharLock = function(charKey) {
+window.doCharLock = function (charKey) {
     const pass = document.getElementById('lock-pass').value;
     const pass2 = document.getElementById('lock-pass2').value;
     const err = document.getElementById('login-error');
@@ -325,6 +331,7 @@ function showGameScreen() {
     updateHUD(); renderEmpire(); renderShop(); renderMarket(); renderJail();
     initCBDLeaves(); addRoastWelcome(); showPhoneToggle();
     startMusic();
+    showHeistButton(); // Show secret Gargamel button if applicable
     if (gameState.players.length > 1) updateTurnBar();
     spawnParticles([currentPlayer().char.icon, '🔥', '💰'], 12);
     showToast(`${currentPlayer().char.icon} ${currentPlayer().char.name} startar sitt imperium!`);

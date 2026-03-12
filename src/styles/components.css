@@ -116,6 +116,449 @@
     transition: width .5s;
 }
 
+/* ── Dashboard Sections ── */
+.dash-section-title {
+    font-family: 'Outfit';
+    font-weight: 800;
+    font-size: 15px;
+    margin-bottom: 14px;
+    color: rgba(255, 255, 255, 0.7);
+}
+
+.dash-overview {
+    background: linear-gradient(135deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.01));
+}
+
+.dash-biz {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 12px;
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    margin-bottom: 6px;
+}
+
+.dash-biz-icon {
+    font-size: 24px;
+}
+
+.dash-biz-info {
+    flex: 1;
+}
+
+.dash-biz-info strong {
+    font-family: 'Outfit';
+    font-weight: 800;
+    font-size: 13px;
+    display: block;
+}
+
+.dash-biz-info small {
+    font-size: 11px;
+    color: rgba(255, 255, 255, 0.35);
+}
+
+.dash-quickbuy {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 14px;
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.dqb-icon {
+    font-size: 32px;
+}
+
+.dash-rank-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 10px;
+    border-radius: 8px;
+    margin-bottom: 4px;
+    transition: all .2s;
+}
+
+.dash-rank-row.you {
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid var(--rc);
+}
+
+.drr-pos {
+    font-size: 16px;
+    width: 24px;
+    text-align: center;
+}
+
+.drr-icon {
+    font-size: 20px;
+}
+
+.drr-name {
+    font-family: 'Outfit';
+    font-weight: 700;
+    font-size: 13px;
+    flex: 1;
+}
+
+.drr-money {
+    font-family: 'Outfit';
+    font-weight: 800;
+    font-size: 13px;
+    color: var(--gold);
+}
+
+.drr-extra {
+    font-size: 10px;
+    color: rgba(255, 255, 255, 0.3);
+}
+
+.dash-actions {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    gap: 10px;
+}
+
+.dash-action-btn {
+    padding: 14px 16px;
+    border-radius: 12px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    background: rgba(255, 255, 255, 0.04);
+    color: white;
+    font-family: 'Outfit';
+    font-weight: 700;
+    font-size: 13px;
+    cursor: pointer;
+    transition: all .2s;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+}
+
+.dash-action-btn small {
+    font-size: 10px;
+    color: rgba(255, 255, 255, 0.3);
+    font-weight: 400;
+}
+
+.dash-action-btn:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.08);
+    border-color: rgba(255, 255, 255, 0.2);
+    transform: translateY(-2px);
+}
+
+.dash-action-btn:disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
+}
+
+/* ── Garage ── */
+.garage-wrapper {
+    padding: 10px 0;
+}
+
+.garage-title {
+    font-family: 'Outfit';
+    font-weight: 900;
+    font-size: 24px;
+    margin-bottom: 4px;
+}
+
+.garage-sub {
+    font-size: 12px;
+    color: rgba(255, 255, 255, 0.3);
+    margin-bottom: 20px;
+}
+
+.garage-empty {
+    text-align: center;
+    padding: 60px 20px;
+}
+
+.ge-icon {
+    font-size: 60px;
+    margin-bottom: 12px;
+}
+
+.garage-empty h3 {
+    font-family: 'Outfit';
+    font-weight: 800;
+    color: rgba(255, 255, 255, 0.4);
+    margin-bottom: 8px;
+}
+
+.garage-empty p {
+    font-size: 13px;
+    color: rgba(255, 255, 255, 0.2);
+}
+
+.garage-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    margin-bottom: 20px;
+}
+
+.garage-car-card {
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 16px;
+    overflow: hidden;
+    transition: all .3s;
+}
+
+.garage-car-card:hover {
+    border-color: var(--gc);
+    box-shadow: 0 4px 30px color-mix(in srgb, var(--gc) 12%, transparent);
+}
+
+.gcc-image-wrap {
+    position: relative;
+    width: 100%;
+    height: 200px;
+    background: linear-gradient(135deg, rgba(0, 0, 0, 0.4), rgba(0, 0, 0, 0.7));
+    overflow: hidden;
+}
+
+.gcc-image {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    transition: transform .4s;
+}
+
+.garage-car-card:hover .gcc-image {
+    transform: scale(1.05);
+}
+
+.gcc-emoji-fallback {
+    font-size: 80px;
+    text-align: center;
+    padding-top: 50px;
+}
+
+.gcc-tier-badge {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    background: rgba(0, 0, 0, 0.7);
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 8px;
+    padding: 4px 10px;
+    font-family: 'Outfit';
+    font-weight: 700;
+    font-size: 12px;
+    color: white;
+}
+
+.gcc-info {
+    padding: 16px 20px 20px;
+}
+
+.gcc-name {
+    font-family: 'Outfit';
+    font-weight: 900;
+    font-size: 18px;
+    margin-bottom: 4px;
+}
+
+.gcc-boost {
+    font-size: 13px;
+    color: var(--gold);
+    font-weight: 700;
+    margin-bottom: 14px;
+}
+
+.gcc-pimps {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.gcc-pimp {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    font-size: 12px;
+    flex-wrap: wrap;
+}
+
+.gcc-pimp.done {
+    background: rgba(34, 197, 94, 0.06);
+    border-color: rgba(34, 197, 94, 0.15);
+}
+
+.gcc-pimp.next {
+    background: rgba(251, 191, 36, 0.06);
+    border-color: rgba(251, 191, 36, 0.15);
+}
+
+.gp-dot {
+    font-size: 14px;
+}
+
+.gp-name {
+    font-family: 'Outfit';
+    font-weight: 700;
+    color: white;
+}
+
+.gp-desc {
+    flex: 1;
+    color: rgba(255, 255, 255, 0.3);
+    min-width: 120px;
+}
+
+.gp-bonus {
+    font-family: 'Outfit';
+    font-weight: 800;
+    font-size: 11px;
+}
+
+.btn-pimp {
+    padding: 6px 14px;
+    border-radius: 8px;
+    border: 1px solid var(--gold);
+    background: rgba(251, 191, 36, 0.1);
+    color: var(--gold);
+    font-family: 'Outfit';
+    font-weight: 700;
+    font-size: 12px;
+    cursor: pointer;
+    transition: all .2s;
+    margin-left: auto;
+}
+
+.btn-pimp:hover:not(:disabled) {
+    background: var(--gold);
+    color: black;
+}
+
+.btn-pimp:disabled {
+    opacity: .3;
+    cursor: not-allowed;
+}
+
+/* ── Garage Shop ── */
+.garage-shop-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 14px;
+}
+
+.garage-shop-card {
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 14px;
+    overflow: hidden;
+    text-align: center;
+    transition: all .3s;
+}
+
+.garage-shop-card:hover {
+    border-color: rgba(255, 255, 255, 0.15);
+    transform: translateY(-3px);
+}
+
+.garage-shop-card.owned {
+    border-color: rgba(34, 197, 94, 0.2);
+    background: rgba(34, 197, 94, 0.03);
+}
+
+.gsc-image-wrap {
+    position: relative;
+    width: 100%;
+    height: 120px;
+    background: linear-gradient(135deg, rgba(0, 0, 0, 0.3), rgba(0, 0, 0, 0.6));
+    overflow: hidden;
+}
+
+.gsc-image {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    transition: transform .3s;
+}
+
+.garage-shop-card:hover .gsc-image {
+    transform: scale(1.08);
+}
+
+.gsc-emoji-fallback {
+    font-size: 50px;
+    padding-top: 30px;
+}
+
+.gsc-owned-badge {
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.6);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: 'Outfit';
+    font-weight: 900;
+    font-size: 18px;
+    color: var(--mehmet);
+}
+
+.gsc-name {
+    font-family: 'Outfit';
+    font-weight: 800;
+    font-size: 13px;
+    padding: 10px 10px 2px;
+}
+
+.gsc-price {
+    font-size: 14px;
+    font-weight: 800;
+    color: var(--gold);
+    font-family: 'Outfit';
+}
+
+.gsc-boost {
+    font-size: 11px;
+    color: rgba(255, 255, 255, 0.3);
+    margin-bottom: 8px;
+}
+
+.btn-buy-car {
+    width: calc(100% - 20px);
+    margin: 0 10px 10px;
+    padding: 8px;
+    border-radius: 10px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    background: rgba(255, 255, 255, 0.05);
+    color: white;
+    font-family: 'Outfit';
+    font-weight: 700;
+    font-size: 12px;
+    cursor: pointer;
+    transition: all .2s;
+}
+
+.btn-buy-car:hover:not(:disabled) {
+    background: var(--gold);
+    color: black;
+    border-color: var(--gold);
+}
+
+.btn-buy-car:disabled {
+    opacity: .3;
+    cursor: not-allowed;
+}
+
 /* ── Phone ── */
 .phone-toggle {
     position: fixed;
