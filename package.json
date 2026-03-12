@@ -1,0 +1,19 @@
+{
+  "name": "empire-of-hustle",
+  "version": "1.0.0",
+  "description": "Dr. KimIT: Empire of Hustle — Online Multiplayer Game",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "deploy": "npm run build && gh-pages -d dist"
+  },
+  "dependencies": {
+    "peerjs": "^1.5.4"
+  },
+  "devDependencies": {
+    "vite": "^5.4.0",
+    "gh-pages": "^6.1.0"
+  }
+}
