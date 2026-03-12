@@ -139,25 +139,118 @@ function setupEvents() {
     });
 
     // Character cards
-    const charContainer = document.getElementById('char-cards');
-    Object.entries(CHARACTERS).forEach(([key, ch]) => {
-        const card = document.createElement('div');
-        card.className = 'char-card';
-        card.style.setProperty('--char-color', ch.color);
-        card.innerHTML = `<div class="char-icon">${ch.img ? `<img src="${ch.img}" onerror="this.parentNode.textContent='${ch.icon}'">` : ch.icon}</div>
-            <div class="char-name" style="color:${ch.color}">${ch.name}</div>
-            <div class="char-desc">${ch.desc}</div>`;
-        card.addEventListener('click', () => {
-            document.querySelectorAll('.char-card').forEach(c => c.classList.remove('selected'));
-            card.classList.add('selected');
-            selectedChar = key;
-        });
-        charContainer.appendChild(card);
-    });
+    renderCharCards();
+
 
     // Start button
     document.getElementById('btn-start')?.addEventListener('click', startGame);
 }
+
+// ── Render character cards with lock state ──
+function renderCharCards() {
+    const charContainer = document.getElementById('char-cards');
+    if (!charContainer) return;
+    charContainer.innerHTML = '';
+    const accounts = getAccounts();
+    Object.entries(CHARACTERS).forEach(([key, ch]) => {
+        const isLocked = !!accounts[key];
+        const card = document.createElement('div');
+        card.className = 'char-card' + (isLocked ? ' locked' : '') + (selectedChar === key ? ' selected' : '');
+        card.style.setProperty('--char-color', ch.color);
+        card.innerHTML = `
+            ${isLocked ? '<div class="char-lock-badge">🔒</div>' : ''}
+            <div class="char-icon">${ch.img ? `<img src="${ch.img}" onerror="this.parentNode.textContent='${ch.icon}'">` : ch.icon}</div>
+            <div class="char-name" style="color:${ch.color}">${ch.name}</div>
+            <div class="char-desc">${ch.desc}</div>
+            ${isLocked
+                ? `<button class="btn-char-unlock" style="--char-color:${ch.color}" onclick="event.stopPropagation();window.showCharUnlock('${key}')">🔓 Lås upp</button>`
+                : `<button class="btn-char-lock" onclick="event.stopPropagation();window.showCharLock('${key}')">🔐 Lås karaktär</button>`
+            }`;
+        if (!isLocked) {
+            card.addEventListener('click', () => {
+                document.querySelectorAll('.char-card').forEach(c => c.classList.remove('selected'));
+                card.classList.add('selected');
+                selectedChar = key;
+            });
+        }
+        charContainer.appendChild(card);
+    });
+}
+
+// ── Unlock character (enter password) ──
+window.showCharUnlock = function(charKey) {
+    const ch = CHARACTERS[charKey];
+    const modal = document.getElementById('login-modal');
+    modal.innerHTML = `<div class="login-modal-box">
+        <div style="font-size:50px;margin-bottom:10px;">${ch.icon}</div>
+        <h3 style="color:${ch.color}">${ch.name}</h3>
+        <p class="lm-sub">🔒 Denna karaktär är låst — ange kod för att spela</p>
+        <div class="login-error" id="login-error">Fel kod! 🚫</div>
+        <input type="password" id="unlock-pass" placeholder="Ange din kod..." onkeydown="if(event.key==='Enter')window.doCharUnlock('${charKey}')">
+        <button class="btn-login" style="background:linear-gradient(135deg,${ch.color},${ch.color}88);" onclick="window.doCharUnlock('${charKey}')">🔓 LÅS UPP & VÄLJ</button>
+        <button class="btn-guest" onclick="document.getElementById('login-modal').classList.remove('open')">Avbryt</button>
+    </div>`;
+    modal.classList.add('open');
+    setTimeout(() => document.getElementById('unlock-pass')?.focus(), 100);
+};
+
+window.doCharUnlock = function(charKey) {
+    const pass = document.getElementById('unlock-pass').value;
+    const accs = getAccounts();
+    if (!accs[charKey] || simpleHash(pass) !== accs[charKey].password) {
+        const err = document.getElementById('login-error');
+        err.textContent = 'Fel kod! 🚫';
+        err.style.display = 'block';
+        return;
+    }
+    currentAccount = charKey;
+    selectedChar = charKey;
+    document.getElementById('login-modal').classList.remove('open');
+    showToast(`🔓 ${CHARACTERS[charKey].name} upplåst!`);
+    // Check for saved game
+    const saved = loadGame(charKey);
+    if (saved) {
+        showGameScreen();
+        showToast(`🔓 Välkommen tillbaka, ${CHARACTERS[charKey].name}!`);
+    } else {
+        renderCharCards();
+    }
+};
+
+// ── Lock character (set password) ──
+window.showCharLock = function(charKey) {
+    const ch = CHARACTERS[charKey];
+    const modal = document.getElementById('login-modal');
+    modal.innerHTML = `<div class="login-modal-box">
+        <div style="font-size:50px;margin-bottom:10px;">${ch.icon}</div>
+        <h3 style="color:${ch.color}">Lås ${ch.name}</h3>
+        <p class="lm-sub">🔐 Välj en kod så bara du kan spela denna karaktär</p>
+        <div class="login-error" id="login-error"></div>
+        <input type="password" id="lock-pass" placeholder="Välj kod (minst 3 tecken)..." onkeydown="if(event.key==='Enter')window.doCharLock('${charKey}')">
+        <input type="password" id="lock-pass2" placeholder="Bekräfta kod..." onkeydown="if(event.key==='Enter')window.doCharLock('${charKey}')">
+        <button class="btn-login" style="background:linear-gradient(135deg,${ch.color},${ch.color}88);" onclick="window.doCharLock('${charKey}')">🔐 LÅS KARAKTÄR</button>
+        <button class="btn-guest" onclick="document.getElementById('login-modal').classList.remove('open')">Avbryt</button>
+    </div>`;
+    modal.classList.add('open');
+    setTimeout(() => document.getElementById('lock-pass')?.focus(), 100);
+};
+
+window.doCharLock = function(charKey) {
+    const pass = document.getElementById('lock-pass').value;
+    const pass2 = document.getElementById('lock-pass2').value;
+    const err = document.getElementById('login-error');
+    if (pass.length < 3) { err.textContent = 'Minst 3 tecken!'; err.style.display = 'block'; return; }
+    if (pass !== pass2) { err.textContent = 'Koderna matchar inte!'; err.style.display = 'block'; return; }
+    const accs = getAccounts();
+    accs[charKey] = { password: simpleHash(pass), created: Date.now() };
+    saveAccounts(accs);
+    currentAccount = charKey;
+    selectedChar = charKey;
+    document.getElementById('login-modal').classList.remove('open');
+    showToast(`🔐 ${CHARACTERS[charKey].name} är nu låst med din kod!`);
+    renderCharCards();
+    renderLoginScreen();
+};
 
 // ── Mode Selection ──
 window.setMode = function (mode) {

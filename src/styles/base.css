@@ -98,6 +98,7 @@ button:active {
     text-align: center;
     cursor: pointer;
     transition: all .4s;
+    position: relative;
 }
 
 .char-card:hover {
@@ -132,6 +133,72 @@ button:active {
     font-size: 11px;
     color: rgba(255, 255, 255, 0.35);
     margin-top: 4px;
+}
+
+/* ── Character Lock ── */
+.char-card.locked {
+    opacity: 0.5;
+    border-color: rgba(255, 255, 255, 0.08);
+    cursor: default;
+    position: relative;
+}
+
+.char-card.locked:hover {
+    transform: none;
+    border-color: rgba(255, 255, 255, 0.08);
+}
+
+.char-card.locked.selected {
+    opacity: 1;
+    border-color: var(--char-color);
+    box-shadow: 0 0 30px color-mix(in srgb, var(--char-color) 20%, transparent);
+}
+
+.char-lock-badge {
+    position: absolute;
+    top: 8px;
+    right: 10px;
+    font-size: 18px;
+    filter: drop-shadow(0 0 6px rgba(251, 191, 36, 0.5));
+}
+
+.btn-char-unlock {
+    margin-top: 10px;
+    padding: 7px 16px;
+    border-radius: 10px;
+    border: 1px solid var(--char-color, var(--gold));
+    background: rgba(251, 191, 36, 0.08);
+    color: var(--gold);
+    font-family: 'Outfit';
+    font-weight: 700;
+    font-size: 11px;
+    cursor: pointer;
+    transition: all .2s;
+}
+
+.btn-char-unlock:hover {
+    background: rgba(251, 191, 36, 0.2);
+    transform: scale(1.05);
+}
+
+.btn-char-lock {
+    margin-top: 10px;
+    padding: 7px 16px;
+    border-radius: 10px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    background: rgba(255, 255, 255, 0.04);
+    color: rgba(255, 255, 255, 0.4);
+    font-family: 'Outfit';
+    font-weight: 700;
+    font-size: 11px;
+    cursor: pointer;
+    transition: all .2s;
+}
+
+.btn-char-lock:hover {
+    border-color: rgba(255, 255, 255, 0.25);
+    color: white;
+    background: rgba(255, 255, 255, 0.08);
 }
 
 /* ── Mode & Start ── */
