@@ -85,6 +85,13 @@ describe('save / load', () => {
         expect(loadGame()).toBe(false);
         expect(gameState.round).toBe(9);
     });
+    it('does not resume a finished game', () => {
+        localStorage.setItem('empire_save_kimit', JSON.stringify({
+            players: [{ charKey: 'kimit', money: 1200000 }], gameOver: true
+        }));
+        expect(loadGame('kimit')).toBe(false);
+        expect(localStorage.getItem('empire_save_kimit')).toBeNull();
+    });
     it('clamps a bad currentPlayerIdx', () => {
         localStorage.setItem('empire_hustle_save', JSON.stringify({
             players: [{ charKey: 'kimit' }], currentPlayerIdx: 7
@@ -110,6 +117,20 @@ describe('mergeRemoteState', () => {
         expect(gameState.accountKey).toBe('mehmet');
         expect(gameState.round).toBe(3);
         expect(gameState.players[1].char.name).toBe('Mehmet');
+    });
+    it('never overwrites my own player during my online turn (e.g. while I am in the city)', () => {
+        const me = createPlayerState('kimit');
+        me.money = 6000; me.missionsThisRound = 3;
+        gameState.isOnline = true;
+        gameState.myCharKey = 'kimit';
+        gameState.players = [me, createPlayerState('juan')];
+        gameState.currentPlayerIdx = 0;
+        mergeRemoteState({ currentPlayerIdx: 0, players: [{ charKey: 'kimit', money: 1000, missionsThisRound: 0 }, { charKey: 'juan', money: 5 }, { charKey: 'mehmet' }] });
+        expect(gameState.players[0]).toBe(me);
+        expect(me.money).toBe(6000);
+        expect(me.missionsThisRound).toBe(3);
+        expect(gameState.players[1].money).toBe(5);
+        expect(gameState.players).toHaveLength(3);
     });
     it('updates existing player objects in place', () => {
         const me = createPlayerState('kimit');

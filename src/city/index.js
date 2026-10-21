@@ -105,6 +105,10 @@ export function openCity(profile, opts = {}) {
 function showModal(type, html) {
     const s = session;
     s.paused = true;
+    // Paus = tyst: ingen siren, motor eller radio bakom menyn (resume startar dem igen)
+    sirenSet(0);
+    engineStop();
+    stopRadio();
     s.modalType = type;
     s.modal.innerHTML = html;
     s.modal.hidden = false;

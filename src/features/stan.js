@@ -11,6 +11,7 @@ import { updateHUD } from '../game/core.js';
 import { showToast, startMusic, spawnParticles } from '../utils/effects.js';
 import { stopRadio, unlockAudio } from '../utils/audio.js';
 import { syncState } from '../multiplayer/sync.js';
+import { closePhone } from './phone.js';
 
 export function renderStanPanel() {
     const el = document.getElementById('stan-content');
@@ -66,7 +67,7 @@ export function goToCity() {
     if (p.inJail) { showToast('🔒 Du sitter i häktet — ingen stan för dig!'); return; }
     unlockAudio();
     stopRadio();
-    document.getElementById('phone-ui')?.classList.remove('open');
+    closePhone();
     openCity(p, {
         round: gameState.round,
         maxMissions: gameState.maxMissionsPerRound,
@@ -83,7 +84,8 @@ function onCityClosed(result) {
     if (result.reason === 'busted') {
         const fine = Math.floor(p.money * 0.15);
         p.money -= fine;
-        const rounds = 1 + Math.floor((result.stars || 1) / 2);
+        // Häktet räknas ner i slutet av samma tur, så 2 = minst en hel tur bakom galler
+        const rounds = 2 + Math.floor((result.stars || 1) / 2);
         jailPlayer(p, '🚔 BUSTED i stan', rounds);
         p.cityStats.busted = (p.cityStats.busted || 0) + 1;
         showToast(`🚔 BUSTED! Böter ${formatNum(fine)} kr och ${rounds} rundor i häktet.`);

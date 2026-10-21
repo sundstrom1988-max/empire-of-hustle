@@ -9,11 +9,11 @@ import './styles/city.css';
 
 import { CHARACTERS, STREET_CRED } from './data/gameData.js';
 import { gameState, createPlayerState, normalizePlayer, currentPlayer, formatNum, saveGame, loadGame, canAct } from './game/state.js';
-import { renderEmpire, renderShop, buyShop, upgradeBiz, sellBiz, confirmSellBiz, showStashModal, doStash, doPitch, rollDice, endTurn, updateHUD, updateTurnBar, updateTurnLock, switchTab, runAITurn } from './game/core.js';
+import { renderEmpire, renderShop, buyShop, upgradeBiz, sellBiz, confirmSellBiz, showStashModal, doStash, doPitch, rollDice, endTurn, updateHUD, updateTurnBar, updateTurnLock, switchTab, ensureAITurn, showWinIfOver } from './game/core.js';
 import { renderMarket, doMarketDeal, renderJail, payBail, addRoastWelcome, sendRoastChat, receiveOnlineChat, initCBDLeaves } from './features/features.js';
 import { initMinigames, playDiceBattle, playGuessNumber, playSlotMachine, playCoinFlip } from './features/minigames.js';
 import { showPhoneToggle, togglePhone, phoneOpenSMS, phoneOpenChat, sendPhoneSMS, phoneOpenDeals, doPhoneDeal, phoneOpenCars, buyCar, phoneOpenWallet, phoneOpenStatus, renderDashboard } from './features/phone.js';
-import { createRoom, joinRoom, startOnlineGame, onPlayerJoin, onChat, onSync, onPeerLeft, onHostLost, isRoomHost, sayGoodbye, leaveRoom } from './multiplayer/sync.js';
+import { createRoom, joinRoom, startOnlineGame, onPlayerJoin, onChat, onSync, onPeerLeft, onHostLost, sayGoodbye, leaveRoom } from './multiplayer/sync.js';
 import { toggleMusic, toggleSfx, showToast, spawnParticles, startMusic } from './utils/effects.js';
 import { unlockAudio } from './utils/audio.js';
 import { showHeistButton, selectHeistTarget, doHeist, sweepEvidence } from './features/gargamel.js';
@@ -59,6 +59,8 @@ window.game = {
     refreshUI
 };
 window.city = { isOpen: isCityOpen };
+// Endast i dev-läge: spelets state åtkomligt för felsökning och röktester
+if (import.meta.env?.DEV) window.__gs = gameState;
 
 // ── Auth helpers ──
 function simpleHash(str) { let h = 0; for (let i = 0; i < str.length; i++) { h = ((h << 5) - h) + str.charCodeAt(i); h |= 0; } return h.toString(36); }
@@ -382,12 +384,19 @@ window.startOnlineMatch = function () {
     showGameScreen();
 };
 
+let joining = false;
 window.joinOnlineRoom = async function (code) {
     const room = String(code || '').trim().toUpperCase();
     if (!room) { showToast('Skriv en rumskod!'); return; }
     if (!selectedChar) { showToast('Välj en karaktär först! 🎭'); return; }
+    if (joining) return;
+    joining = true;
+    const btn = document.querySelector('.join-btn');
+    if (btn) btn.disabled = true;
     showToast(`🌐 Ansluter till ${room}...`);
     const res = await joinRoom(room, { charKey: selectedChar });
+    joining = false;
+    if (btn) btn.disabled = false;
     if (res.ok) {
         gameState.mode = 'online';
         gameState.accountKey = null;
@@ -405,17 +414,20 @@ onPlayerJoin((p) => {
     refreshUI();
 });
 onChat((msg) => receiveOnlineChat(msg));
-onSync(() => { if (document.getElementById('screen-game')?.style.display === 'flex') refreshUI(); });
+onSync(() => {
+    if (document.getElementById('screen-game')?.style.display === 'flex') refreshUI();
+    showWinIfOver();
+    ensureAITurn();
+});
 onPeerLeft((p) => {
     showToast(`🔴 ${p.char.name} lämnade — AI:n tar över`);
     refreshUI();
-    if (isRoomHost() && currentPlayer() === p && !gameState.aiThinking) runAITurn();
+    ensureAITurn(); // även om den som lämnade höll på med en AI-tur
 });
 onHostLost(() => {
     showToast('🔴 Värden kopplade ner — du spelar vidare mot AI');
     refreshUI();
-    const p = currentPlayer();
-    if (p?.isAI && !gameState.aiThinking) runAITurn();
+    ensureAITurn();
 });
 
 function showGameScreen() {
@@ -432,7 +444,7 @@ function showGameScreen() {
         spawnParticles([me.char.icon, '🔥', '💰'], 12);
         showToast(`${me.char.icon} ${me.char.name} startar sitt imperium!`);
     }
-    if (me?.isAI && !gameState.aiThinking && !gameState.isOnline) runAITurn();
+    ensureAITurn();
 }
 
 window.doSave = function () {

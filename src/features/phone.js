@@ -16,6 +16,11 @@ function countUnreadFrom(a, b) { return getConvo(a, b).filter(m => m.from !== a 
 
 export function showPhoneToggle() { const el = document.getElementById('phone-toggle'); if (el) el.style.display = 'block'; }
 
+export function closePhone() {
+    phoneOpen = false;
+    document.getElementById('phone-ui')?.classList.remove('open');
+}
+
 export function togglePhone() {
     phoneOpen = !phoneOpen;
     const ui = document.getElementById('phone-ui');

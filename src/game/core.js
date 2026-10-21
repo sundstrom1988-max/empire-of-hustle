@@ -1,7 +1,7 @@
 import { SHOPS, EVENTS, PITCH_SUCCESS, PITCH_FAIL, CARS } from '../data/gameData.js';
 import { gameState, currentPlayer, formatNum, saveGame, jailPlayer, isMyTurn } from '../game/state.js';
 import { playSound, spawnParticles, showToast } from '../utils/effects.js';
-import { syncState } from '../multiplayer/sync.js';
+import { syncState, isRoomHost } from '../multiplayer/sync.js';
 import { checkEvidence, showHeistButton } from '../features/gargamel.js';
 
 // ── HUD ──
@@ -386,6 +386,7 @@ export function endTurn(fromAI = false) {
     // Check win before handing the turn over
     if (p.money >= gameState.winAmount) {
         gameState.gameOver = true;
+        gameState.winnerKey = p.charKey;
         saveGame();
         updateHUD();
         showWin(p);
@@ -396,7 +397,9 @@ export function endTurn(fromAI = false) {
     gameState.currentPlayerIdx = (gameState.currentPlayerIdx + 1) % gameState.players.length;
     if (gameState.currentPlayerIdx === 0) gameState.round++;
     const next = currentPlayer();
-    if (next.isAI) gameState.aiThinking = true;
+    // Online kör alltid värden AI-turer, så de inte fastnar om en gäst går
+    const runAIHere = next.isAI && (!gameState.isOnline || isRoomHost());
+    if (runAIHere) gameState.aiThinking = true;
     updateHUD(); renderEmpire(); renderShop();
     window.game?.refreshUI?.();
     // Refresh heist button visibility
@@ -404,7 +407,15 @@ export function endTurn(fromAI = false) {
     saveGame();
     updateTurnBar();
     if (gameState.isOnline) syncState(true);
-    if (next.isAI) setTimeout(() => runAITurn(), 900);
+    if (runAIHere) setTimeout(() => runAITurn(), 900);
+}
+
+// Värden startar AI-turen om den är på tur och ingen kör den
+export function ensureAITurn() {
+    const p = currentPlayer();
+    if (!p || !p.isAI || gameState.aiThinking || gameState.gameOver) return;
+    if (gameState.isOnline && !isRoomHost()) return;
+    runAITurn();
 }
 
 export function updateTurnBar() {
@@ -418,8 +429,18 @@ export function updateTurnBar() {
     el.style.borderColor = p.char.color;
 }
 
+// Visar vinnaren för alla, även online-spelare som bara fick vinsten via synk
+let winShown = false;
+export function showWinIfOver() {
+    if (!gameState.gameOver || !gameState.winnerKey) return;
+    const p = gameState.players.find(pl => pl.charKey === gameState.winnerKey);
+    if (p) showWin(p);
+}
+
 function showWin(p) {
     gameState.gameOver = true;
+    if (winShown) return;
+    winShown = true;
     playSound('win');
     spawnParticles([p.char.icon, '👑', '🏆', '💎', '🎉'], 30);
     const overlay = document.getElementById('overlay-event');

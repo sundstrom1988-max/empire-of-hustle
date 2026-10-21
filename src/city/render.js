@@ -80,7 +80,7 @@ export class Renderer {
         this.cam.x += (tx - this.cam.x) * k;
         this.cam.y += (ty - this.cam.y) * k;
         this.cam.zoom += (zTarget - this.cam.zoom) * Math.min(1, dt * 1.6);
-        const sh = world.shake * 9;
+        const sh = dt > 0 ? world.shake * 9 : 0; // ingen skakning när spelet står pausat
         this.cam.sx = (Math.random() - 0.5) * sh;
         this.cam.sy = (Math.random() - 0.5) * sh;
     }

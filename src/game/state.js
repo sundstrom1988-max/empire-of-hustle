@@ -114,8 +114,11 @@ export function jailPlayer(p, reason, rounds) {
 
 // ── Online merge ──
 // Spelarobjekt uppdateras på plats så att referenser (t.ex. i Stan) håller.
+// Under min egen online-tur är jag källan till min spelares data: en äldre
+// kopia från värden (t.ex. när någon går med) får inte skriva över den.
 export function mergeRemoteState(remote) {
     if (!remote || typeof remote !== 'object') return false;
+    const protectKey = gameState.isOnline && isMyTurn() ? gameState.myCharKey : null;
     for (const [k, v] of Object.entries(remote)) {
         if (LOCAL_KEYS.includes(k) || k === 'players') continue;
         gameState[k] = v;
@@ -126,6 +129,7 @@ export function mergeRemoteState(remote) {
             const fresh = normalizePlayer(rp);
             const existing = old.get(fresh.charKey);
             if (!existing) return fresh;
+            if (fresh.charKey === protectKey) return existing;
             for (const key of Object.keys(existing)) if (!(key in fresh)) delete existing[key];
             return Object.assign(existing, fresh);
         });
@@ -160,6 +164,11 @@ export function loadGame(accountKey) {
         parsed = JSON.parse(raw);
     } catch (e) { return false; }
     if (!parsed || !Array.isArray(parsed.players) || parsed.players.length === 0) return false;
+    // Ett avgjort spel återupptas inte — då börjar man om
+    if (parsed.gameOver) {
+        try { localStorage.removeItem(saveKey(accountKey)); } catch (e) { /* ignore */ }
+        return false;
+    }
     const keepLocal = { musicMuted: gameState.musicMuted, sfxMuted: gameState.sfxMuted };
     resetGameState();
     Object.assign(gameState, parsed, keepLocal);

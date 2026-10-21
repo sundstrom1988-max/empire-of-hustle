@@ -122,6 +122,34 @@ describe('World simulation', () => {
         expect(w2.player.vehicle).toBe(null);
     });
 
+    it('refuses to fence a car that a smash mission needs', () => {
+        const w = makeWorld(9);
+        const fence = city.markers.fence;
+        const target = createVehicle('gang_taco', fence.x, fence.y, 0);
+        w.vehicles.push(target);
+        w.mission = { type: 'smash', cars: [target], count: 1 };
+        w.player.vehicle = target; target.driver = 'player';
+        w.player.x = fence.x; w.player.y = fence.y;
+        const m0 = w.profile.money;
+        w.update(DT, IDLE);
+        expect(w.profile.money).toBe(m0);
+        expect(w.vehicles.includes(target)).toBe(true);
+    });
+
+    it('does not hurt the player inside an intact car when something explodes nearby', () => {
+        const w = makeWorld(12);
+        const rolls = createVehicle('rolls', 2000, 1000, 0);
+        w.vehicles.push(rolls);
+        w.player.vehicle = rolls; rolls.driver = 'player';
+        w.player.x = rolls.x; w.player.y = rolls.y;
+        const bomb = createVehicle('volvo', 2060, 1000, 0);
+        w.vehicles.push(bomb);
+        w.explode(bomb);
+        expect(w.player.hp).toBe(100);
+        expect(rolls.hp).toBeLessThan(rolls.maxHp);
+        expect(w.state).toBe('play');
+    });
+
     it('clears the wanted level at the paint shop for a fee', () => {
         const w = makeWorld(4);
         const sp = city.markers.sprays[0];

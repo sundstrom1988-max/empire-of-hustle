@@ -648,7 +648,8 @@ export class World {
         }
         if (byPlayer) addHeat(this.wanted, CRIME.explosion, this.copNear(700, false));
         if (p.vehicle === v) { p.hp = 0; this.wasted('Du sprängdes i luften!'); }
-        else if (!p.dead && d0 < R) {
+        else if (!p.vehicle && !p.dead && d0 < R) {
+            // Till fots tar du smällen själv; i en hel bil tar bilen den
             p.hp -= 90 * (1 - d0 / R);
             if (p.hp <= 0) { p.hp = 0; this.wasted('Fångad i explosionen!'); }
         }
@@ -745,6 +746,7 @@ export class World {
         const v = this.player.vehicle;
         if (v.owned) { this.message('🔧 "Det där är ju din egen bil, bram!"'); return; }
         if (this.mission && this.mission.car === v) { this.message('🔧 "Den bilen ska till gänget, inte hit!"'); return; }
+        if (this.mission && (this.mission.cars || []).includes(v)) { this.message('🔧 "Den där ska krossas, inte säljas!"'); return; }
         if (v.wrecked) { this.message('🔧 "Vi tar inte emot brinnande skrot!"'); return; }
         if ((this.profile.fencedThisRound || 0) >= this.maxFence) { this.message('🔧 "Vi är fulla för idag. Kom tillbaka nästa runda."'); return; }
         const val = fenceValue(v);

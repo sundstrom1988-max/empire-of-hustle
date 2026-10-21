@@ -85,6 +85,10 @@ export function createRoom(playerData, attempt = 0) {
 
 // ── Join someone's room ── resolves { ok, reason }
 export function joinRoom(roomId, playerData) {
+    // Ett andra klick medan vi ansluter skulle annars lämna en gammal timer
+    // som kopplar ner den lyckade anslutningen tio sekunder senare.
+    if (pendingJoin) return Promise.resolve({ ok: false, reason: 'Ansluter redan...' });
+    if (peer && gameState.isOnline) return Promise.resolve({ ok: false, reason: 'Du är redan i ett rum' });
     return new Promise((resolve) => {
         let done = false;
         const finish = (result) => {
