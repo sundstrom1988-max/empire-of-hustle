@@ -266,3 +266,23 @@ body.city-open .cbd-leaf {
         padding: 5px 8px;
     }
 }
+
+/* Gängmedlemskap i telefonen */
+.phone-member {
+    font-family: 'Bungee', Impact, sans-serif;
+    font-size: 12px;
+    color: rgba(255, 255, 255, 0.75);
+    background: rgba(255, 255, 255, 0.05);
+    border-left: 3px solid var(--gang);
+    padding: 8px 10px;
+    margin-bottom: 14px;
+}
+
+.phone-member.join {
+    color: var(--gang);
+}
+
+.city-go.join {
+    background: var(--gang);
+    color: #111;
+}

@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { createWanted, addHeat, stars, updateWanted, copTarget, setStars, clearWanted } from '../src/city/wanted.js';
-import { createMission, updateMission, rewardFor, applyRespect, phoneOpen, isHostile, MISSION_TYPES } from '../src/city/missions.js';
+import { createMission, updateMission, rewardFor, applyRespect, phoneOpen, isHostile, MISSION_TYPES, canJoin, phoneAccess } from '../src/city/missions.js';
+import { GANGS } from '../src/city/constants.js';
 import { generateCity } from '../src/city/map.js';
 import { mulberry32 } from '../src/city/rng.js';
 
@@ -39,11 +40,18 @@ describe('wanted level', () => {
 });
 
 describe('respect', () => {
-    it('raises the giver and lowers the rivals on success', () => {
-        const r = applyRespect({ kebab: 0, orden: 0, taco: 0 }, 'kebab', true);
+    it('raises the giver and lowers only its rival on success', () => {
+        const r = applyRespect({}, 'kebab', true);
         expect(r.kebab).toBeGreaterThan(0);
-        expect(r.orden).toBeLessThan(0);
-        expect(r.taco).toBeLessThan(0);
+        expect(r.dods).toBeLessThan(0);
+        expect(r.orden).toBe(0);
+        const mc = applyRespect({}, 'hdmc', true);
+        expect(mc.bmc).toBeLessThan(0);
+        expect(mc.taco).toBe(0);
+    });
+    it('knows all six gangs', () => {
+        const r = applyRespect({}, 'bmc', false);
+        expect(Object.keys(r).sort()).toEqual(['bmc', 'dods', 'hdmc', 'kebab', 'orden', 'taco']);
     });
     it('lowers the giver on failure and stays within bounds', () => {
         let r = { kebab: -98, orden: 99, taco: 0 };
@@ -57,6 +65,24 @@ describe('respect', () => {
         expect(phoneOpen({ kebab: -40 }, 'kebab')).toBe(false);
         expect(isHostile({ taco: -40 }, 'taco')).toBe(true);
         expect(isHostile({ taco: 10 }, 'taco')).toBe(false);
+    });
+});
+
+describe('gang membership', () => {
+    it('needs enough respect to join and no current gang', () => {
+        expect(canJoin({ respect: { hdmc: 10 }, gang: null }, 'hdmc')).toBe(false);
+        expect(canJoin({ respect: { hdmc: 30 }, gang: null }, 'hdmc')).toBe(true);
+        expect(canJoin({ respect: { hdmc: 60 }, gang: 'bmc' }, 'hdmc')).toBe(false);
+    });
+    it('the rival of your gang hangs up on you', () => {
+        expect(phoneAccess({ respect: {}, gang: 'hdmc' }, 'bmc')).toBe(false);
+        expect(phoneAccess({ respect: {}, gang: 'hdmc' }, 'taco')).toBe(true);
+        expect(phoneAccess({ respect: { taco: -50 }, gang: null }, 'taco')).toBe(false);
+    });
+    it('pays members a bonus from their own gang', () => {
+        const base = createMission('dods', { rng: mulberry32(1), round: 1, respect: 40, city, from: city.spawn, type: 'delivery' });
+        const member = createMission('dods', { rng: mulberry32(1), round: 1, respect: 40, city, from: city.spawn, type: 'delivery', member: true });
+        expect(member.reward).toBeGreaterThan(base.reward);
     });
 });
 
@@ -86,14 +112,19 @@ function fakeWorld(at) {
 }
 
 describe('createMission', () => {
-    it('can create every mission type with a target and a reward', () => {
-        for (const type of MISSION_TYPES) {
-            const m = createMission('taco', { rng: mulberry32(5), round: 3, respect: 0, city, from: city.spawn, type });
+    it('can create every mission type for every gang', () => {
+        for (const g of GANGS) for (const type of MISSION_TYPES) {
+            const m = createMission(g.id, { rng: mulberry32(5), round: 3, respect: 0, city, from: city.spawn, type });
             expect(m.type).toBe(type);
             expect(m.reward).toBeGreaterThan(0);
             expect(m.timeLimit).toBeGreaterThan(20);
-            expect(m.brief.length).toBeGreaterThan(10);
+            expect(m.brief.length, `${g.id}/${type}`).toBeGreaterThan(10);
+            expect(m.brief).not.toContain('undefined');
         }
+    });
+    it('smash missions target the gang rival', () => {
+        const m = createMission('hdmc', { rng: mulberry32(5), round: 1, respect: 0, city, from: city.spawn, type: 'smash' });
+        expect(m.rival).toBe('bmc');
     });
 });
 
@@ -132,6 +163,7 @@ describe('updateMission: smash', () => {
         const world = fakeWorld(city.spawn);
         updateMission(m, world, 0.1);
         expect(world.spawned.length).toBe(m.count);
+        expect(world.spawned[0].type).toBe('gang:' + m.rival);
         world.spawned.forEach(v => { v.hp = 0; v.wrecked = true; });
         expect(updateMission(m, world, 0.1)).toBe('success');
     });

@@ -5,6 +5,9 @@ import { mulberry32 } from '../src/city/rng.js';
 import { createPlayerState } from '../src/game/state.js';
 import { setStars, stars } from '../src/city/wanted.js';
 import { createVehicle } from '../src/city/vehicles.js';
+import { createPed } from '../src/city/ai.js';
+import { TILE } from '../src/city/constants.js';
+import { districtAt, isWalkableTile } from '../src/city/map.js';
 
 const city = generateCity(1337);
 const DT = 1 / 60;
@@ -176,5 +179,160 @@ describe('World simulation', () => {
         w.player.x += 500; w.update(DT, IDLE);
         w.player.x = mk.x; w.update(DT, IDLE);
         expect(profile.money).toBe(m0 + Math.floor(80 * 2 * 0.3));
+    });
+});
+
+// Ställ spelaren på en trottoar i ett visst turf
+function standIn(w, turf) {
+    const ph = city.markers.phones.find(p => districtAt(city, p.x, p.y) === turf);
+    w.player.x = ph.x; w.player.y = ph.y;
+    w.inside.add('phone-' + ph.gang); // svara inte i telefonen
+    w.updateDistrict();
+    return ph;
+}
+
+describe('Gängliv', () => {
+    it('langning på någon annans turf drar dit opps', () => {
+        const profile = createPlayerState('kimit');
+        profile.cityGoods = 10;
+        const w = makeWorld(21, profile);
+        standIn(w, 'vasterort');
+        let sales = 0;
+        while (!(w.beef.dods > 0) && sales < 8) { w.sellTo(createPed(w.player.x + 10, w.player.y, w.rnd)); sales++; }
+        expect(w.beef.dods).toBeGreaterThan(0);
+        expect(w.events.some(e => e.type === 'big' && e.text === 'OPPS!')).toBe(true);
+        const opps = w.peds.filter(pd => pd.attack && pd.gang === 'dods');
+        expect(opps.length).toBeGreaterThanOrEqual(3);
+        expect(profile.respect.dods).toBeLessThan(0);
+        expect(profile.money).toBeGreaterThan(1000);
+    });
+
+    it('opps slår ner den som står still', () => {
+        const profile = createPlayerState('kimit');
+        const w = makeWorld(22, profile);
+        standIn(w, 'vasterort');
+        w.spawnOpps('dods');
+        let t = 0;
+        while (w.state === 'play' && t < 40) { w.update(DT, IDLE); t += DT; }
+        expect(w.player.hp).toBeLessThan(100);
+    });
+
+    it('på ditt eget turf är det säkert och ger respekt', () => {
+        const profile = createPlayerState('kimit');
+        profile.gang = 'dods'; profile.respect.dods = 50; profile.cityGoods = 6;
+        const w = makeWorld(23, profile);
+        standIn(w, 'vasterort');
+        for (let i = 0; i < 6; i++) w.sellTo(createPed(w.player.x + 10, w.player.y, w.rnd));
+        expect(w.beef.dods || 0).toBe(0);
+        expect(profile.respect.dods).toBeGreaterThan(50);
+        expect(profile.cityGoods).toBe(0);
+    });
+
+    it('kunder kommer fram när du står still med varor', () => {
+        const profile = createPlayerState('kimit');
+        profile.cityGoods = 3;
+        const w = makeWorld(24, profile);
+        standIn(w, 'centrum');
+        const m0 = profile.money;
+        for (let i = 0; i < 60 * 40 && profile.cityGoods === 3; i++) w.update(DT, IDLE);
+        expect(profile.cityGoods).toBeLessThan(3);
+        expect(profile.money).toBeGreaterThan(m0);
+    });
+
+    it('köper varor hos Langaren inom rundans gräns', () => {
+        const profile = createPlayerState('kimit');
+        profile.money = 5000;
+        const w = makeWorld(25, profile);
+        expect(w.buyGoods(10)).toBe(true);
+        expect(profile.cityGoods).toBe(10);
+        expect(profile.money).toBe(5000 - 1200);
+        expect(w.buyGoods(1)).toBe(false);
+    });
+
+    it('man kan gå med i ett gäng med tillräcklig respekt', () => {
+        const profile = createPlayerState('kimit');
+        const w = makeWorld(26, profile);
+        expect(w.joinGang('hdmc')).toBe(false);
+        profile.respect.hdmc = 35;
+        expect(w.joinGang('hdmc')).toBe(true);
+        expect(profile.gang).toBe('hdmc');
+        expect(profile.respect.bmc).toBeLessThanOrEqual(-40);
+        expect(w.vehicles.some(v => v.owned && v.type === 'hd' && v.gang === 'hdmc')).toBe(true);
+        // Nästa gång du åker ut står klubbens HD vid HQ
+        const w2 = makeWorld(27, profile);
+        expect(w2.vehicles.some(v => v.owned && v.type === 'hd')).toBe(true);
+    });
+
+    it('den som hoppar av blir jagad', () => {
+        const profile = createPlayerState('kimit');
+        profile.gang = 'bmc'; profile.respect.bmc = 60;
+        const w = makeWorld(28, profile);
+        expect(w.leaveGang()).toBe(true);
+        expect(profile.gang).toBe(null);
+        expect(w.gangHostile('bmc')).toBe(true);
+    });
+
+    it('slag till fots slår ner folk', () => {
+        const w = makeWorld(29);
+        standIn(w, 'orten');
+        w.player.angle = 0;
+        const ped = createPed(w.player.x + 14, w.player.y, w.rnd);
+        w.peds.push(ped);
+        for (let i = 0; i < 60 * 3 && !(ped.down > 0); i++) w.update(DT, { ...IDLE, punch: i % 30 === 0 });
+        expect(ped.down).toBeGreaterThan(0);
+    });
+
+    it('metrosexuella smyger efter dig och kommenterar', () => {
+        const w = makeWorld(30);
+        standIn(w, 'centrum');
+        w.peds.length = 0;
+        // En gångbar punkt en bit bort
+        let mx = 0, my = 0;
+        for (let a = 0; a < 64; a++) {
+            mx = w.player.x + Math.cos(a / 10) * 200; my = w.player.y + Math.sin(a / 10) * 200;
+            if (isWalkableTile(city, Math.floor(mx / TILE), Math.floor(my / TILE))) break;
+        }
+        const metro = createPed(mx, my, w.rnd, { type: 'metro' });
+        w.peds.push(metro);
+        let talked = false;
+        for (let i = 0; i < 60 * 12; i++) {
+            w.update(DT, IDLE);
+            if (metro.say) talked = true;
+            w.player.x = city.markers.phones.find(p => districtAt(city, p.x, p.y) === 'centrum').x;
+        }
+        expect(Math.hypot(metro.x - w.player.x, metro.y - w.player.y)).toBeLessThan(140);
+        expect(talked).toBe(true);
+    });
+
+    it('gängets telefon erbjuder medlemskap', () => {
+        const profile = createPlayerState('kimit');
+        profile.respect.taco = 40;
+        const w = makeWorld(31, profile);
+        const ph = city.markers.phones.find(p => p.gang === 'taco');
+        w.player.x = ph.x; w.player.y = ph.y;
+        w.update(DT, IDLE);
+        const e = w.events.find(ev => ev.type === 'phone');
+        expect(e.canJoin).toBe(true);
+    });
+
+    it('rivalen till ditt gäng lägger på', () => {
+        const profile = createPlayerState('kimit');
+        profile.gang = 'hdmc'; profile.respect.hdmc = 50;
+        const w = makeWorld(32, profile);
+        const ph = city.markers.phones.find(p => p.gang === 'bmc');
+        w.player.x = ph.x; w.player.y = ph.y;
+        w.update(DT, IDLE);
+        expect(w.events.some(ev => ev.type === 'phone')).toBe(false);
+        expect(w.events.some(ev => ev.type === 'msg' && ev.text.includes('lägger på'))).toBe(true);
+    });
+
+    it('MC-gäng åker i flock på HD', () => {
+        const w = makeWorld(33);
+        const spot = w.findSpot(w.player.x, w.player.y, 300, 2000);
+        const pack = w.spawnGangConvoy('bmc', spot, false);
+        expect(pack.length).toBeGreaterThanOrEqual(2);
+        expect(pack.every(v => v.type === 'hd' && v.gang === 'bmc')).toBe(true);
+        const car = w.spawnGangConvoy('dods', spot, false);
+        expect(['bmw', 'audi', 'mercedes']).toContain(car[0].type);
     });
 });

@@ -47,7 +47,9 @@ describe('normalizePlayer', () => {
         const p = normalizePlayer(old);
         expect(p.money).toBe(5000);
         expect(p.char.name).toBe('Mehmet');
-        expect(p.respect).toEqual({ kebab: 0, orden: 0, taco: 0 });
+        expect(p.respect).toEqual({ kebab: 0, orden: 0, taco: 0, dods: 0, hdmc: 0, bmc: 0 });
+        expect(p.gang).toBe(null);
+        expect(p.cityGoods).toBe(0);
         expect(p.cars).toEqual([]);
         expect(p.jailRecord).toEqual([]);
         expect(p.missionsThisRound).toBe(0);

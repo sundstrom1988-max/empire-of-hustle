@@ -60,3 +60,15 @@ B behåller turordningsspelet (imperium, butik, svarta marknaden, häktet) och l
 
 - Vitest-enhetstester för ren logik: kartgenerering (deterministisk, sammanhängande gatunät), fysik (inga NaN, hastighetstak, kollision), efterlysning, uppdrag/respekt, sparmigrering, HTML-escape, online-sammanslagning.
 - Röktest i headless Chromium: starta spelet, åk ut på stan, kör runt, inga sidfel, skärmdumpar.
+
+## Tillägg: Gängliv (2026-10-21, runda 2)
+
+Önskemål: opps som kommer när man säljer på deras turf, att kunna gå med i gäng (i stil med Dödspatrullen, HA, BMC), MC-gäng med västar på HD, gatugäng i BMW/Audi/Mercedes, och metrosexuella som glider runt och creepar.
+
+- **Parodinamn i GTA-anda** i stället för verkliga organisationer (varumärken och verkliga våldsbrott): Dödsskvadronen 💀, Heavens Djävlar MC 😈, Bananidos MC 🍌. Namnen ligger i `src/city/constants.js` (`GANGS`).
+- **Sex turfs** (3×2): Västerort (Dödsskvadronen), Centrum (Mörka Orden), Skogsbacken (Heavens Djävlar), Orten (Kebabmaffian), Industrin (Bananidos), Hamnen (Tacokartellen). En telefon per gäng.
+- **Rivalpar:** Kebabmaffian ↔ Dödsskvadronen, Mörka Orden ↔ Tacokartellen, Heavens Djävlar ↔ Bananidos. Uppdrag ger +12 hos gänget och −10 hos rivalen.
+- **Gå med:** +30 respekt → "Gå med" i gängets telefon. Medlem: väst (MC) eller gängfärg, gängets hoj/bil vid HQ, +25 % på deras uppdrag, säkert att langa på deras turf. Rivalen sänks till −40. Avhopp = −100 och de jagar dig.
+- **Langning:** köp varor av Langaren på HQ-parkeringen (120 kr st, max 10 per runda). Stå still till fots så kommer kunder. Bättre betalt på annans turf, men varje affär där ökar risken för **OPPS**: 4 gängmedlemmar till fots + bil/MC-flock jagar och slåss i 60 s. Medlemmar av ditt eget gäng i närheten ställer upp.
+- **Slagsmål:** Space till fots = slag. Civila går ner på ett slag, gängmedlemmar tål fler. Att slå eller köra på en gängmedlem sänker respekten och drar in fler.
+- **Metrosexuella:** pastell, slickat hår, solglasögon, ofta på elsparkcykel. Smyger efter dig och kommenterar din stil i pratbubblor; tutar du flyr de.

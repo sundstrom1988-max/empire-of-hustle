@@ -48,20 +48,24 @@ describe('generateCity', () => {
 
     it('places all the special locations on walkable ground', () => {
         const m = city.markers;
-        const all = [m.home, m.fence, ...m.sprays, ...m.phones, ...m.businesses, ...m.places];
+        const all = [m.home, m.dealer, m.fence, ...m.sprays, ...m.phones, ...m.businesses, ...m.places];
+        expect(Math.hypot(m.dealer.x - city.spawn.x, m.dealer.y - city.spawn.y)).toBeGreaterThan(150);
         for (const mk of all) {
             const tx = Math.floor(mk.x / TILE), ty = Math.floor(mk.y / TILE);
             expect(isWalkableTile(city, tx, ty), JSON.stringify(mk)).toBe(true);
         }
-        expect(m.phones.map(p => p.gang).sort()).toEqual(['kebab', 'orden', 'taco']);
+        expect(m.phones.map(p => p.gang).sort()).toEqual(['bmc', 'dods', 'hdmc', 'kebab', 'orden', 'taco']);
         expect(m.sprays.length).toBe(2);
         expect(m.businesses.length).toBe(8);
-        expect(m.places.length).toBeGreaterThanOrEqual(12);
+        expect(m.places.length).toBeGreaterThanOrEqual(18);
+        for (const d of ['vasterort', 'centrum', 'skogsbacken', 'orten', 'industrin', 'hamnen']) {
+            expect(m.places.some(pl => pl.district === d), d).toBe(true);
+        }
         expect(districtAt(city, m.fence.x, m.fence.y)).toBe('hamnen');
     });
 
     it('puts every phone in its own gang district', () => {
-        const want = { kebab: 'orten', orden: 'centrum', taco: 'hamnen' };
+        const want = { kebab: 'orten', orden: 'centrum', taco: 'hamnen', dods: 'vasterort', hdmc: 'skogsbacken', bmc: 'industrin' };
         for (const ph of city.markers.phones) expect(districtAt(city, ph.x, ph.y)).toBe(want[ph.gang]);
     });
 
@@ -71,9 +75,12 @@ describe('generateCity', () => {
         for (const s of city.homeParking) expect(isSolidAt(city, s.x, s.y)).toBe(false);
     });
 
-    it('splits the map into three districts', () => {
-        expect(districtAt(city, 5 * TILE, 30 * TILE)).toBe('orten');
-        expect(districtAt(city, 50 * TILE, 10 * TILE)).toBe('centrum');
+    it('splits the map into six turfs', () => {
+        expect(districtAt(city, 5 * TILE, 10 * TILE)).toBe('vasterort');
+        expect(districtAt(city, 32 * TILE, 10 * TILE)).toBe('centrum');
+        expect(districtAt(city, 50 * TILE, 10 * TILE)).toBe('skogsbacken');
+        expect(districtAt(city, 5 * TILE, 50 * TILE)).toBe('orten');
+        expect(districtAt(city, 32 * TILE, 50 * TILE)).toBe('industrin');
         expect(districtAt(city, 50 * TILE, 50 * TILE)).toBe('hamnen');
     });
 

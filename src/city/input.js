@@ -80,7 +80,8 @@ export class Input {
             my: down - up,
             run: this.has('run'),
             horn: this.has('horn'),
-            action: this.pressed('act')
+            action: this.pressed('act'),
+            punch: this.pressed('hb')   // Space till fots = slag
         };
     }
 

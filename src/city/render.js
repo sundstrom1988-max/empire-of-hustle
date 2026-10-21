@@ -8,7 +8,7 @@
 
 import { TILE, T, N, E, S, W, DX, DY } from './constants.js';
 import { tileAt, laneDirs } from './map.js';
-import { phoneOpen } from './missions.js';
+import { phoneAccess, gangById } from './missions.js';
 import { SHOPS } from '../data/gameData.js';
 
 const CHUNK = 8; // rutor per cache-bit
@@ -114,6 +114,7 @@ export class Renderer {
         this.drawBuildings(world, view);
         this.drawParticles(world, view);
         this.drawTargetMarker(world);
+        this.drawSpeech(world, view);
         this.drawFloaters(world);
         ctx.setTransform(1, 0, 0, 1, 0, 0);
         this.drawLighting(world, view);
@@ -289,8 +290,8 @@ export class Renderer {
         const pulse = 0.5 + 0.5 * Math.sin(t * 5);
         for (const ph of m.phones) {
             if (!vis(ph)) continue;
-            const open = phoneOpen(world.profile.respect || {}, ph.gang) && !world.mission;
-            const col = { kebab: '#22c55e', orden: '#a855f7', taco: '#f97316' }[ph.gang];
+            const open = phoneAccess(world.profile, ph.gang) && !world.mission;
+            const col = gangById(ph.gang).color;
             ctx.fillStyle = open ? col : '#555';
             ctx.globalAlpha = open ? 0.25 + pulse * 0.25 : 0.25;
             ctx.beginPath(); ctx.arc(ph.x, ph.y, 30 + (open ? pulse * 8 : 0), 0, Math.PI * 2); ctx.fill();
@@ -318,6 +319,13 @@ export class Renderer {
             ctx.fillStyle = `rgba(255,210,63,${0.15 + pulse * 0.15})`;
             ctx.beginPath(); ctx.arc(h.x, h.y, 34, 0, Math.PI * 2); ctx.fill();
             this.emoji('🏠', h.x, h.y, 22);
+        }
+        const dl = m.dealer;
+        if (dl && vis(dl)) {
+            ctx.fillStyle = `rgba(163,230,53,${0.18 + pulse * 0.2})`;
+            ctx.beginPath(); ctx.arc(dl.x, dl.y, 26, 0, Math.PI * 2); ctx.fill();
+            this.ring(dl.x, dl.y, 26, '#a3e635', 2);
+            this.emoji('🎒', dl.x, dl.y, 20);
         }
         const owned = world.profile.owned || [];
         const collected = world.profile.cityCollected || [];
@@ -348,35 +356,71 @@ export class Renderer {
     }
 
     // ── Folk ──
-    drawPedShape(ctx, ped, shirt, skin, hair, phase, scale = 1) {
+    // extra: { vest: gängfärg för ryggmärket, metro, scooter, punch }
+    drawPedShape(ctx, ped, shirt, skin, hair, phase, scale = 1, extra = {}) {
         ctx.save();
         ctx.translate(ped.x, ped.y);
         if (ped.down > 0) {
             ctx.rotate(ped.angle + Math.PI / 2);
             ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.beginPath(); ctx.ellipse(1, 2, 6, 11, 0, 0, Math.PI * 2); ctx.fill();
-            ctx.fillStyle = shirt; ctx.beginPath(); ctx.ellipse(0, 0, 5, 9, 0, 0, Math.PI * 2); ctx.fill();
+            ctx.fillStyle = extra.vest ? '#111' : shirt; ctx.beginPath(); ctx.ellipse(0, 0, 5, 9, 0, 0, Math.PI * 2); ctx.fill();
+            if (extra.vest) { ctx.fillStyle = extra.vest; ctx.beginPath(); ctx.arc(0, 1, 2.6, 0, Math.PI * 2); ctx.fill(); }
             ctx.fillStyle = skin; ctx.beginPath(); ctx.arc(0, -11, 3.5, 0, Math.PI * 2); ctx.fill();
             ctx.restore();
             return;
         }
         ctx.rotate(ped.angle);
         ctx.scale(scale, scale);
-        const swing = Math.sin(phase) * 4;
+        const swing = extra.scooter ? 0 : Math.sin(phase) * 4;
         ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.beginPath(); ctx.ellipse(2, 2, 6, 7, 0, 0, Math.PI * 2); ctx.fill();
-        ctx.fillStyle = '#1f2937';
+        if (extra.scooter) {
+            // Elsparkcykel: bräda + styre
+            ctx.fillStyle = '#27272a'; roundRect(ctx, -8, -2.2, 18, 4.4, 2); ctx.fill();
+            ctx.fillStyle = '#22c55e'; ctx.fillRect(-8, -2.2, 3, 4.4);
+            ctx.strokeStyle = '#a1a1aa'; ctx.lineWidth = 1.5;
+            ctx.beginPath(); ctx.moveTo(9, -5); ctx.lineTo(9, 5); ctx.stroke();
+        }
+        ctx.fillStyle = extra.metro ? '#e5e7eb' : '#1f2937';
         ctx.fillRect(swing - 2, -4, 5, 3); ctx.fillRect(-swing - 2, 1, 5, 3);
         ctx.fillStyle = shirt; ctx.beginPath(); ctx.ellipse(0, 0, 4.2, 7, 0, 0, Math.PI * 2); ctx.fill();
+        if (extra.vest) {
+            // Skinnväst med ryggmärke
+            ctx.fillStyle = '#111';
+            ctx.beginPath(); ctx.ellipse(-0.8, 0, 3.8, 7.2, 0, Math.PI * 0.5, Math.PI * 1.5); ctx.fill();
+            ctx.fillRect(-0.8, -6.5, 1.8, 13);
+            ctx.fillStyle = extra.vest; ctx.beginPath(); ctx.arc(-2.9, 0, 2.3, 0, Math.PI * 2); ctx.fill();
+            ctx.strokeStyle = extra.patch || '#fff'; ctx.lineWidth = 0.9;
+            ctx.beginPath(); ctx.arc(-2.9, 0, 3.3, Math.PI * 0.6, Math.PI * 1.4); ctx.stroke();
+        }
+        if (extra.punch) { ctx.fillStyle = skin; ctx.beginPath(); ctx.arc(9, 3.5, 2.4, 0, Math.PI * 2); ctx.fill(); }
         ctx.fillStyle = skin; ctx.beginPath(); ctx.arc(0.5, 0, 3.4, 0, Math.PI * 2); ctx.fill();
         ctx.fillStyle = hair; ctx.beginPath(); ctx.arc(-0.6, 0, 3.2, Math.PI * 0.5, Math.PI * 1.5); ctx.fill();
+        if (extra.metro) {
+            // Slickat hår och solglasögon
+            ctx.fillStyle = hair; ctx.beginPath(); ctx.ellipse(-0.3, 0, 3.6, 3.3, 0, Math.PI * 0.55, Math.PI * 1.45); ctx.fill();
+            ctx.fillStyle = '#0a0a0a'; ctx.fillRect(2.3, -2.6, 1.6, 5.2);
+        }
         ctx.restore();
+    }
+
+    pedExtra(ped) {
+        const g = ped.vest ? gangById(ped.gang) : null;
+        return { vest: g ? g.color : null, patch: g?.patch, metro: ped.type === 'metro', scooter: ped.scooter };
     }
 
     drawPeds(world, view) {
         const ctx = this.ctx;
         for (const ped of world.peds) {
             if (ped.x < view.x0 - 20 || ped.x > view.x1 + 20 || ped.y < view.y0 - 20 || ped.y > view.y1 + 20) continue;
-            this.drawPedShape(ctx, ped, ped.cop ? '#1e3a8a' : ped.shirt, ped.skin, ped.cop ? '#0f172a' : ped.hair, ped.phase);
+            this.drawPedShape(ctx, ped, ped.cop ? '#1e3a8a' : ped.shirt, ped.skin, ped.cop ? '#0f172a' : ped.hair, ped.phase, 1.3, this.pedExtra(ped));
             if (ped.down > 0 && ped.down > 2) this.emoji('💫', ped.x, ped.y - 14, 12);
+            else if (ped.attack && ped.down <= 0) {
+                // Opps: röd ring och arg min
+                ctx.globalAlpha = 0.55 + 0.35 * Math.sin(this.t * 10);
+                this.ring(ped.x, ped.y, 12, ped.targetPed ? (gangById(ped.gang)?.color || '#22c55e') : '#ef4444', 2.5);
+                ctx.globalAlpha = 1;
+                this.emoji(ped.targetPed ? '🛡️' : '😠', ped.x, ped.y - 18, 12);
+            } else if (ped.buyer) this.emoji('💸', ped.x, ped.y - 18, 14);
         }
     }
 
@@ -385,11 +429,14 @@ export class Renderer {
         if (p.vehicle) return;
         const ctx = this.ctx;
         ctx.globalAlpha = 0.5 + 0.3 * Math.sin(this.t * 6);
-        this.ring(p.x, p.y, 15, p.color, 2);
+        this.ring(p.x, p.y, 17, p.color, 2);
         ctx.globalAlpha = 1;
         const fake = { x: p.x, y: p.y, angle: p.angle, down: p.dead ? 1 : 0 };
-        this.drawPedShape(ctx, fake, p.color, '#e0ac69', '#1f1300', p.walkPhase, 1.15);
-        this.emoji(p.charIcon, p.x, p.y - 22, 14);
+        const g = gangById(world.profile.gang);
+        const mc = g && g.kind === 'mc';
+        this.drawPedShape(ctx, fake, g && !mc ? g.color : p.color, '#e0ac69', '#1f1300', p.walkPhase, 1.45,
+            { vest: mc ? g.color : null, patch: g?.patch, punch: p.punchT > 0 });
+        this.emoji(p.charIcon, p.x, p.y - 25, 15);
     }
 
     // ── Fordon ──
@@ -402,7 +449,7 @@ export class Renderer {
             ctx.translate(v.x, v.y);
             ctx.rotate(v.angle);
             const L = v.spec.l, Wd = v.spec.w;
-            if (v.spec.kind === 'bike') { this.drawBike(ctx, v, L, Wd); ctx.restore(); continue; }
+            if (v.spec.kind === 'bike') { this.drawBike(ctx, v, L, Wd, world); ctx.restore(); continue; }
             ctx.fillStyle = 'rgba(0,0,0,0.38)';
             roundRect(ctx, -L / 2 + 3, -Wd / 2 + 4, L, Wd, 6); ctx.fill();
             const body = v.exploded ? '#1a1a1a' : v.wrecked ? shadeColor(v.color, 0.35) : v.color;
@@ -432,10 +479,13 @@ export class Renderer {
                     ctx.fillStyle = on && !flash ? '#3b82f6' : '#1e3a8a'; ctx.fillRect(-4, 0, 6, (Wd - 8) / 2);
                 }
                 if (v.spec.taxi) { ctx.fillStyle = '#111'; ctx.fillRect(-6, -4, 9, 8); ctx.fillStyle = '#fde047'; ctx.fillRect(-5, -3, 7, 6); }
-                if (v.spec.gang) {
-                    ctx.fillStyle = 'rgba(0,0,0,0.5)'; ctx.fillRect(-L / 2 + 2, -1.5, L - 4, 3);
+                if (v.gang) {
+                    const g = gangById(v.gang);
+                    ctx.fillStyle = g.color; ctx.globalAlpha = 0.8;
+                    ctx.fillRect(-L / 2 + 2, -1.5, L - 4, 3);
+                    ctx.globalAlpha = 1;
                     ctx.rotate(-v.angle);
-                    this.emoji({ kebab: '🥙', orden: '🧙', taco: '🌮' }[v.spec.gang], 0, 0, 12);
+                    this.emoji(g.icon, 0, 0, 12);
                     ctx.rotate(v.angle);
                 }
                 if (v.spec.sport) { ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(-L / 2 + 2, -2, L - 6, 1.5); ctx.fillRect(-L / 2 + 2, 1, L - 6, 1.5); }
@@ -454,14 +504,54 @@ export class Renderer {
         }
     }
 
-    drawBike(ctx, v, L, Wd) {
+    drawBike(ctx, v, L, Wd, world) {
         ctx.fillStyle = 'rgba(0,0,0,0.35)'; ctx.fillRect(-L / 2 + 2, -Wd / 4 + 3, L, Wd / 2);
-        ctx.fillStyle = '#111'; ctx.fillRect(-L / 2, -2, 8, 4); ctx.fillRect(L / 2 - 8, -2, 8, 4);
-        ctx.fillStyle = v.wrecked ? '#222' : v.color; roundRect(ctx, -L / 2 + 5, -Wd / 4, L - 10, Wd / 2, 2); ctx.fill();
-        ctx.fillStyle = '#9ca3af'; ctx.fillRect(L / 2 - 9, -Wd / 2, 2, Wd);
+        // Vem sitter på? Gängmedlemmar i MC-klubbar bär väst, spelaren bär sin egen stil
+        let riderShirt = '#3b82f6', vest = null, patch = null;
+        if (v.driver === 'player') {
+            const g = gangById(world.profile.gang);
+            riderShirt = g && g.kind !== 'mc' ? g.color : world.player.color;
+            if (g && g.kind === 'mc') { vest = g.color; patch = g.patch; }
+        } else if (v.gang) {
+            const g = gangById(v.gang);
+            riderShirt = g.kind === 'mc' ? '#3f3f46' : g.color;
+            if (g.kind === 'mc') { vest = g.color; patch = g.patch; }
+        }
+        if (v.spec.chopper) {
+            // HD-chopper: fet bakdäck, lång parallell framgaffel, droppformad tank, ape hangers
+            const front = L / 2, hb = L / 2 - 15;
+            ctx.fillStyle = '#111'; roundRect(ctx, -L / 2, -4, 11, 8, 2); ctx.fill();          // bakdäck
+            ctx.fillStyle = '#e4e4e7'; ctx.fillRect(-L / 2 + 3, -Wd / 2 + 1.5, 13, 1.8);        // avgasrör
+            ctx.fillRect(-L / 2 + 3, Wd / 2 - 3.3, 13, 1.8);
+            ctx.fillStyle = '#18181b'; ctx.fillRect(-L / 2 + 8, -2.5, L - 20, 5);                 // ram
+            ctx.strokeStyle = '#d4d4d8'; ctx.lineWidth = 1.2;                                      // gaffel
+            ctx.beginPath(); ctx.moveTo(hb, -2); ctx.lineTo(front - 3, -1.3); ctx.moveTo(hb, 2); ctx.lineTo(front - 3, 1.3); ctx.stroke();
+            ctx.fillStyle = '#111'; roundRect(ctx, front - 6, -1.6, 7, 3.2, 1.5); ctx.fill();    // smalt framhjul
+            ctx.fillStyle = v.wrecked ? '#222' : v.color;                                          // tank
+            ctx.beginPath(); ctx.ellipse(hb - 4, 0, 6, 3.6, 0, 0, Math.PI * 2); ctx.fill();
+            ctx.fillStyle = 'rgba(255,255,255,0.4)'; ctx.fillRect(hb - 7, -2.2, 5, 1.1);
+            ctx.strokeStyle = '#a1a1aa'; ctx.lineWidth = 1.4;                                      // styre
+            ctx.beginPath(); ctx.moveTo(hb - 2, -Wd / 2); ctx.lineTo(hb, -Wd / 2 + 2); ctx.lineTo(hb, Wd / 2 - 2); ctx.lineTo(hb - 2, Wd / 2); ctx.stroke();
+        } else {
+            ctx.fillStyle = '#111'; ctx.fillRect(-L / 2, -2, 8, 4); ctx.fillRect(L / 2 - 8, -2, 8, 4);
+            ctx.fillStyle = v.wrecked ? '#222' : v.color; roundRect(ctx, -L / 2 + 5, -Wd / 4, L - 10, Wd / 2, 2); ctx.fill();
+            ctx.fillStyle = '#9ca3af'; ctx.fillRect(L / 2 - 9, -Wd / 2, 2, Wd);
+        }
         if (v.driver) {
-            ctx.fillStyle = v.driver === 'player' ? '#ff4fd8' : '#3b82f6'; ctx.beginPath(); ctx.ellipse(-2, 0, 4, 6.5, 0, 0, Math.PI * 2); ctx.fill();
-            ctx.fillStyle = '#111'; ctx.beginPath(); ctx.arc(-1, 0, 3.6, 0, Math.PI * 2); ctx.fill();
+            const rx = v.spec.chopper ? -6 : -2;
+            // Armar ut mot styret
+            if (v.spec.chopper) {
+                ctx.strokeStyle = vest ? '#3f3f46' : riderShirt; ctx.lineWidth = 2.2;
+                ctx.beginPath(); ctx.moveTo(rx + 2, -4); ctx.lineTo(L / 2 - 16, -Wd / 2 + 1); ctx.moveTo(rx + 2, 4); ctx.lineTo(L / 2 - 16, Wd / 2 - 1); ctx.stroke();
+            }
+            ctx.fillStyle = vest ? '#111' : riderShirt; ctx.beginPath(); ctx.ellipse(rx, 0, 4.6, 7, 0, 0, Math.PI * 2); ctx.fill();
+            if (vest) {
+                // Ryggmärke bakom hjälmen
+                ctx.fillStyle = vest; ctx.beginPath(); ctx.arc(rx - 2.6, 0, 2.6, 0, Math.PI * 2); ctx.fill();
+                ctx.strokeStyle = patch || '#fff'; ctx.lineWidth = 1;
+                ctx.beginPath(); ctx.arc(rx - 2.6, 0, 3.7, Math.PI * 0.6, Math.PI * 1.4); ctx.stroke();
+            }
+            ctx.fillStyle = v.spec.chopper ? '#3f2a14' : '#111'; ctx.beginPath(); ctx.arc(rx + 2, 0, 3.1, 0, Math.PI * 2); ctx.fill();
         }
     }
 
@@ -629,6 +719,26 @@ export class Renderer {
         ctx.fillStyle = '#ffd23f'; ctx.strokeStyle = '#000'; ctx.lineWidth = 3;
         ctx.beginPath(); ctx.moveTo(x, by + 30); ctx.lineTo(x - 18, by + 6); ctx.lineTo(x - 7, by + 6); ctx.lineTo(x - 7, by - 14); ctx.lineTo(x + 7, by - 14); ctx.lineTo(x + 7, by + 6); ctx.lineTo(x + 18, by + 6); ctx.closePath();
         ctx.fill(); ctx.stroke();
+    }
+
+    drawSpeech(world, view) {
+        const ctx = this.ctx;
+        ctx.font = '11px "Space Grotesk", sans-serif';
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        for (const ped of world.peds) {
+            if (!ped.say || ped.x < view.x0 - 80 || ped.x > view.x1 + 80 || ped.y < view.y0 - 60 || ped.y > view.y1 + 60) continue;
+            const text = ped.say.text;
+            const w = Math.min(220, ctx.measureText(text).width + 14), h = 18;
+            const x = ped.x, y = ped.y - 30;
+            ctx.globalAlpha = Math.min(1, ped.say.life * 2);
+            ctx.fillStyle = ped.attack ? '#fee2e2' : ped.type === 'metro' ? '#fdf2f8' : '#ffffff';
+            ctx.strokeStyle = '#111'; ctx.lineWidth = 1.5;
+            roundRect(ctx, x - w / 2, y - h / 2, w, h, 7); ctx.fill(); ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(x - 4, y + h / 2 - 1); ctx.lineTo(x, y + h / 2 + 6); ctx.lineTo(x + 4, y + h / 2 - 1); ctx.closePath(); ctx.fill();
+            ctx.fillStyle = '#111';
+            ctx.fillText(text, x, y + 0.5, 210);
+        }
+        ctx.globalAlpha = 1;
     }
 
     drawFloaters(world) {

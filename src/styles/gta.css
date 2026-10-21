@@ -471,3 +471,43 @@ body {
         padding: 6px 4px;
     }
 }
+
+/* Gängkort i Stan-fliken */
+.stan-gang {
+    border-color: var(--gc);
+    box-shadow: inset 0 0 0 1px var(--gc);
+}
+
+.stan-gang-name {
+    font-family: 'Bungee', Impact, sans-serif;
+    font-size: 18px;
+    color: var(--gc);
+    text-shadow: 2px 2px 0 #000;
+    margin-bottom: 8px;
+}
+
+.stan-gang-none {
+    font-size: 13px;
+    line-height: 1.5;
+    color: rgba(255, 255, 255, 0.6);
+    margin-bottom: 10px;
+}
+
+.stan-gang-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.stan-gang-list span {
+    font-size: 11px;
+    padding: 4px 8px;
+    border-radius: 4px;
+    border: 1px solid var(--gc);
+    color: var(--gc);
+    background: rgba(0, 0, 0, 0.3);
+}
+
+.resp-row {
+    grid-template-columns: 20px 1fr 70px 34px;
+}

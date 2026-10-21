@@ -199,23 +199,65 @@ export function chaseControl(v, world, dt, speedFactor = 1) {
 // ── Fotgängare ──
 const SHIRTS = ['#ef4444', '#3b82f6', '#22c55e', '#eab308', '#f97316', '#a855f7', '#14b8a6', '#f8fafc', '#111827', '#ec4899'];
 const SKINS = ['#f1c27d', '#e0ac69', '#c68642', '#8d5524', '#ffdbac', '#a0522d'];
+// Metrosexuella: pastell, slickat hår, solglasögon
+const METRO_SHIRTS = ['#f9a8d4', '#a7f3d0', '#c4b5fd', '#fde68a', '#bae6fd', '#fecaca', '#f5f5f4'];
+const METRO_HAIR = ['#d6b370', '#8b5a2b', '#e7d3a1', '#3f2a14'];
 
+// type: 'civ' | 'gang' | 'metro'
 export function createPed(x, y, rnd = Math.random, opts = {}) {
+    const type = opts.type || (opts.gang ? 'gang' : 'civ');
+    const metro = type === 'metro';
+    const hp = opts.hp || (type === 'gang' ? (opts.vest ? 50 : 40) : metro ? 12 : 15);
     return {
-        ent: 'ped', x, y, vx: 0, vy: 0, r: 6.5, angle: rnd() * Math.PI * 2,
+        ent: 'ped', type, x, y, vx: 0, vy: 0, r: 6.5, angle: rnd() * Math.PI * 2,
         dir: Math.floor(rnd() * 4), t: 1 + rnd() * 4, mode: 'walk',
-        speed: 38 + rnd() * 24, down: 0, phase: rnd() * 10,
-        shirt: opts.shirt || SHIRTS[Math.floor(rnd() * SHIRTS.length)],
+        speed: metro ? (opts.scooter ? 95 : 48) : 38 + rnd() * 24, down: 0, phase: rnd() * 10,
+        shirt: opts.shirt || (metro ? METRO_SHIRTS[Math.floor(rnd() * METRO_SHIRTS.length)] : SHIRTS[Math.floor(rnd() * SHIRTS.length)]),
         skin: SKINS[Math.floor(rnd() * SKINS.length)],
-        hair: rnd() < 0.5 ? '#1f1300' : rnd() < 0.5 ? '#5b3a1a' : '#d4a017',
-        gang: opts.gang || null, cop: !!opts.cop
+        hair: metro ? METRO_HAIR[Math.floor(rnd() * METRO_HAIR.length)] : rnd() < 0.5 ? '#1f1300' : rnd() < 0.5 ? '#5b3a1a' : '#d4a017',
+        gang: opts.gang || null, cop: !!opts.cop,
+        vest: !!opts.vest, scooter: !!opts.scooter,
+        hp, maxHp: hp,
+        attack: !!opts.attack, attackT: opts.attackT || 0, targetPed: null, hitCd: 0,
+        buyer: false, creepT: 0, boredT: 0, talkT: 2 + rnd() * 4, say: null
     };
 }
 
 const PED_OK = new Set([T.SIDEWALK, T.PLAZA, T.GRASS, T.LOT]);
 
+// Gå mot en punkt: rakt om det är fri sikt, annars via flödesfältet (om det leder dit)
+function seek(ped, world, tx, ty, useFlow) {
+    const dx = tx - ped.x, dy = ty - ped.y;
+    const d = Math.hypot(dx, dy) || 1;
+    if (!useFlow || d < 90 || lineClear(world.city, ped.x, ped.y, tx, ty)) return { mx: dx / d, my: dy / d };
+    const step = flowStep(world, Math.floor(ped.x / TILE), Math.floor(ped.y / TILE));
+    if (!step) return { mx: dx / d, my: dy / d };
+    const sx = center(step[0]) - ped.x, sy = center(step[1]) - ped.y;
+    const sd = Math.hypot(sx, sy) || 1;
+    return { mx: sx / sd, my: sy / sd };
+}
+
 export function pedControl(ped, world, dt) {
     if (ped.down > 0) return { mx: 0, my: 0, speed: 0 };
+    const p = world.player;
+
+    // ── Slagsmål: opps och gängmedlemmar som gått till attack ──
+    if (ped.attack) {
+        const t = ped.targetPed;
+        if (t && t.down <= 0 && world.peds.includes(t)) {
+            const m = seek(ped, world, t.x, t.y, false);
+            ped.angle = Math.atan2(m.my, m.mx);
+            return Math.hypot(t.x - ped.x, t.y - ped.y) < 15 ? { mx: 0, my: 0, speed: 0 } : { ...m, speed: 150 };
+        }
+        ped.targetPed = null;
+        if (!p.dead) {
+            const m = seek(ped, world, p.x, p.y, true);
+            ped.angle = Math.atan2(p.y - ped.y, p.x - ped.x);
+            const reach = p.vehicle ? p.vehicle.spec.l / 2 + 6 : 14;
+            return Math.hypot(p.x - ped.x, p.y - ped.y) < reach ? { mx: 0, my: 0, speed: 0 } : { ...m, speed: ped.vest ? 140 : 150 };
+        }
+    }
+
     // Hot: bil som kommer mot en i fart
     let threat = null;
     for (const v of world.vehicles) {
@@ -238,6 +280,33 @@ export function pedControl(ped, world, dt) {
         if (ped.t <= 0) { ped.mode = 'walk'; ped.t = 2; }
         return { mx: Math.cos(ped.angle), my: Math.sin(ped.angle), speed: 130 };
     }
+
+    // ── Kund som kommer fram för att köpa ──
+    if (ped.buyer && !p.dead) {
+        const m = seek(ped, world, p.x, p.y, true);
+        ped.angle = Math.atan2(m.my, m.mx);
+        return { ...m, speed: 75 };
+    }
+
+    // ── Metrosexuella som smyger efter dig ──
+    if (ped.type === 'metro') {
+        ped.boredT = Math.max(0, ped.boredT - dt);
+        const d = Math.hypot(p.x - ped.x, p.y - ped.y);
+        const pv = p.vehicle;
+        const interesting = !p.dead && d < 280 && (!pv || Math.hypot(pv.vx, pv.vy) < 120) && ped.boredT <= 0;
+        if (interesting) {
+            ped.creepT += dt;
+            if (ped.creepT > 25) { ped.creepT = 0; ped.boredT = 30; }
+            ped.angle = Math.atan2(p.y - ped.y, p.x - ped.x);
+            if (d > 78) {
+                // Håll sig en bit bakom, glid sakta närmare
+                const m = seek(ped, world, p.x - Math.cos(ped.angle) * 60, p.y - Math.sin(ped.angle) * 60, true);
+                return { ...m, speed: ped.scooter ? 90 : 52 };
+            }
+            return { mx: 0, my: 0, speed: 0 };
+        }
+    }
+
     const tx = Math.floor(ped.x / TILE), ty = Math.floor(ped.y / TILE);
     const ahead = tileAt(world.city, Math.floor((ped.x + DX[ped.dir] * 20) / TILE), Math.floor((ped.y + DY[ped.dir] * 20) / TILE));
     if (ped.t <= 0 || !PED_OK.has(ahead)) {

@@ -4,7 +4,7 @@
 
 import { GANGS, DISTRICTS, TILE } from './constants.js';
 import { stars } from './wanted.js';
-import { phoneOpen } from './missions.js';
+import { phoneAccess, gangById } from './missions.js';
 
 const BIG_FONT = 'Bungee, Impact, "Arial Black", sans-serif';
 const PAGER_FONT = 'VT323, "Courier New", monospace';
@@ -58,7 +58,8 @@ export class Hud {
             case 'district': {
                 const d = DISTRICTS[e.id];
                 const g = GANGS.find(x => x.id === d.gang);
-                this.banner = { text: d.name, sub: `${g.icon} ${g.name}s område`, color: g.color, life: 3, max: 3 };
+                const sub = e.own ? `🏠 Ditt turf · ${g.icon} ${g.name}` : e.hostile ? `⚠️ FIENTLIGT TURF · ${g.icon} ${g.name}` : `${g.icon} ${g.name}s turf`;
+                this.banner = { text: d.name, sub, subColor: e.hostile ? '#f87171' : '#fff', color: g.color, life: 3, max: 3 };
                 break;
             }
             case 'radio':
@@ -93,7 +94,8 @@ export class Hud {
         const h = world.hour();
         const clock = `${String(Math.floor(h)).padStart(2, '0')}:${String(Math.floor((h % 1) * 60)).padStart(2, '0')}`;
         const left = Math.max(0, world.maxMissions - (profile.missionsThisRound || 0));
-        outlined(ctx, `🕖 ${clock}  ·  ☎️ ${left}/${world.maxMissions}`, W - 14, 26 + moneySize * 0.9, narrow ? 12 : 14, '#e5e7eb', 'right', BIG_FONT, 3);
+        const goods = profile.cityGoods || 0;
+        outlined(ctx, `🕖 ${clock}  ·  ☎️ ${left}/${world.maxMissions}${goods ? `  ·  🎒 ${goods}` : ''}`, W - 14, 26 + moneySize * 0.9, narrow ? 12 : 14, '#e5e7eb', 'right', BIG_FONT, 3);
 
         // ── Efterlyst: snutmärken ──
         const s = stars(world.wanted);
@@ -110,12 +112,23 @@ export class Hud {
         ctx.globalAlpha = 1;
 
         // ── Respekt (uppe till vänster) ──
+        // Tre rader: ditt gäng, turfets gäng och det gäng som hatar dig mest
         const bw = narrow ? 92 : 128;
-        GANGS.forEach((g, i) => {
+        const resp = profile.respect || {};
+        const rows = [];
+        const add = id => { if (id && !rows.includes(id) && rows.length < 3) rows.push(id); };
+        add(profile.gang);
+        add(DISTRICTS[world.district]?.gang);
+        GANGS.map(g => g.id).sort((a, b) => (resp[a] || 0) - (resp[b] || 0)).forEach(id => { if ((resp[id] || 0) < 0 || (world.beef[id] || 0) > 0) add(id); });
+        GANGS.forEach(g => add(g.id));
+        rows.forEach((id, i) => {
+            const g = gangById(id);
             const y = 16 + i * 22;
-            const val = (profile.respect || {})[g.id] || 0;
-            ctx.fillStyle = 'rgba(0,0,0,0.6)';
+            const val = resp[g.id] || 0;
+            const beef = (world.beef[g.id] || 0) > 0;
+            ctx.fillStyle = beef && Math.sin(this.t * 8) > 0 ? 'rgba(127,29,29,0.85)' : 'rgba(0,0,0,0.6)';
             ctx.fillRect(10, y - 8, bw + 30, 17);
+            if (g.id === profile.gang) { ctx.strokeStyle = g.color; ctx.lineWidth = 1.5; ctx.strokeRect(10.5, y - 7.5, bw + 29, 16); }
             ctx.font = `13px ${EMOJI_FONT}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
             ctx.fillText(g.icon, 21, y + 0.5);
             const x0 = 32, mid = x0 + bw / 2;
@@ -149,7 +162,7 @@ export class Hud {
             const by = narrow ? H * 0.3 : H * 0.2;
             ctx.globalAlpha = a;
             outlined(ctx, b.text, W / 2, by, narrow ? 34 : 52, b.color, 'center', BIG_FONT, 7);
-            outlined(ctx, b.sub, W / 2, by + (narrow ? 30 : 42), narrow ? 13 : 16, '#fff', 'center', BIG_FONT, 4);
+            outlined(ctx, b.sub, W / 2, by + (narrow ? 30 : 42), narrow ? 13 : 16, b.subColor || '#fff', 'center', BIG_FONT, 4);
             ctx.globalAlpha = 1;
         }
         if (this.radio) {
@@ -166,7 +179,7 @@ export class Hud {
             // Visa vägen till närmaste öppna telefon
             let best = null, bd = Infinity;
             for (const ph of world.city.markers.phones) {
-                if (!phoneOpen(profile.respect || {}, ph.gang)) continue;
+                if (!phoneAccess(profile, ph.gang)) continue;
                 const d = Math.hypot(ph.x - p.x, ph.y - p.y);
                 if (d < bd) { bd = d; best = ph; }
             }

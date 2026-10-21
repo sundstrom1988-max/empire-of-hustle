@@ -84,6 +84,8 @@ function noise(t, dur, vol, dest, filterType = 'highpass', freq = 1000, q = 1, f
 
 const midi = n => 440 * Math.pow(2, (n - 69) / 12);
 
+const drumHit = (t, d) => { osc('sine', 120, t, 0.25, 0.6, d, { to: 45 }); noise(t, 0.12, 0.3, d, 'lowpass', 900); };
+
 // ── Ljudeffekter ──
 const SFX = {
     coin(t, d) { osc('square', 988, t, 0.08, 0.15, d); osc('square', 1319, t + 0.07, 0.25, 0.15, d); },
@@ -121,7 +123,11 @@ const SFX = {
     skid(t, d) { noise(t, 0.18, 0.12, d, 'bandpass', 1800, 6); },
     spray(t, d) { noise(t, 1.2, 0.25, d, 'highpass', 3000, 1); osc('square', midi(72), t + 1.2, 0.3, 0.1, d); },
     punch(t, d) { noise(t, 0.06, 0.4, d, 'lowpass', 900); osc('sine', 160, t, 0.08, 0.3, d, { to: 60 }); },
-    nitro(t, d) { noise(t, 0.6, 0.3, d, 'bandpass', 600, 2, 3000); }
+    nitro(t, d) { noise(t, 0.6, 0.3, d, 'bandpass', 600, 2, 3000); },
+    opps(t, d) { // hotfull blåsstöt när rivalerna kommer
+        [40, 40, 43].forEach((n, i) => osc('sawtooth', midi(n), t + i * 0.22, i === 2 ? 0.7 : 0.16, 0.22, d, { lp: 700, q: 3 }));
+        drumHit(t, d); drumHit(t + 0.22, d);
+    }
 };
 
 export function sfx(name, vol = 1) {

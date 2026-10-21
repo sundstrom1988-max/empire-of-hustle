@@ -2,10 +2,10 @@
 //  STAN — kartgenerator
 //  Rutnät av tvåfiliga gator (högertrafik),
 //  trottoarer, kvarter, parker, parkeringar,
-//  vatten i söder/öster och tre distrikt.
+//  vatten i söder/öster och sex gängturfs.
 // ═══════════════════════════════════════════
 
-import { TILE, MAP_W, MAP_H, T, SOLID, WALKABLE, N, E, S, W, DX, DY, PLACE_NAMES } from './constants.js';
+import { TILE, MAP_W, MAP_H, T, SOLID, WALKABLE, N, E, S, W, DX, DY, PLACE_NAMES, GANGS } from './constants.js';
 import { mulberry32 } from './rng.js';
 
 const W_ = MAP_W, H_ = MAP_H;
@@ -13,11 +13,17 @@ const idx = (x, y) => y * W_ + x;
 const inBounds = (x, y) => x >= 0 && y >= 0 && x < W_ && y < H_;
 const center = (t) => t * TILE + TILE / 2;
 
-// Distrikt: väst = Orten, nordost = Centrum, sydost = Hamnen
+// Sex turfs: tre kolumner (väst, mitt, öst) × två rader (norr, söder)
+const TURF_GRID = [['vasterort', 'centrum', 'skogsbacken'], ['orten', 'industrin', 'hamnen']];
 export function districtOfTile(tx, ty) {
-    if (tx < 30) return 'orten';
-    return ty < 32 ? 'centrum' : 'hamnen';
+    const col = tx < 22 ? 0 : tx < 43 ? 1 : 2;
+    return TURF_GRID[ty < 32 ? 0 : 1][col];
 }
+// Ungefärlig mittpunkt (i rutor) för varje turf
+export const TURF_CENTER = {
+    vasterort: [11, 16], centrum: [32, 16], skogsbacken: [53, 16],
+    orten: [11, 47], industrin: [32, 47], hamnen: [53, 47]
+};
 export function districtAt(city, x, y) { return districtOfTile(Math.floor(x / TILE), Math.floor(y / TILE)); }
 
 export function tileAt(city, tx, ty) { return inBounds(tx, ty) ? city.tiles[idx(tx, ty)] : T.WALL; }
@@ -66,12 +72,16 @@ function gridLines(rng, size) {
 }
 
 // Där shoppar hamnar (index = SHOPS-ordningen i gameData)
-const BUSINESS_DISTRICTS = ['orten', 'orten', 'orten', 'hamnen', 'centrum', 'centrum', 'centrum', 'hamnen'];
+const BUSINESS_DISTRICTS = ['orten', 'orten', 'vasterort', 'industrin', 'centrum', 'centrum', 'centrum', 'hamnen'];
 
+// Takfärger, hushöjd och hur ofta ett kvarter blir park eller parkering
 const PALETTES = {
-    orten: { roofs: ['#8d6e63', '#a1887f', '#9e9e9e', '#b0866a', '#7b8a8b', '#c9a27e'], h: [0.14, 0.28] },
-    centrum: { roofs: ['#607d8b', '#78909c', '#5c6bc0', '#455a64', '#90a4ae', '#4e5d6c', '#8e7cc3'], h: [0.22, 0.42] },
-    hamnen: { roofs: ['#8b5a2b', '#6d7f5c', '#a0522d', '#5f6b73', '#7e6f5a', '#b5651d'], h: [0.08, 0.17] }
+    vasterort: { roofs: ['#9e9e9e', '#8d8d8d', '#b0866a', '#7b8a8b', '#a1887f'], h: [0.16, 0.3], park: 0.12, lot: 0.1 },
+    centrum: { roofs: ['#607d8b', '#78909c', '#5c6bc0', '#455a64', '#90a4ae', '#4e5d6c', '#8e7cc3'], h: [0.22, 0.42], park: 0.1, lot: 0.06 },
+    skogsbacken: { roofs: ['#b91c1c', '#7f1d1d', '#a16207', '#4d7c0f', '#57534e', '#9a3412'], h: [0.06, 0.13], park: 0.32, lot: 0.04 },
+    orten: { roofs: ['#8d6e63', '#a1887f', '#9e9e9e', '#b0866a', '#7b8a8b', '#c9a27e'], h: [0.14, 0.28], park: 0.15, lot: 0.08 },
+    industrin: { roofs: ['#6b7280', '#52525b', '#78716c', '#57534e', '#4b5563', '#a16207'], h: [0.07, 0.15], park: 0.05, lot: 0.25 },
+    hamnen: { roofs: ['#8b5a2b', '#6d7f5c', '#a0522d', '#5f6b73', '#7e6f5a', '#b5651d'], h: [0.08, 0.17], park: 0.08, lot: 0.22 }
 };
 
 function shade(hex, f) {
@@ -225,8 +235,8 @@ export function generateCity(seed = 1337) {
             continue;
         }
         const r = rng();
-        const parkChance = b.district === 'hamnen' ? 0.08 : 0.15;
-        const lotChance = b.district === 'hamnen' ? 0.22 : 0.08;
+        const parkChance = PALETTES[b.district].park;
+        const lotChance = PALETTES[b.district].lot;
         if (b.w < 2 || b.h < 2 || r < parkChance) {
             // Park med träd
             for (let j = 0; j < b.h; j++) for (let i = 0; i < b.w; i++) {
@@ -278,19 +288,29 @@ export function generateCity(seed = 1337) {
     used.push(spawnTile);
     const home = mk(spawnTile, { kind: 'home', label: 'HQ', icon: '🏠' });
     const spawn = { x: home.x, y: home.y };
+    // Langaren står en bit bort på HQ-parkeringen, inte där du kliver ut
+    let dealerTile = null;
+    for (let r = 3; r <= 6 && !dealerTile; r++) {
+        for (const [dx, dy] of [[-r, 0], [r, 0], [0, -r], [-r, -1], [r, -1]]) {
+            const tx = spawnTile[0] + dx, ty = spawnTile[1] + dy;
+            if (WALKABLE.has(tileAt({ tiles }, tx, ty))) { dealerTile = [tx, ty]; break; }
+        }
+    }
+    const dealer = mk(dealerTile || [spawnTile[0], spawnTile[1] - 2], { kind: 'dealer', label: 'LANGAREN', icon: '🎒' });
+    used.push([dealer.tx, dealer.ty]);
     homeParking.sort((a, b) => Math.hypot(a.x - spawn.x, a.y - spawn.y) - Math.hypot(b.x - spawn.x, b.y - spawn.y));
     const nearSpots = homeParking.filter(p => Math.hypot(p.x - spawn.x, p.y - spawn.y) > TILE * 0.5).slice(0, 10);
     homeParking.length = 0;
     homeParking.push(...nearSpots);
 
-    const phones = [
-        mk(nearestCurb(14, 30, (x) => districtOfTile(x, 30) === 'orten'), { kind: 'phone', gang: 'kebab' }),
-        mk(nearestCurb(46, 15, (x, y) => districtOfTile(x, y) === 'centrum'), { kind: 'phone', gang: 'orden' }),
-        mk(nearestCurb(45, 46, (x, y) => districtOfTile(x, y) === 'hamnen'), { kind: 'phone', gang: 'taco' })
-    ];
+    // En telefonkiosk per gäng, mitt i deras turf
+    const phones = GANGS.map(g => {
+        const [cx, cy] = TURF_CENTER[g.district];
+        return mk(nearestCurb(cx, cy, (x, y) => districtOfTile(x, y) === g.district), { kind: 'phone', gang: g.id });
+    });
     const sprays = [
-        mk(nearestCurb(12, 50, (x, y) => districtOfTile(x, y) === 'orten' && nextToBuilding(x, y)), { kind: 'spray', label: 'LACK', icon: '🎨' }),
-        mk(nearestCurb(50, 26, (x, y) => districtOfTile(x, y) === 'centrum' && nextToBuilding(x, y)), { kind: 'spray', label: 'LACK', icon: '🎨' })
+        mk(nearestCurb(12, 52, (x, y) => districtOfTile(x, y) === 'orten' && nextToBuilding(x, y)), { kind: 'spray', label: 'LACK', icon: '🎨' }),
+        mk(nearestCurb(50, 24, (x, y) => districtOfTile(x, y) === 'skogsbacken' && nextToBuilding(x, y)), { kind: 'spray', label: 'LACK', icon: '🎨' })
     ];
     const fence = mk(nearestCurb(54, 57, (x, y) => districtOfTile(x, y) === 'hamnen'), { kind: 'fence', label: 'SKROT', icon: '🔧' });
 
@@ -317,12 +337,12 @@ export function generateCity(seed = 1337) {
     });
 
     const places = [];
-    for (const district of ['orten', 'centrum', 'hamnen']) {
+    for (const district of Object.keys(PLACE_NAMES)) {
         const names = PLACE_NAMES[district].slice();
         const pool = curbs.filter(([x, y]) => districtOfTile(x, y) === district).sort(() => rng() - 0.5);
         for (const [x, y] of pool) {
             if (!names.length) break;
-            if (!farFromUsed(x, y, 7)) continue;
+            if (!farFromUsed(x, y, 6)) continue;
             used.push([x, y]);
             places.push(mk([x, y], { kind: 'place', name: names.shift(), district }));
         }
@@ -360,6 +380,6 @@ export function generateCity(seed = 1337) {
     return {
         seed, w: W_, h: H_, tiles, lanes, bld, buildings, xs, ys,
         spawn, homeParking, lotSpots, pickupSpots, lights, laneTiles, sidewalkTiles,
-        markers: { home, phones, sprays, fence, businesses, places }
+        markers: { home, dealer, phones, sprays, fence, businesses, places }
     };
 }

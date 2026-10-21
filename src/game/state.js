@@ -1,4 +1,5 @@
 import { CHARACTERS } from '../data/gameData.js';
+import { GANG_IDS } from '../city/constants.js';
 
 // ── Game State ──
 function defaultGameState() {
@@ -12,6 +13,7 @@ function defaultGameState() {
         maxPitchesPerRound: 2,
         maxMissionsPerRound: 3,
         maxFencePerRound: 3,
+        maxGoodsPerRound: 10,
         musicMuted: false,
         sfxMuted: false,
         winAmount: 1000000,
@@ -50,16 +52,19 @@ export function createPlayerState(charKey) {
         // Gargamel heist
         heistCooldown: 0, pendingEvidence: [], sabotagedRounds: 0,
         // Stan (GTA-läget)
-        respect: { kebab: 0, orden: 0, taco: 0 },
+        respect: Object.fromEntries(GANG_IDS.map(id => [id, 0])),
+        gang: null,                 // gänget du gått med i
+        cityGoods: 0,               // varor att langa
+        goodsBoughtThisRound: 0,
         missionsThisRound: 0, fencedThisRound: 0,
         cityPickupsTaken: [], cityCollected: [],
-        cityStats: { missions: 0, wrecks: 0, busted: 0, wasted: 0, fenced: 0 }
+        cityStats: { missions: 0, wrecks: 0, busted: 0, wasted: 0, fenced: 0, sold: 0, opps: 0 }
     };
 }
 
 const NUMERIC_FIELDS = ['money', 'rep', 'stash', 'jailRoundsLeft', 'bail', 'dealsThisRound', 'rollsThisRound',
     'pitchesThisRound', 'totalEarned', 'totalSpent', 'successfulDeals', 'failedDeals', 'heistCooldown',
-    'sabotagedRounds', 'missionsThisRound', 'fencedThisRound'];
+    'sabotagedRounds', 'missionsThisRound', 'fencedThisRound', 'cityGoods', 'goodsBoughtThisRound'];
 const ARRAY_FIELDS = ['owned', 'cars', 'jailRecord', 'moneyHistory', 'pendingEvidence', 'cityPickupsTaken', 'cityCollected'];
 const OBJECT_FIELDS = ['levels', 'carPimps', 'respect', 'cityStats'];
 
@@ -80,6 +85,7 @@ export function normalizePlayer(raw) {
         else p[k] = Object.assign({}, fresh[k], p[k]);
     }
     p.inJail = !!p.inJail;
+    if (!GANG_IDS.includes(p.gang)) p.gang = null;
     return p;
 }
 
