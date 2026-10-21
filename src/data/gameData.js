@@ -110,15 +110,6 @@ export const CARS = [
     }
 ];
 
-export const SOUNDS = {
-    bgMusic: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-8.mp3',
-    laugh: 'https://www.myinstants.com/media/sounds/sitcom-laughing-sound-effect.mp3',
-    coin: 'https://www.myinstants.com/media/sounds/coins.mp3',
-    dice: 'https://www.myinstants.com/media/sounds/shake-and-roll-dice.mp3',
-    jail: 'https://www.myinstants.com/media/sounds/metal-pipe.mp3',
-    win: 'https://www.myinstants.com/media/sounds/tada-fanfare-a.mp3'
-};
-
 export const PHONE_DEALS = [
     { id: 'tip', name: 'Insider-tips via SMS', desc: 'Anonym källa skickar börs-info', cost: 400, reward: [800, 2500], risk: 15 },
     { id: 'fence', name: 'Sälj stöldgods', desc: 'Nån vill köpa "saker" ingen frågar om', cost: 0, reward: [500, 2000], risk: 30 },

@@ -4,6 +4,7 @@ import { playSound, spawnParticles, showToast } from '../utils/effects.js';
 import { updateHUD } from '../game/core.js';
 import { generateBotReply } from '../features/features.js';
 import { syncState } from '../multiplayer/sync.js';
+import { escapeHtml } from '../utils/html.js';
 
 // ── Phone State ──
 let phoneOpen = false, phoneScreen = 'home', phoneSmsTarget = null;
@@ -49,7 +50,7 @@ export function phoneOpenSMS() {
         const unread = countUnreadFrom(myKey, key);
         const convo = getConvo(myKey, key);
         const last = convo.length > 0 ? convo[convo.length - 1] : null;
-        const preview = last ? `${CHARACTERS[last.from].icon} ${last.text.length > 22 ? last.text.slice(0, 22) + '...' : last.text}` : 'Inget ännu...';
+        const preview = last ? `${CHARACTERS[last.from].icon} ${escapeHtml(last.text.length > 22 ? last.text.slice(0, 22) + '...' : last.text)}` : 'Inget ännu...';
         const isPlayer = gameState.players.some(p => p.charKey === key && !p.isAI);
         return `<div class="phone-contact" onclick="window.game.phoneOpenChat('${key}')">
             <div class="pc-icon">${ch.icon}</div>
@@ -73,7 +74,7 @@ function renderChat() {
     document.getElementById('phone-body').innerHTML = `<div class="phone-sms">
         <div class="phone-sms-messages" id="phone-sms-msgs">${convo.map(m => {
         const isMe = m.from === myKey; const ch = CHARACTERS[m.from];
-        return `<div class="chat-msg ${isMe ? 'user' : 'bot'}">${!isMe ? `<div class="bot-name">${ch.icon} ${ch.name}</div>` : ''}${m.text}</div>`;
+        return `<div class="chat-msg ${isMe ? 'user' : 'bot'}">${!isMe ? `<div class="bot-name">${ch.icon} ${ch.name}</div>` : ''}${escapeHtml(m.text)}</div>`;
     }).join('')}</div>
         <div class="phone-sms-input"><input type="text" id="phone-sms-input" placeholder="Skriv SMS..." onkeydown="if(event.key==='Enter')window.game.sendPhoneSMS()">
         <button onclick="window.game.sendPhoneSMS()">📨</button></div></div>`;
@@ -112,7 +113,7 @@ export function phoneOpenDeals() {
 }
 
 export function doPhoneDeal(id) {
-    const p = currentPlayer(); const deal = PHONE_DEALS.find(d => d.id === id); if (p.money < deal.cost || p.inJail) return;
+    const p = currentPlayer(); const deal = PHONE_DEALS.find(d => d.id === id); if (!deal || p.money < deal.cost || p.inJail) return;
     p.money -= deal.cost;
     if (Math.random() < deal.risk / 100) { const fine = Math.floor(200 + Math.random() * 600); p.money = Math.max(0, p.money - fine); showToast(`📱 Misslyckades! -${formatNum(fine)} 💰`); }
     else if (deal.reward[1] > 0) { const rw = Math.floor(deal.reward[0] + Math.random() * (deal.reward[1] - deal.reward[0])); p.money += rw; showToast(`📱 ${deal.name} lyckades! +${formatNum(rw)} 💰`); playSound('coin'); }
@@ -135,7 +136,7 @@ export function phoneOpenCars() {
 
 export function buyCar(id) {
     const p = currentPlayer(); if (!p.cars) p.cars = []; const car = CARS.find(c => c.id === id);
-    if (p.money < car.price || p.cars.includes(id)) return;
+    if (!car || p.money < car.price || p.cars.includes(id)) return;
     p.money -= car.price; p.cars.push(id); playSound('coin'); updateHUD();
     showToast(`${car.emoji} Köpte ${car.name}!`); spawnParticles([car.emoji, '🔥'], 8); phoneOpenCars();
     if (gameState.isOnline) syncState();
@@ -271,7 +272,7 @@ export function renderDashboard() {
                 <button class="dash-action-btn" onclick="window.game.rollDice();window.game.renderDashboard()" ${p.rollsThisRound >= gameState.maxRollsPerRound ? 'disabled' : ''}>
                     🎲 Rulla <small>${gameState.maxRollsPerRound - p.rollsThisRound} kvar</small>
                 </button>
-                <button class="dash-action-btn" onclick="window.game.switchTab('market',document.querySelectorAll('.tab-btn')[4])">
+                <button class="dash-action-btn" onclick="window.game.switchTab('market',document.querySelector('.tab-btn[onclick*=&quot;market&quot;]'))">
                     🕶️ Svarta Marknaden
                 </button>
                 <button class="dash-action-btn" onclick="window.game.endTurn()">

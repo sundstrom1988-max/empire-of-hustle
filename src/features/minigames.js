@@ -1,7 +1,13 @@
 import { SLOT_SYMBOLS } from '../data/gameData.js';
-import { currentPlayer, formatNum } from '../game/state.js';
+import { gameState, currentPlayer, formatNum } from '../game/state.js';
 import { playSound, spawnParticles, showToast } from '../utils/effects.js';
 import { updateHUD } from '../game/core.js';
+import { syncState } from '../multiplayer/sync.js';
+
+function done() {
+    updateHUD();
+    if (gameState.isOnline) syncState();
+}
 
 export function initMinigames() {
     const el = document.getElementById('minigames-grid');
@@ -33,7 +39,7 @@ export function playDiceBattle() {
         result.innerHTML = `<h4 style="color:var(--danger)">🎲 Du: ${you} vs Bot: ${bot} — FÖRLORADE! -500 💰</h4>`;
         playSound('laugh');
     }
-    updateHUD();
+    done();
 }
 
 export function playGuessNumber() {
@@ -53,7 +59,7 @@ export function playGuessNumber() {
         result.innerHTML = `<h4 style="color:var(--danger)">❌ Fel! Rätt svar: ${secret}. -300 💰</h4>`;
         playSound('laugh');
     }
-    updateHUD();
+    done();
 }
 
 export function playSlotMachine() {
@@ -73,7 +79,7 @@ export function playSlotMachine() {
     } else {
         result.innerHTML += `<h4 style="color:var(--danger)">💨 Inget... -200 💰</h4>`;
     }
-    updateHUD();
+    done();
 }
 
 export function playCoinFlip() {
@@ -90,5 +96,5 @@ export function playCoinFlip() {
         result.innerHTML = `<div style="font-size:48px;">🪙</div><h4 style="color:var(--danger)">KLAVE! -${formatNum(bet)} 💰</h4>`;
         playSound('laugh');
     }
-    updateHUD();
+    done();
 }

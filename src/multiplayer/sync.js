@@ -1,17 +1,29 @@
 // ═══════════════════════════════════════════
 //  EMPIRE OF HUSTLE — P2P Multiplayer (PeerJS)
-//  No server, no Firebase, no setup needed!
+//  Ingen server behövs. Värden (host) är navet:
+//  gäster skickar sitt state till värden, värden
+//  slår ihop och skickar vidare till alla andra.
 // ═══════════════════════════════════════════
 
 import Peer from 'peerjs';
-import { gameState, currentPlayer } from '../game/state.js';
+import { CHARACTERS } from '../data/gameData.js';
+import { gameState, LOCAL_KEYS, mergeRemoteState, normalizePlayer, isMyTurn } from '../game/state.js';
+
+const PEER_CONFIG = {
+    config: {
+        iceServers: [
+            { urls: 'stun:stun.l.google.com:19302' },
+            { urls: 'stun:stun1.l.google.com:19302' }
+        ]
+    }
+};
+const MAX_PLAYERS = 6;
 
 let peer = null;
-let connections = [];    // Active connections to other players
+let connections = [];
 let isHost = false;
-let onStateUpdate = null;
-let onPlayerJoined = null;
-let onChatMessage = null;
+let pendingJoin = null;
+const callbacks = { playerJoined: null, chat: null, stateApplied: null, peerLeft: null, hostLost: null };
 
 // ── Generate room code ──
 function genRoomCode() {
@@ -19,157 +31,251 @@ function genRoomCode() {
     return words[Math.floor(Math.random() * words.length)] + Math.floor(10 + Math.random() * 90);
 }
 
-// ── Always "configured" since PeerJS needs nothing ──
-export function isFirebaseConfigured() { return true; }
-export function initFirebase() { return true; }
+// PeerJS behöver ingen konfiguration — behåller namnen för bakåtkompatibilitet.
+export function isOnlineAvailable() { return true; }
+export function initOnline() { return true; }
+export const isFirebaseConfigured = isOnlineAvailable;
+export const initFirebase = initOnline;
+
+export function isRoomHost() { return isHost; }
+
+function snapshot() {
+    const data = JSON.parse(JSON.stringify(gameState));
+    for (const k of LOCAL_KEYS) delete data[k];
+    return data;
+}
+
+function broadcast(msg, except = null) {
+    connections.forEach(conn => {
+        if (conn !== except && conn.open) {
+            try { conn.send(msg); } catch (e) { console.warn('Kunde inte skicka till peer', e); }
+        }
+    });
+}
 
 // ── Create a room (you are the host) ──
-export async function createRoom(playerData) {
+export function createRoom(playerData, attempt = 0) {
     const roomId = genRoomCode();
     return new Promise((resolve, reject) => {
-        // Peer ID = room code (host)
-        peer = new Peer('empire-' + roomId, {
-            config: {
-                iceServers: [
-                    { urls: 'stun:stun.l.google.com:19302' },
-                    { urls: 'stun:stun1.l.google.com:19302' }
-                ]
-            }
-        });
+        peer = new Peer('empire-' + roomId, PEER_CONFIG);
         peer.on('open', () => {
             isHost = true;
             gameState.roomId = roomId;
             gameState.isOnline = true;
             gameState.hostId = playerData.charKey;
-            console.log('🌐 Room created:', roomId);
+            gameState.myCharKey = playerData.charKey;
             resolve(roomId);
         });
         peer.on('connection', (conn) => {
-            console.log('🟢 Player connected:', conn.peer);
             connections.push(conn);
             setupConnection(conn);
+            startHeartbeat();
         });
         peer.on('error', (err) => {
             console.error('PeerJS error:', err);
-            if (err.type === 'unavailable-id') {
-                // Room code taken, try another
+            if (err.type === 'unavailable-id' && attempt < 5) {
                 peer.destroy();
-                createRoom(playerData).then(resolve).catch(reject);
-            } else {
+                createRoom(playerData, attempt + 1).then(resolve).catch(reject);
+            } else if (!gameState.roomId) {
                 reject(err);
             }
         });
     });
 }
 
-// ── Join someone's room ──
-export async function joinRoom(roomId, playerData) {
-    return new Promise((resolve, reject) => {
-        peer = new Peer(undefined, {
-            config: {
-                iceServers: [
-                    { urls: 'stun:stun.l.google.com:19302' },
-                    { urls: 'stun:stun1.l.google.com:19302' }
-                ]
-            }
-        });
+// ── Join someone's room ── resolves { ok, reason }
+export function joinRoom(roomId, playerData) {
+    return new Promise((resolve) => {
+        let done = false;
+        const finish = (result) => {
+            if (done) return;
+            done = true;
+            clearTimeout(timer);
+            pendingJoin = null;
+            if (!result.ok) leaveRoom();
+            resolve(result);
+        };
+        const timer = setTimeout(() => finish({ ok: false, reason: 'Ingen svarade — kolla koden' }), 10000);
+        pendingJoin = finish;
+
+        peer = new Peer(undefined, PEER_CONFIG);
         peer.on('open', () => {
             const conn = peer.connect('empire-' + roomId, { reliable: true });
             conn.on('open', () => {
                 connections.push(conn);
                 setupConnection(conn);
-                gameState.roomId = roomId;
-                gameState.isOnline = true;
-                isHost = false;
-                // Send join message
-                conn.send({ type: 'join', player: playerData });
-                console.log('🟢 Joined room:', roomId);
-                resolve(true);
+                startHeartbeat();
+                conn.send({ type: 'join', player: { charKey: playerData.charKey } });
             });
-            conn.on('error', (err) => {
-                console.error('Connection error:', err);
-                reject(err);
-            });
+            conn.on('error', () => finish({ ok: false, reason: 'Anslutningsfel' }));
         });
         peer.on('error', (err) => {
             console.error('PeerJS error:', err);
-            resolve(false);
+            finish({ ok: false, reason: err.type === 'peer-unavailable' ? 'Rummet finns inte' : 'Nätverksfel' });
         });
-        // Timeout
-        setTimeout(() => resolve(false), 8000);
+        isHost = false;
+        gameState.myCharKey = playerData.charKey;
+        gameState.pendingRoomId = roomId;
     });
+}
+
+// ── Host: handle a join request ──
+function handleJoin(conn, player) {
+    const deny = (reason) => { try { conn.send({ type: 'denied', reason }); } catch (e) { /* ignore */ } };
+    if (!player || !CHARACTERS[player.charKey]) return deny('Ogiltig karaktär');
+    const existing = gameState.players.find(p => p.charKey === player.charKey);
+    if (existing && !existing.disconnected) return deny(`${CHARACTERS[player.charKey].name} är redan tagen — välj en annan`);
+    if (!existing && gameState.players.length >= MAX_PLAYERS) return deny('Rummet är fullt');
+
+    let np;
+    if (existing) {
+        // Återanslutning: ta tillbaka kontrollen från AI:n
+        existing.disconnected = false;
+        existing.isAI = false;
+        existing.peerId = conn.peer;
+        np = existing;
+    } else {
+        np = normalizePlayer({ charKey: player.charKey });
+        np.peerId = conn.peer;
+        gameState.players.push(np);
+    }
+    conn.charKey = player.charKey;
+    gameState._lastUpdate = Date.now();
+    conn.send({ type: 'welcome', gameState: snapshot() });
+    broadcast({ type: 'state', gameState: snapshot() }, conn);
+    if (callbacks.playerJoined) callbacks.playerJoined(np);
 }
 
 // ── Handle messages from connected peers ──
 function setupConnection(conn) {
     conn.on('data', (data) => {
+        if (!data || typeof data !== 'object') return;
+        conn.lastSeen = Date.now();
         switch (data.type) {
+            case 'ping':
+                break;
+            case 'bye':
+                handleConnClosed(conn);
+                break;
+            case 'welcome':
+                if (!isHost && pendingJoin) {
+                    gameState.roomId = gameState.pendingRoomId;
+                    gameState.isOnline = true;
+                    mergeRemoteState(data.gameState);
+                    pendingJoin({ ok: true });
+                }
+                break;
+            case 'denied':
+                if (pendingJoin) pendingJoin({ ok: false, reason: String(data.reason || 'Nekad') });
+                break;
             case 'state':
-                // Full state sync from host
                 if (data.gameState && data.gameState._lastUpdate !== gameState._lastUpdate) {
-                    Object.assign(gameState, data.gameState);
-                    if (window.game?.refreshUI) window.game.refreshUI();
+                    mergeRemoteState(data.gameState);
+                    if (isHost) broadcast({ type: 'state', gameState: snapshot() }, conn);
+                    if (callbacks.stateApplied) callbacks.stateApplied();
                 }
                 break;
             case 'join':
-                // New player joined (host only)
-                if (isHost && data.player) {
-                    if (onPlayerJoined) onPlayerJoined(data.player);
-                    // Send current state to new player
-                    conn.send({ type: 'state', gameState: JSON.parse(JSON.stringify(gameState)) });
-                }
+                if (isHost) handleJoin(conn, data.player);
                 break;
             case 'chat':
-                // Chat message
-                if (data.msg && onChatMessage) onChatMessage(data.msg);
-                break;
-            case 'action':
-                // Player action (buy, pitch, etc.) — host processes and syncs
-                if (isHost && data.action && window.game?.[data.action]) {
-                    window.game[data.action](...(data.args || []));
+                if (data.msg && typeof data.msg === 'object') {
+                    if (isHost) broadcast({ type: 'chat', msg: data.msg }, conn);
+                    if (callbacks.chat) callbacks.chat(data.msg);
                 }
                 break;
         }
     });
-    conn.on('close', () => {
-        connections = connections.filter(c => c !== conn);
-        console.log('🔴 Player disconnected');
-    });
+    conn.lastSeen = Date.now();
+    conn.on('close', () => handleConnClosed(conn));
+    conn.on('error', () => handleConnClosed(conn));
+}
+
+// En anslutning är borta: stängd, sa hejdå eller tyst för länge.
+function handleConnClosed(conn) {
+    if (conn._closedHandled) return;
+    conn._closedHandled = true;
+    connections = connections.filter(c => c !== conn);
+    try { conn.close(); } catch (e) { /* redan stängd */ }
+    if (isHost) {
+        const p = gameState.players.find(pl => pl.charKey === conn.charKey);
+        if (p) {
+            p.disconnected = true;
+            p.isAI = true; // AI:n tar över tills spelaren kommer tillbaka
+            syncState(true);
+            if (callbacks.peerLeft) callbacks.peerLeft(p);
+        }
+    } else if (gameState.isOnline) {
+        // Värden försvann — fortsätt offline mot AI
+        gameState.isOnline = false;
+        stopHeartbeat();
+        gameState.players.forEach(p => { if (p.charKey !== gameState.myCharKey) p.isAI = true; });
+        if (callbacks.hostLost) callbacks.hostLost();
+    }
+}
+
+// ── Hjärtslag: PeerJS märker inte alltid när en flik försvinner ──
+const PING_MS = 3000;
+const TIMEOUT_MS = 20000;
+let heartbeat = null;
+
+function startHeartbeat() {
+    if (heartbeat) return;
+    heartbeat = setInterval(() => {
+        broadcast({ type: 'ping' });
+        const now = Date.now();
+        connections.slice().forEach(conn => {
+            if (conn.open && now - (conn.lastSeen || now) > TIMEOUT_MS) handleConnClosed(conn);
+        });
+    }, PING_MS);
+}
+
+function stopHeartbeat() {
+    if (heartbeat) clearInterval(heartbeat);
+    heartbeat = null;
+}
+
+// Anropas när fliken stängs så att de andra slipper vänta på timeout.
+export function sayGoodbye() {
+    if (!peer) return;
+    broadcast({ type: 'bye' });
 }
 
 // ── Sync state to all connected peers ──
-export async function syncState() {
+// Bara den som har turen skickar state (force = värden måste meddela något ändå).
+export function syncState(force = false) {
     if (!peer || connections.length === 0) return;
+    if (!force && !isMyTurn()) return;
     gameState._lastUpdate = Date.now();
-    const stateStr = JSON.parse(JSON.stringify(gameState));
-    connections.forEach(conn => {
-        if (conn.open) conn.send({ type: 'state', gameState: stateStr });
-    });
+    broadcast({ type: 'state', gameState: snapshot() });
 }
 
 // ── Send chat message to all peers ──
-export async function sendChatOnline(msg) {
+export function sendChatOnline(msg) {
     if (!peer) return;
-    connections.forEach(conn => {
-        if (conn.open) conn.send({ type: 'chat', msg });
-    });
+    broadcast({ type: 'chat', msg });
 }
 
 // ── Leave room ──
-export async function leaveRoom() {
-    connections.forEach(c => c.close());
+export function leaveRoom() {
+    stopHeartbeat();
+    connections.forEach(c => { c._closedHandled = true; try { c.close(); } catch (e) { /* ignore */ } });
     connections = [];
-    if (peer) { peer.destroy(); peer = null; }
+    if (peer) { try { peer.destroy(); } catch (e) { /* ignore */ } peer = null; }
     gameState.roomId = null;
     gameState.isOnline = false;
     isHost = false;
 }
 
 // ── Callbacks ──
-export function onPlayerJoin(callback) { onPlayerJoined = callback; }
-export function onChat(callback) { onChatMessage = callback; }
-export function onSync(callback) { onStateUpdate = callback; }
+export function onPlayerJoin(cb) { callbacks.playerJoined = cb; }
+export function onChat(cb) { callbacks.chat = cb; }
+export function onSync(cb) { callbacks.stateApplied = cb; }
+export function onPeerLeft(cb) { callbacks.peerLeft = cb; }
+export function onHostLost(cb) { callbacks.hostLost = cb; }
 
-// ── Get room info ──
-export async function listRoomPlayers() { return gameState.players || []; }
-export async function startOnlineGame() { await syncState(); }
+export function listRoomPlayers() { return gameState.players || []; }
+export function startOnlineGame() {
+    gameState.started = true;
+    syncState(true);
+}

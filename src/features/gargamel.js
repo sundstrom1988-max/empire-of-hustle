@@ -3,7 +3,7 @@
 //  Syns BARA för Gargamel. Andra vet inget.
 // ═══════════════════════════════════════════
 
-import { gameState, currentPlayer, formatNum } from '../game/state.js';
+import { gameState, currentPlayer, formatNum, jailPlayer } from '../game/state.js';
 import { CHARACTERS, SHOPS } from '../data/gameData.js';
 import { updateHUD } from '../game/core.js';
 import { playSound, showToast, spawnParticles } from '../utils/effects.js';
@@ -213,10 +213,7 @@ export function doHeist(type) {
     if (!success) {
         // Misslyckad — 20% chans att hamna i häktet
         if (Math.random() < 0.20) {
-            p.inJail = true;
-            p.jailRoundsLeft = 2;
-            p.jailReason = 'Misstänkt för mörka affärer';
-            p.jailRecord.push({ deal: 'Mörka affärer', round: gameState.round });
+            jailPlayer(p, 'Misstänkt för mörka affärer', 2);
             showToast('🚔 Gripen! Misstänkt för mörka affärer...');
             playSound('jail');
         } else {

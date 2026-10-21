@@ -1,0 +1,254 @@
+// ═══════════════════════════════════════════
+//  STAN — AI
+//  Trafik som följer filerna, fotgängare som
+//  kastar sig undan, snutar och gäng som jagar
+//  dig via ett flödesfält över gatunätet.
+// ═══════════════════════════════════════════
+
+import { TILE, T, DX, DY, DIR_ANGLE, OPPOSITE, WALKABLE } from './constants.js';
+import { tileAt, laneDirs, isSolidAt } from './map.js';
+import { forwardSpeed } from './vehicles.js';
+
+const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
+const center = t => t * TILE + TILE / 2;
+
+export function angleDiff(a, b) {
+    let d = b - a;
+    while (d > Math.PI) d -= Math.PI * 2;
+    while (d < -Math.PI) d += Math.PI * 2;
+    return d;
+}
+
+// Fri sikt mellan två punkter (inga hus emellan)
+export function lineClear(city, x0, y0, x1, y1) {
+    const d = Math.hypot(x1 - x0, y1 - y0);
+    const n = Math.ceil(d / 24);
+    for (let i = 1; i < n; i++) {
+        const t = i / n;
+        if (isSolidAt(city, x0 + (x1 - x0) * t, y0 + (y1 - y0) * t)) return false;
+    }
+    return true;
+}
+
+// ── Filföljande trafik ──
+export function initLaneAI(v, tx, ty, dir, rnd = Math.random) {
+    v.ai = {
+        mode: 'lane', tx: tx + DX[dir], ty: ty + DY[dir], dir,
+        wait: 0, patience: 2.5 + rnd() * 3, ignoreT: 0, stuckT: 0, revT: 0,
+        cruise: 150 + rnd() * 90, hornT: 0
+    };
+    v.angle = DIR_ANGLE[dir];
+}
+
+function chooseNextDir(city, tx, ty, dir, rnd) {
+    const mask = laneDirs(city, tx, ty);
+    const opts = [];
+    for (let d = 0; d < 4; d++) {
+        if (!(mask & (1 << d)) || d === OPPOSITE[dir]) continue;
+        if (tileAt(city, tx + DX[d], ty + DY[d]) !== T.ROAD) continue;
+        opts.push(d);
+    }
+    if (!opts.length) return -1;
+    if (opts.includes(dir) && rnd() < 0.55) return dir;
+    return opts[Math.floor(rnd() * opts.length)];
+}
+
+// Försök hitta tillbaka till en fil efter en krock
+function reacquireLane(v, city) {
+    const cx = Math.floor(v.x / TILE), cy = Math.floor(v.y / TILE);
+    let best = null;
+    for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) {
+        const tx = cx + dx, ty = cy + dy;
+        const mask = laneDirs(city, tx, ty);
+        if (!mask) continue;
+        for (let d = 0; d < 4; d++) {
+            if (!(mask & (1 << d))) continue;
+            const score = Math.hypot(center(tx) - v.x, center(ty) - v.y) / TILE + Math.abs(angleDiff(v.angle, DIR_ANGLE[d])) * 1.5;
+            if (!best || score < best.score) best = { tx, ty, d, score };
+        }
+    }
+    if (!best) return false;
+    v.ai.tx = best.tx; v.ai.ty = best.ty; v.ai.dir = best.d;
+    return true;
+}
+
+// Något i vägen framför bilen?
+function blockedAhead(v, world, ignoreCars) {
+    const fx = Math.cos(v.angle), fy = Math.sin(v.angle);
+    const fwd = Math.max(0, forwardSpeed(v));
+    const look = v.spec.l / 2 + 22 + fwd * 0.35;
+    const check = (x, y, halfW, extra) => {
+        const dx = x - v.x, dy = y - v.y;
+        const along = dx * fx + dy * fy;
+        if (along <= 0 || along > look + extra) return false;
+        const side = Math.abs(-dx * fy + dy * fx);
+        return side < v.spec.w / 2 + halfW + 3;
+    };
+    const p = world.player;
+    if (!p.vehicle && !p.dead && check(p.x, p.y, 7, 0)) return 'player';
+    if (!ignoreCars) {
+        for (const u of world.vehicles) {
+            if (u === v || Math.abs(u.x - v.x) > look + 60 || Math.abs(u.y - v.y) > look + 60) continue;
+            if (check(u.x, u.y, u.spec.w / 2, u.spec.l / 2)) return u.driver === 'player' ? 'player' : 'car';
+        }
+    }
+    for (const ped of world.peds) {
+        if (ped.down > 0) continue;
+        if (Math.abs(ped.x - v.x) > look + 20 || Math.abs(ped.y - v.y) > look + 20) continue;
+        if (check(ped.x, ped.y, 6, 0)) return 'ped';
+    }
+    return false;
+}
+
+export function laneControl(v, world, dt) {
+    const ai = v.ai, city = world.city;
+    const tx = center(ai.tx), ty = center(ai.ty);
+    let dx = tx - v.x, dy = ty - v.y;
+    let d = Math.hypot(dx, dy);
+    if (d > TILE * 1.8) {
+        if (!reacquireLane(v, city)) { ai.lost = true; return { throttle: 0, steer: 0, handbrake: true }; }
+        ai.lost = false;
+        dx = center(ai.tx) - v.x; dy = center(ai.ty) - v.y; d = Math.hypot(dx, dy);
+    }
+    const fx = Math.cos(v.angle), fy = Math.sin(v.angle);
+    if (d < 16 || (d < 44 && dx * fx + dy * fy < 0)) {
+        const nd = chooseNextDir(city, ai.tx, ai.ty, ai.dir, world.rnd);
+        if (nd >= 0) { ai.dir = nd; ai.tx += DX[nd]; ai.ty += DY[nd]; }
+    }
+    const want = Math.atan2(center(ai.ty) - v.y, center(ai.tx) - v.x);
+    const diff = angleDiff(v.angle, want);
+    const steer = clamp(diff * 2.6, -1, 1);
+    const fwd = forwardSpeed(v);
+    let target = Math.abs(diff) > 0.45 ? Math.min(ai.cruise, 115) : ai.cruise;
+
+    ai.ignoreT = Math.max(0, ai.ignoreT - dt);
+    const block = blockedAhead(v, world, ai.ignoreT > 0);
+    if (block) {
+        ai.wait += dt;
+        if (block === 'player' && ai.wait > 1.2 && ai.hornT <= 0) { world.sfxAt('horn', v.x, v.y, 0.7); ai.hornT = 2.5 + world.rnd() * 2; }
+        if (block === 'car' && ai.wait > ai.patience) ai.ignoreT = 1.4; // tränga sig förbi
+        target = 0;
+    } else {
+        ai.wait = Math.max(0, ai.wait - dt * 2);
+    }
+    ai.hornT -= dt;
+    let throttle = 0;
+    if (target === 0) throttle = fwd > 15 ? -1 : 0;
+    else if (fwd < target - 10) throttle = 1;
+    else if (fwd > target + 25) throttle = -0.5;
+    return { throttle, steer, handbrake: false };
+}
+
+// ── Jakt (snut och fientliga gäng) ──
+function flowStep(world, tx, ty) {
+    const f = world.flow;
+    if (!f) return null;
+    const W = world.city.w;
+    let best = null, bd = Infinity;
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+        if (!dx && !dy) continue;
+        const nx = tx + dx, ny = ty + dy;
+        if (nx < 0 || ny < 0 || nx >= W || ny >= world.city.h) continue;
+        const v = f[ny * W + nx];
+        if (v < 0) continue;
+        if (dx && dy) {
+            // Diagonalt bara om båda raka grannar är fria
+            if (f[ty * W + nx] < 0 || f[ny * W + tx] < 0) continue;
+        }
+        const cost = v + (dx && dy ? 0.4 : 0);
+        if (cost < bd) { bd = cost; best = [nx, ny]; }
+    }
+    return best;
+}
+
+export function chaseControl(v, world, dt, speedFactor = 1) {
+    const ai = v.ai;
+    const p = world.player;
+    const pv = p.vehicle;
+    let gx = p.x + (pv ? pv.vx * 0.3 : 0), gy = p.y + (pv ? pv.vy * 0.3 : 0);
+    const dist = Math.hypot(p.x - v.x, p.y - v.y);
+    if (dist > 230 || !lineClear(world.city, v.x, v.y, p.x, p.y)) {
+        const tx = Math.floor(v.x / TILE), ty = Math.floor(v.y / TILE);
+        const s1 = flowStep(world, tx, ty);
+        if (s1) {
+            const s2 = flowStep(world, s1[0], s1[1]) || s1;
+            gx = center(s2[0]); gy = center(s2[1]);
+        }
+    }
+    const want = Math.atan2(gy - v.y, gx - v.x);
+    const diff = angleDiff(v.angle, want);
+    let steer = clamp(diff * 3, -1, 1);
+    const fwd = forwardSpeed(v);
+    let throttle = 1;
+    if (Math.abs(diff) > 1.9 && fwd > 160) throttle = -0.6;
+    if (fwd > v.spec.maxSpeed * speedFactor) throttle = 0;
+    // Boxa in en stillastående spelare: bromsa i tid så att de inte bara rammar
+    const playerSlow = !pv || Math.hypot(pv.vx, pv.vy) < 40;
+    const stopDist = 70 + (fwd > 0 ? fwd * fwd / (2 * v.spec.brake) : 0);
+    if (playerSlow && dist < stopDist) throttle = fwd > 20 ? -1 : (dist > 70 ? 0.3 : 0);
+
+    ai.stuckT = (throttle > 0 && Math.abs(fwd) < 25) ? ai.stuckT + dt : Math.max(0, ai.stuckT - dt);
+    if (ai.stuckT > 1.1) { ai.revT = 0.9; ai.stuckT = 0; }
+    if (ai.revT > 0) {
+        ai.revT -= dt;
+        return { throttle: -1, steer: -steer, handbrake: false };
+    }
+    return { throttle, steer, handbrake: Math.abs(diff) > 1.2 && fwd > 220 };
+}
+
+// ── Fotgängare ──
+const SHIRTS = ['#ef4444', '#3b82f6', '#22c55e', '#eab308', '#f97316', '#a855f7', '#14b8a6', '#f8fafc', '#111827', '#ec4899'];
+const SKINS = ['#f1c27d', '#e0ac69', '#c68642', '#8d5524', '#ffdbac', '#a0522d'];
+
+export function createPed(x, y, rnd = Math.random, opts = {}) {
+    return {
+        ent: 'ped', x, y, vx: 0, vy: 0, r: 6.5, angle: rnd() * Math.PI * 2,
+        dir: Math.floor(rnd() * 4), t: 1 + rnd() * 4, mode: 'walk',
+        speed: 38 + rnd() * 24, down: 0, phase: rnd() * 10,
+        shirt: opts.shirt || SHIRTS[Math.floor(rnd() * SHIRTS.length)],
+        skin: SKINS[Math.floor(rnd() * SKINS.length)],
+        hair: rnd() < 0.5 ? '#1f1300' : rnd() < 0.5 ? '#5b3a1a' : '#d4a017',
+        gang: opts.gang || null, cop: !!opts.cop
+    };
+}
+
+const PED_OK = new Set([T.SIDEWALK, T.PLAZA, T.GRASS, T.LOT]);
+
+export function pedControl(ped, world, dt) {
+    if (ped.down > 0) return { mx: 0, my: 0, speed: 0 };
+    // Hot: bil som kommer mot en i fart
+    let threat = null;
+    for (const v of world.vehicles) {
+        const dx = ped.x - v.x, dy = ped.y - v.y;
+        if (Math.abs(dx) > 130 || Math.abs(dy) > 130) continue;
+        const sp = Math.hypot(v.vx, v.vy);
+        if (sp < 140) continue;
+        if ((dx * v.vx + dy * v.vy) / sp > 0 && Math.hypot(dx, dy) < 120) { threat = v; break; }
+    }
+    if (threat) {
+        // Kasta sig åt sidan, vinkelrätt mot bilens färdriktning
+        const sp = Math.hypot(threat.vx, threat.vy);
+        let nx = -threat.vy / sp, ny = threat.vx / sp;
+        if ((ped.x - threat.x) * nx + (ped.y - threat.y) * ny < 0) { nx = -nx; ny = -ny; }
+        ped.mode = 'flee'; ped.t = 1.5;
+        return { mx: nx, my: ny, speed: 165 };
+    }
+    ped.t -= dt;
+    if (ped.mode === 'flee') {
+        if (ped.t <= 0) { ped.mode = 'walk'; ped.t = 2; }
+        return { mx: Math.cos(ped.angle), my: Math.sin(ped.angle), speed: 130 };
+    }
+    const tx = Math.floor(ped.x / TILE), ty = Math.floor(ped.y / TILE);
+    const ahead = tileAt(world.city, Math.floor((ped.x + DX[ped.dir] * 20) / TILE), Math.floor((ped.y + DY[ped.dir] * 20) / TILE));
+    if (ped.t <= 0 || !PED_OK.has(ahead)) {
+        const opts = [];
+        for (let d = 0; d < 4; d++) if (PED_OK.has(tileAt(world.city, tx + DX[d], ty + DY[d]))) opts.push(d);
+        // Ibland går de över gatan
+        if (!opts.length || world.rnd() < 0.04) {
+            for (let d = 0; d < 4; d++) if (WALKABLE.has(tileAt(world.city, tx + DX[d], ty + DY[d]))) opts.push(d);
+        }
+        if (opts.length) ped.dir = opts[Math.floor(world.rnd() * opts.length)];
+        ped.t = 2 + world.rnd() * 5;
+    }
+    return { mx: DX[ped.dir], my: DY[ped.dir], speed: ped.speed };
+}
