@@ -1,5 +1,6 @@
 import { CHARACTERS } from '../data/gameData.js';
 import { GANG_IDS } from '../city/constants.js';
+import { WEAPONS } from '../city/weapons.js';
 
 // ── Game State ──
 function defaultGameState() {
@@ -56,17 +57,21 @@ export function createPlayerState(charKey) {
         gang: null,                 // gänget du gått med i
         cityGoods: 0,               // varor att langa
         goodsBoughtThisRound: 0,
+        weapons: [],                // köpta vapen (nävar har alla)
+        ammo: {},
+        weapon: 'fists',
+        dateThisRound: false,
         missionsThisRound: 0, fencedThisRound: 0,
         cityPickupsTaken: [], cityCollected: [],
-        cityStats: { missions: 0, wrecks: 0, busted: 0, wasted: 0, fenced: 0, sold: 0, opps: 0 }
+        cityStats: { missions: 0, wrecks: 0, busted: 0, wasted: 0, fenced: 0, sold: 0, opps: 0, robbed: 0, knockouts: 0, dates: 0 }
     };
 }
 
 const NUMERIC_FIELDS = ['money', 'rep', 'stash', 'jailRoundsLeft', 'bail', 'dealsThisRound', 'rollsThisRound',
     'pitchesThisRound', 'totalEarned', 'totalSpent', 'successfulDeals', 'failedDeals', 'heistCooldown',
     'sabotagedRounds', 'missionsThisRound', 'fencedThisRound', 'cityGoods', 'goodsBoughtThisRound'];
-const ARRAY_FIELDS = ['owned', 'cars', 'jailRecord', 'moneyHistory', 'pendingEvidence', 'cityPickupsTaken', 'cityCollected'];
-const OBJECT_FIELDS = ['levels', 'carPimps', 'respect', 'cityStats'];
+const ARRAY_FIELDS = ['owned', 'cars', 'jailRecord', 'moneyHistory', 'pendingEvidence', 'cityPickupsTaken', 'cityCollected', 'weapons'];
+const OBJECT_FIELDS = ['levels', 'carPimps', 'respect', 'cityStats', 'ammo'];
 
 // Make a player loaded from an old save or a peer safe to use.
 export function normalizePlayer(raw) {
@@ -86,6 +91,9 @@ export function normalizePlayer(raw) {
     }
     p.inJail = !!p.inJail;
     if (!GANG_IDS.includes(p.gang)) p.gang = null;
+    p.weapons = [...new Set(p.weapons.filter(id => WEAPONS[id] && id !== 'fists'))];
+    if (p.weapon !== 'fists' && !p.weapons.includes(p.weapon)) p.weapon = 'fists';
+    p.dateThisRound = !!p.dateThisRound;
     return p;
 }
 

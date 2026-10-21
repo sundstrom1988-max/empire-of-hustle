@@ -107,9 +107,11 @@ export class Renderer {
         this.drawSkids(world);
         this.drawMarkers(world, view);
         this.drawPickups(world, view);
+        this.drawDrops(world, view);
         this.drawPeds(world, view);
         this.drawPlayerOnFoot(world);
         this.drawVehicles(world, view);
+        this.drawBullets(world, view);
         this.drawTrees(world.city, view);
         this.drawBuildings(world, view);
         this.drawParticles(world, view);
@@ -327,6 +329,26 @@ export class Renderer {
             this.ring(dl.x, dl.y, 26, '#a3e635', 2);
             this.emoji('🎒', dl.x, dl.y, 20);
         }
+        const gs = m.guns;
+        if (gs && vis(gs)) {
+            ctx.fillStyle = `rgba(249,115,22,${0.16 + pulse * 0.18})`;
+            ctx.beginPath(); ctx.arc(gs.x, gs.y, 26, 0, Math.PI * 2); ctx.fill();
+            this.ring(gs.x, gs.y, 26, '#f97316', 2);
+            this.emoji('🔫', gs.x, gs.y, 20);
+        }
+        const cl = m.club;
+        if (cl && vis(cl, 120)) {
+            // Neonskylt som blinkar när klubben är öppen
+            const open = world.isClubOpen();
+            const neon = open && Math.sin(t * 7) > -0.6;
+            ctx.fillStyle = open ? `rgba(244,114,182,${0.14 + pulse * 0.16})` : 'rgba(100,100,100,0.18)';
+            ctx.beginPath(); ctx.arc(cl.x, cl.y, 46, 0, Math.PI * 2); ctx.fill();
+            ctx.setLineDash([10, 7]); this.ring(cl.x, cl.y, 46, open ? '#f472b6' : '#666', 2.5); ctx.setLineDash([]);
+            this.emoji('🍾', cl.x, cl.y - 4, 22);
+            ctx.font = 'bold 11px Bungee, Impact, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+            ctx.lineWidth = 3; ctx.strokeStyle = '#000'; ctx.strokeText(open ? 'NATTKLUBBEN' : 'STÄNGT · 20:00', cl.x, cl.y + 22);
+            ctx.fillStyle = neon ? '#f9a8d4' : open ? '#9d174d' : '#9ca3af'; ctx.fillText(open ? 'NATTKLUBBEN' : 'STÄNGT · 20:00', cl.x, cl.y + 22);
+        }
         const owned = world.profile.owned || [];
         const collected = world.profile.cityCollected || [];
         for (const b of m.businesses) {
@@ -353,6 +375,38 @@ export class Renderer {
             ctx.restore();
             this.emoji(icons[pk.type], pk.x, pk.y, 15);
         }
+    }
+
+    // Tappade plånböcker
+    drawDrops(world, view) {
+        for (const d of world.drops) {
+            if (d.x < view.x0 - 20 || d.x > view.x1 + 20 || d.y < view.y0 - 20 || d.y > view.y1 + 20) continue;
+            if (d.life < 4 && Math.sin(this.t * 16) > 0) continue; // blinkar innan den försvinner
+            this.emoji('💵', d.x, d.y + Math.sin(this.t * 5 + d.x) * 2, 14);
+        }
+    }
+
+    drawBullets(world, view) {
+        const ctx = this.ctx;
+        if (!world.bullets.length) return;
+        ctx.lineCap = 'round';
+        for (const b of world.bullets) {
+            if (b.x < view.x0 - 40 || b.x > view.x1 + 40 || b.y < view.y0 - 40 || b.y > view.y1 + 40) continue;
+            ctx.strokeStyle = b.from === 'player' ? 'rgba(255,236,150,0.95)' : 'rgba(255,140,90,0.95)';
+            ctx.lineWidth = 2;
+            ctx.beginPath(); ctx.moveTo(b.px, b.py); ctx.lineTo(b.x, b.y); ctx.stroke();
+        }
+        ctx.lineCap = 'butt';
+    }
+
+    // Mynningsflamma framför den som skjuter
+    muzzle(x, y, angle, dist) {
+        const ctx = this.ctx;
+        const fx = x + Math.cos(angle) * dist, fy = y + Math.sin(angle) * dist;
+        ctx.fillStyle = 'rgba(255,220,120,0.95)';
+        ctx.beginPath(); ctx.arc(fx, fy, 5 + Math.random() * 3, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = 'rgba(255,255,255,0.9)';
+        ctx.beginPath(); ctx.arc(fx, fy, 2.5, 0, Math.PI * 2); ctx.fill();
     }
 
     // ── Folk ──
@@ -392,9 +446,16 @@ export class Renderer {
             ctx.strokeStyle = extra.patch || '#fff'; ctx.lineWidth = 0.9;
             ctx.beginPath(); ctx.arc(-2.9, 0, 3.3, Math.PI * 0.6, Math.PI * 1.4); ctx.stroke();
         }
-        if (extra.punch) { ctx.fillStyle = skin; ctx.beginPath(); ctx.arc(9, 3.5, 2.4, 0, Math.PI * 2); ctx.fill(); }
+        if (extra.weapon === 'bat') {
+            ctx.fillStyle = '#a16207'; ctx.save(); ctx.translate(6, 4); ctx.rotate(extra.punch ? -0.2 : 0.9); ctx.fillRect(0, -1.2, 12, 2.6); ctx.restore();
+        } else if (extra.weapon) {
+            // Skjutvapen: pistol kort, uzi/hagel längre
+            const len = extra.weapon === 'shotgun' ? 11 : extra.weapon === 'uzi' ? 8 : 6;
+            ctx.fillStyle = skin; ctx.beginPath(); ctx.arc(6, 2.5, 2.1, 0, Math.PI * 2); ctx.fill();
+            ctx.fillStyle = '#111827'; ctx.fillRect(6, 1.3, len, 2.4);
+        } else if (extra.punch) { ctx.fillStyle = skin; ctx.beginPath(); ctx.arc(9, 3.5, 2.4, 0, Math.PI * 2); ctx.fill(); }
         ctx.fillStyle = skin; ctx.beginPath(); ctx.arc(0.5, 0, 3.4, 0, Math.PI * 2); ctx.fill();
-        ctx.fillStyle = hair; ctx.beginPath(); ctx.arc(-0.6, 0, 3.2, Math.PI * 0.5, Math.PI * 1.5); ctx.fill();
+        ctx.fillStyle = extra.hood ? '#111827' : hair; ctx.beginPath(); ctx.arc(-0.6, 0, extra.hood ? 3.9 : 3.2, Math.PI * (extra.hood ? 0.35 : 0.5), Math.PI * (extra.hood ? 1.65 : 1.5)); ctx.fill();
         if (extra.metro) {
             // Slickat hår och solglasögon
             ctx.fillStyle = hair; ctx.beginPath(); ctx.ellipse(-0.3, 0, 3.6, 3.3, 0, Math.PI * 0.55, Math.PI * 1.45); ctx.fill();
@@ -405,7 +466,7 @@ export class Renderer {
 
     pedExtra(ped) {
         const g = ped.vest ? gangById(ped.gang) : null;
-        return { vest: g ? g.color : null, patch: g?.patch, metro: ped.type === 'metro', scooter: ped.scooter };
+        return { vest: g ? g.color : null, patch: g?.patch, metro: ped.type === 'metro', scooter: ped.scooter, hood: ped.hood, weapon: ped.gun && ped.attack ? 'pistol' : null };
     }
 
     drawPeds(world, view) {
@@ -413,13 +474,14 @@ export class Renderer {
         for (const ped of world.peds) {
             if (ped.x < view.x0 - 20 || ped.x > view.x1 + 20 || ped.y < view.y0 - 20 || ped.y > view.y1 + 20) continue;
             this.drawPedShape(ctx, ped, ped.cop ? '#1e3a8a' : ped.shirt, ped.skin, ped.cop ? '#0f172a' : ped.hair, ped.phase, 1.3, this.pedExtra(ped));
+            if (ped.muzzle > 0) this.muzzle(ped.x, ped.y, ped.angle, 16);
             if (ped.down > 0 && ped.down > 2) this.emoji('💫', ped.x, ped.y - 14, 12);
             else if (ped.attack && ped.down <= 0) {
                 // Opps: röd ring och arg min
                 ctx.globalAlpha = 0.55 + 0.35 * Math.sin(this.t * 10);
                 this.ring(ped.x, ped.y, 12, ped.targetPed ? (gangById(ped.gang)?.color || '#22c55e') : '#ef4444', 2.5);
                 ctx.globalAlpha = 1;
-                this.emoji(ped.targetPed ? '🛡️' : '😠', ped.x, ped.y - 18, 12);
+                this.emoji(ped.targetPed ? '🛡️' : ped.mugger ? '🦹' : ped.gun ? '🔫' : '😠', ped.x, ped.y - 18, 12);
             } else if (ped.buyer) this.emoji('💸', ped.x, ped.y - 18, 14);
         }
     }
@@ -434,8 +496,10 @@ export class Renderer {
         const fake = { x: p.x, y: p.y, angle: p.angle, down: p.dead ? 1 : 0 };
         const g = gangById(world.profile.gang);
         const mc = g && g.kind === 'mc';
+        const weapon = world.profile.weapon && world.profile.weapon !== 'fists' ? world.profile.weapon : null;
         this.drawPedShape(ctx, fake, g && !mc ? g.color : p.color, '#e0ac69', '#1f1300', p.walkPhase, 1.45,
-            { vest: mc ? g.color : null, patch: g?.patch, punch: p.punchT > 0 });
+            { vest: mc ? g.color : null, patch: g?.patch, punch: p.punchT > 0, weapon });
+        if (p.muzzle > 0) this.muzzle(p.x, p.y, p.angle, weapon === 'shotgun' ? 26 : 22);
         this.emoji(p.charIcon, p.x, p.y - 25, 15);
     }
 
@@ -443,6 +507,10 @@ export class Renderer {
     drawVehicles(world, view) {
         const ctx = this.ctx;
         const flash = Math.sin(this.t * 14) > 0;
+        if (world.date && world.player.vehicle) {
+            const v = world.player.vehicle;
+            this.emoji(world.date.mood < 35 ? '😠' : '💕', v.x, v.y - 30 + Math.sin(this.t * 4) * 3, 14);
+        }
         for (const v of world.vehicles) {
             if (v.x < view.x0 - 60 || v.x > view.x1 + 60 || v.y < view.y0 - 60 || v.y > view.y1 + 60) continue;
             ctx.save();
@@ -794,6 +862,10 @@ export class Renderer {
             for (const f of flashes) hole(f.x, f.y, 400, Math.min(1, f.life * 2));
             const p = world.player;
             hole(p.x, p.y, 70, 0.6);
+            const club = world.city.markers.club;
+            if (club && world.isClubOpen() && vis(club.x, club.y, 200)) hole(club.x, club.y, 170, 0.8);
+            if (p.muzzle > 0) hole(p.x, p.y, 160, 0.9);
+            for (const ped of world.peds) if (ped.muzzle > 0 && vis(ped.x, ped.y, 150)) hole(ped.x, ped.y, 130, 0.8);
             lc.globalCompositeOperation = 'source-over';
             ctx.drawImage(this.light, 0, 0, this.canvas.width, this.canvas.height);
         }
@@ -816,6 +888,14 @@ export class Renderer {
         }
         for (const f of flashes) glow(f.x, f.y, 260, `rgba(255,190,90,${Math.min(0.8, f.life * 1.6)})`);
         if (dark > 0.15) for (const l of world.city.lights) if (vis(l.x, l.y, 120)) glow(l.x, l.y, 110, `rgba(255,190,110,${dark * 0.22})`);
+        const club = world.city.markers.club;
+        if (club && world.isClubOpen() && vis(club.x, club.y, 200)) {
+            const beat = 0.5 + 0.5 * Math.sin(this.t * 7.3);
+            glow(club.x, club.y, 150, `rgba(244,80,180,${0.18 + beat * 0.2})`);
+            glow(club.x + Math.cos(this.t) * 40, club.y + Math.sin(this.t * 1.3) * 30, 90, `rgba(120,80,255,${0.15 + (1 - beat) * 0.15})`);
+        }
+        const p = world.player;
+        if (p.muzzle > 0) glow(p.x, p.y, 120, 'rgba(255,200,90,0.5)');
         ctx.globalCompositeOperation = 'source-over';
     }
 }

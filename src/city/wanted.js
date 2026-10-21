@@ -12,7 +12,9 @@ export const CRIME = {
     explosion: 1.0,
     copWreck: 1.5,    // kvaddade en snutbil
     copCar: 1.2,      // snodde en snutbil
-    gangHit: 0.2
+    gangHit: 0.2,
+    shot: 0.4,        // sköt på öppen gata
+    rob: 0.5          // rånade någon
 };
 
 const MAX_HEAT = 5.99;

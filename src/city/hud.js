@@ -5,6 +5,7 @@
 import { GANGS, DISTRICTS, TILE } from './constants.js';
 import { stars } from './wanted.js';
 import { phoneAccess, gangById } from './missions.js';
+import { WEAPONS } from './weapons.js';
 
 const BIG_FONT = 'Bungee, Impact, "Arial Black", sans-serif';
 const PAGER_FONT = 'VT323, "Courier New", monospace';
@@ -153,6 +154,17 @@ export class Hud {
             bar(hy + 22, v.hp / v.maxHp, v.hp < v.maxHp * 0.3 ? '#f97316' : '#60a5fa', v.spec.kind === 'bike' ? '🛵' : '🚗');
             outlined(ctx, v.spec.name.toUpperCase(), 12, hy + 44, 11, '#e5e7eb', 'left', BIG_FONT, 3);
             if (p.nitro > 0) outlined(ctx, `⚡ NITRO ${p.nitro.toFixed(1)}`, 12, hy + 60, 12, '#38bdf8', 'left', BIG_FONT, 3);
+        } else {
+            // Vapen i handen
+            const w = WEAPONS[profile.weapon] || WEAPONS.fists;
+            const ammo = w.melee ? '' : `  ${profile.ammo?.[w.id] || 0}`;
+            outlined(ctx, `${w.icon} ${w.name.toUpperCase()}${ammo}`, 12, hy + 22, narrow ? 12 : 14, !w.melee && !(profile.ammo?.[w.id] > 0) ? '#f87171' : '#e5e7eb', 'left', BIG_FONT, 3);
+        }
+        // Dejt: humör och vart hon bor
+        const date = world.date;
+        if (date) {
+            bar(hy + (v && p.nitro > 0 ? 82 : 66), date.mood / 100, date.mood < 35 ? '#ef4444' : '#f472b6', date.mood < 35 ? '😠' : '😍');
+            outlined(ctx, `${date.name.toUpperCase()} · ${Math.max(0, Math.ceil(date.limit - date.t))} s`, 12, hy + (v && p.nitro > 0 ? 100 : 84), 11, '#f9a8d4', 'left', BIG_FONT, 3);
         }
 
         // ── Distriktsbanner ──
@@ -174,8 +186,9 @@ export class Hud {
 
         // ── Pil mot målet ──
         const m = world.mission;
+        if (date) this.drawArrow(ctx, r, world, date.dest, '#f472b6', `💃 ${date.name}s lägenhet`);
         if (m && m.target) this.drawArrow(ctx, r, world, m.target, '#ffd23f', m.target.label);
-        else if (!m && left > 0 && world.state === 'play') {
+        else if (!m && !date && left > 0 && world.state === 'play') {
             // Visa vägen till närmaste öppna telefon
             let best = null, bd = Infinity;
             for (const ph of world.city.markers.phones) {
@@ -233,6 +246,23 @@ export class Hud {
             outlined(ctx, b.text, 0, 0, narrow ? (big ? 54 : 30) : (big ? 92 : 50), b.color, 'center', BIG_FONT, big ? 10 : 7);
             if (b.sub) outlined(ctx, b.sub, 0, narrow ? 38 : 58, narrow ? 13 : 18, '#fff', 'center', BIG_FONT, 4);
             ctx.restore();
+        }
+        // Träffad: röd kant
+        if (p.hurtT > 0) {
+            const g = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.3, W / 2, H / 2, Math.max(W, H) * 0.7);
+            g.addColorStop(0, 'rgba(200,0,0,0)');
+            g.addColorStop(1, `rgba(200,0,0,${p.hurtT * 1.5})`);
+            ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+        }
+        // "Några timmar senare..."
+        if (world.fade) {
+            const f = world.fade;
+            const a = Math.min(1, f.t / 0.5, (f.dur - f.t) / 0.6);
+            ctx.globalAlpha = Math.max(0, a);
+            ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
+            outlined(ctx, f.text, W / 2, H * 0.45, narrow ? 22 : 34, '#f9a8d4', 'center', BIG_FONT, 5);
+            if (f.sub) outlined(ctx, f.sub, W / 2, H * 0.45 + (narrow ? 32 : 46), narrow ? 13 : 17, '#fff', 'center', BIG_FONT, 4);
+            ctx.globalAlpha = 1;
         }
         if (world.state === 'wasted') {
             ctx.fillStyle = `rgba(120,0,0,${Math.min(0.35, world.stateT * 0.15)})`; ctx.fillRect(0, 0, W, H);

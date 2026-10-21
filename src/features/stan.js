@@ -6,6 +6,7 @@
 
 import { openCity, isCityOpen } from '../city/index.js';
 import { GANGS, JOIN_RESPECT } from '../city/constants.js';
+import { WEAPONS, WEAPON_ORDER, ownsWeapon } from '../city/weapons.js';
 import { gameState, currentPlayer, formatNum, jailPlayer, canAct, saveGame } from '../game/state.js';
 import { updateHUD } from '../game/core.js';
 import { showToast, startMusic, spawnParticles } from '../utils/effects.js';
@@ -23,7 +24,7 @@ export function renderStanPanel() {
     el.innerHTML = `
         <div class="stan-hero">
             <div class="stan-hero-title">HUSTLE CITY</div>
-            <div class="stan-hero-sub">Sno bilar. Ta jobb. Skaka av snuten.</div>
+            <div class="stan-hero-sub">Sno bilar. Råna folk. Köp järn. Ragga. Skaka av snuten.</div>
             <button class="stan-go" onclick="window.game.goToCity()" ${blocked ? 'disabled' : ''}>
                 ${blocked || '🚗 ÅK UT PÅ STAN'}
             </button>
@@ -51,6 +52,12 @@ export function renderStanPanel() {
                 <div class="stan-stat"><span>🏢 Kassor att hämta</span><b>${Math.max(0, p.owned.length - (p.cityCollected || []).length)}</b></div>
                 <div class="stan-stat"><span>🎒 Varor att langa</span><b>${p.cityGoods || 0} · köp ${Math.max(0, gameState.maxGoodsPerRound - (p.goodsBoughtThisRound || 0))} till</b></div>
                 <div class="stan-stat"><span>🚗 Bilar i garaget</span><b>${(p.cars || []).length || 'Morsans Volvo'}</b></div>
+                <div class="stan-stat"><span>💃 Dejt vid Nattklubben</span><b>${p.dateThisRound ? '✔ Klar' : 'Ledig efter 20:00'}</b></div>
+            </div>
+            <div class="stan-card">
+                <h4>🔫 Arsenal</h4>
+                ${weaponRows(p)}
+                <p class="stan-note">Köp mer hos Pang-Pelle 🔫 i Industrin. Åker du fast tar snuten dina vapen.</p>
             </div>
             <div class="stan-card">
                 <h4>🏆 Gatans meriter</h4>
@@ -59,9 +66,20 @@ export function renderStanPanel() {
                 <div class="stan-stat"><span>🔧 Skrotade bilar</span><b>${st.fenced || 0}</b></div>
                 <div class="stan-stat"><span>💸 Langade varor</span><b>${st.sold || 0}</b></div>
                 <div class="stan-stat"><span>😤 Opps på dig</span><b>${st.opps || 0}</b></div>
+                <div class="stan-stat"><span>🎳 Påkörda</span><b>${st.knockouts || 0}</b></div>
+                <div class="stan-stat"><span>💰 Rån</span><b>${st.robbed || 0}</b></div>
+                <div class="stan-stat"><span>💃 Dejter</span><b>${st.dates || 0}</b></div>
                 <div class="stan-stat"><span>🚔 Busted / 💀 Wasted</span><b>${st.busted || 0} / ${st.wasted || 0}</b></div>
             </div>
         </div>`;
+}
+
+function weaponRows(p) {
+    const owned = WEAPON_ORDER.filter(id => ownsWeapon(p, id));
+    return owned.map(id => {
+        const w = WEAPONS[id];
+        return `<div class="stan-stat"><span>${w.icon} ${w.name}${p.weapon === id ? ' ⭐' : ''}</span><b>${w.melee ? '—' : `${(p.ammo || {})[id] || 0} skott`}</b></div>`;
+    }).join('');
 }
 
 function gangCard(p) {
@@ -112,7 +130,10 @@ function onCityClosed(result) {
         const rounds = 2 + Math.floor((result.stars || 1) / 2);
         jailPlayer(p, '🚔 BUSTED i stan', rounds);
         p.cityStats.busted = (p.cityStats.busted || 0) + 1;
-        showToast(`🚔 BUSTED! Böter ${formatNum(fine)} kr och ${rounds} rundor i häktet.`);
+        const hadWeapons = (p.weapons || []).length > 0;
+        // Snuten beslagtar allt du bar på
+        p.weapons = []; p.ammo = {}; p.weapon = 'fists';
+        showToast(`🚔 BUSTED! Böter ${formatNum(fine)} kr och ${rounds} rundor i häktet.${hadWeapons ? ' Vapnen beslagtogs.' : ''}`);
     } else if (result.reason === 'wasted') {
         const bill = Math.min(p.money, 200 + Math.floor(p.money * 0.1));
         p.money -= bill;

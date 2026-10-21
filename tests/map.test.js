@@ -48,7 +48,9 @@ describe('generateCity', () => {
 
     it('places all the special locations on walkable ground', () => {
         const m = city.markers;
-        const all = [m.home, m.dealer, m.fence, ...m.sprays, ...m.phones, ...m.businesses, ...m.places];
+        const all = [m.home, m.dealer, m.fence, m.club, m.guns, ...m.sprays, ...m.phones, ...m.businesses, ...m.places];
+        expect(districtAt(city, m.club.x, m.club.y)).toBe('centrum');
+        expect(districtAt(city, m.guns.x, m.guns.y)).toBe('industrin');
         expect(Math.hypot(m.dealer.x - city.spawn.x, m.dealer.y - city.spawn.y)).toBeGreaterThan(150);
         for (const mk of all) {
             const tx = Math.floor(mk.x / TILE), ty = Math.floor(mk.y / TILE);

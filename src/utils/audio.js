@@ -127,6 +127,19 @@ const SFX = {
     opps(t, d) { // hotfull blåsstöt när rivalerna kommer
         [40, 40, 43].forEach((n, i) => osc('sawtooth', midi(n), t + i * 0.22, i === 2 ? 0.7 : 0.16, 0.22, d, { lp: 700, q: 3 }));
         drumHit(t, d); drumHit(t + 0.22, d);
+    },
+    shot(t, d) { noise(t, 0.12, 0.7, d, 'lowpass', 3500, 1, 400); osc('square', 140, t, 0.06, 0.3, d, { to: 50 }); },
+    uzi(t, d) { noise(t, 0.05, 0.5, d, 'bandpass', 2200, 1.5); osc('square', 180, t, 0.03, 0.2, d, { to: 80 }); },
+    shotgun(t, d) { noise(t, 0.35, 0.9, d, 'lowpass', 2200, 1, 150); osc('sine', 90, t, 0.25, 0.6, d, { to: 35 }); },
+    click(t, d) { noise(t, 0.02, 0.4, d, 'highpass', 4000); },
+    reload(t, d) { noise(t, 0.04, 0.4, d, 'bandpass', 3000, 3); noise(t + 0.12, 0.05, 0.45, d, 'bandpass', 2000, 3); },
+    swing(t, d) { noise(t, 0.12, 0.15, d, 'bandpass', 900, 2, 2500); },
+    bat(t, d) { osc('triangle', 300, t, 0.08, 0.4, d, { to: 120 }); noise(t, 0.08, 0.4, d, 'lowpass', 1200); },
+    thud(t, d) { osc('sine', 110, t, 0.18, 0.6, d, { to: 45 }); noise(t, 0.1, 0.4, d, 'lowpass', 700); },
+    hurt(t, d) { osc('sawtooth', 300, t, 0.15, 0.12, d, { to: 160, lp: 1400 }); },
+    combo(t, d) { [72, 76, 79, 84, 88].forEach((n, i) => osc('square', midi(n), t + i * 0.06, 0.1, 0.1, d, { lp: 3500 })); },
+    love(t, d) { // smörig saxofon-ish slinga
+        [64, 67, 71, 74, 72].forEach((n, i) => osc('sawtooth', midi(n), t + i * 0.16, i === 4 ? 0.7 : 0.15, 0.08, d, { lp: 1600, attack: 0.03 }));
     }
 };
 

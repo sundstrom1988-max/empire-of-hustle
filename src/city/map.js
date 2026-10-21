@@ -313,6 +313,9 @@ export function generateCity(seed = 1337) {
         mk(nearestCurb(50, 24, (x, y) => districtOfTile(x, y) === 'skogsbacken' && nextToBuilding(x, y)), { kind: 'spray', label: 'LACK', icon: '🎨' })
     ];
     const fence = mk(nearestCurb(54, 57, (x, y) => districtOfTile(x, y) === 'hamnen'), { kind: 'fence', label: 'SKROT', icon: '🔧' });
+    // Nattklubben (dejter) i Centrum och vapenlangaren i Industrin
+    const club = mk(nearestCurb(36, 10, (x, y) => districtOfTile(x, y) === 'centrum' && nextToBuilding(x, y)), { kind: 'club', label: 'NATTKLUBBEN', icon: '🍾' });
+    const guns = mk(nearestCurb(26, 54, (x, y) => districtOfTile(x, y) === 'industrin' && nextToBuilding(x, y)), { kind: 'guns', label: 'PANG-PELLE', icon: '🔫' });
 
     // Företagsplatser: byggnader med trottoar mot gatan
     const businesses = [];
@@ -380,6 +383,6 @@ export function generateCity(seed = 1337) {
     return {
         seed, w: W_, h: H_, tiles, lanes, bld, buildings, xs, ys,
         spawn, homeParking, lotSpots, pickupSpots, lights, laneTiles, sidewalkTiles,
-        markers: { home, dealer, phones, sprays, fence, businesses, places }
+        markers: { home, dealer, phones, sprays, fence, club, guns, businesses, places }
     };
 }

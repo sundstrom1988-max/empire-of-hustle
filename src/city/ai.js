@@ -207,11 +207,17 @@ const METRO_HAIR = ['#d6b370', '#8b5a2b', '#e7d3a1', '#3f2a14'];
 export function createPed(x, y, rnd = Math.random, opts = {}) {
     const type = opts.type || (opts.gang ? 'gang' : 'civ');
     const metro = type === 'metro';
-    const hp = opts.hp || (type === 'gang' ? (opts.vest ? 50 : 40) : metro ? 12 : 15);
+    const angle = rnd() * Math.PI * 2, dir = Math.floor(rnd() * 4), t = 1 + rnd() * 4;
+    const speed = metro ? (opts.scooter ? 95 : 48) : 38 + rnd() * 24, phase = rnd() * 10;
+    // Var femte vanlig människa tål en smäll och slår tillbaka (avgörs av fasen — inget extra slumptal)
+    const tough = type === 'civ' && !opts.cop && phase < 2;
+    // Reaktionstid när en bil kommer: 0,15–0,65 s. De långsamma står som fån i strålkastarljuset.
+    const reflex = 0.15 + ((phase * 7.31) % 1) * 0.5;
+    const hp = opts.hp || (type === 'gang' ? (opts.vest ? 50 : 40) : metro ? 12 : tough ? 34 : 15);
     return {
-        ent: 'ped', type, x, y, vx: 0, vy: 0, r: 6.5, angle: rnd() * Math.PI * 2,
-        dir: Math.floor(rnd() * 4), t: 1 + rnd() * 4, mode: 'walk',
-        speed: metro ? (opts.scooter ? 95 : 48) : 38 + rnd() * 24, down: 0, phase: rnd() * 10,
+        ent: 'ped', type, x, y, vx: 0, vy: 0, r: 6.5, angle,
+        dir, t, mode: 'walk', tough, reflex, alarm: 0,
+        speed, down: 0, phase,
         shirt: opts.shirt || (metro ? METRO_SHIRTS[Math.floor(rnd() * METRO_SHIRTS.length)] : SHIRTS[Math.floor(rnd() * SHIRTS.length)]),
         skin: SKINS[Math.floor(rnd() * SKINS.length)],
         hair: metro ? METRO_HAIR[Math.floor(rnd() * METRO_HAIR.length)] : rnd() < 0.5 ? '#1f1300' : rnd() < 0.5 ? '#5b3a1a' : '#d4a017',
@@ -251,10 +257,13 @@ export function pedControl(ped, world, dt) {
         }
         ped.targetPed = null;
         if (!p.dead) {
-            const m = seek(ped, world, p.x, p.y, true);
+            const dist = Math.hypot(p.x - ped.x, p.y - ped.y);
             ped.angle = Math.atan2(p.y - ped.y, p.x - ped.x);
+            // Beväpnade stannar på skjutavstånd
+            if (ped.gun && dist < 210 && lineClear(world.city, ped.x, ped.y, p.x, p.y)) return { mx: 0, my: 0, speed: 0 };
+            const m = seek(ped, world, p.x, p.y, true);
             const reach = p.vehicle ? p.vehicle.spec.l / 2 + 6 : 14;
-            return Math.hypot(p.x - ped.x, p.y - ped.y) < reach ? { mx: 0, my: 0, speed: 0 } : { ...m, speed: ped.vest ? 140 : 150 };
+            return dist < reach ? { mx: 0, my: 0, speed: 0 } : { ...m, speed: ped.vest ? 140 : 150 };
         }
     }
 
@@ -268,13 +277,16 @@ export function pedControl(ped, world, dt) {
         if ((dx * v.vx + dy * v.vy) / sp > 0 && Math.hypot(dx, dy) < 120) { threat = v; break; }
     }
     if (threat) {
-        // Kasta sig åt sidan, vinkelrätt mot bilens färdriktning
+        // Alla hinner inte: först fryser man, sedan kastar man sig åt sidan
+        ped.alarm = (ped.alarm || 0) + dt;
+        if (ped.alarm < (ped.reflex ?? 0.3)) return { mx: 0, my: 0, speed: 0 };
         const sp = Math.hypot(threat.vx, threat.vy);
         let nx = -threat.vy / sp, ny = threat.vx / sp;
         if ((ped.x - threat.x) * nx + (ped.y - threat.y) * ny < 0) { nx = -nx; ny = -ny; }
         ped.mode = 'flee'; ped.t = 1.5;
-        return { mx: nx, my: ny, speed: 165 };
+        return { mx: nx, my: ny, speed: 125 };
     }
+    ped.alarm = 0;
     ped.t -= dt;
     if (ped.mode === 'flee') {
         if (ped.t <= 0) { ped.mode = 'walk'; ped.t = 2; }

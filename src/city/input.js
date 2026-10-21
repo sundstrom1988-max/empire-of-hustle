@@ -10,7 +10,8 @@ const MAP = {
     Space: 'hb',
     KeyE: 'act', Enter: 'act', KeyF: 'act',
     KeyH: 'horn',
-    KeyR: 'radio',
+    KeyR: 'r',          // radio i bilen, rån till fots
+    KeyQ: 'weapon',
     ShiftLeft: 'run', ShiftRight: 'run',
     KeyP: 'pause',
     Escape: 'exit'
@@ -81,7 +82,10 @@ export class Input {
             run: this.has('run'),
             horn: this.has('horn'),
             action: this.pressed('act'),
-            punch: this.pressed('hb')   // Space till fots = slag
+            punch: this.pressed('hb'),   // Space till fots = slag/skott
+            attack: this.has('hb'),      // hålls inne = automateld (Uzi)
+            rob: this.pressed('r'),
+            weapon: this.pressed('weapon')
         };
     }
 

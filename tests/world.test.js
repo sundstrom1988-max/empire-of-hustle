@@ -6,6 +6,7 @@ import { createPlayerState } from '../src/game/state.js';
 import { setStars, stars } from '../src/city/wanted.js';
 import { createVehicle } from '../src/city/vehicles.js';
 import { createPed } from '../src/city/ai.js';
+import { dateChance } from '../src/city/weapons.js';
 import { TILE } from '../src/city/constants.js';
 import { districtAt, isWalkableTile } from '../src/city/map.js';
 
@@ -336,3 +337,177 @@ describe('Gängliv', () => {
         expect(['bmw', 'audi', 'mercedes']).toContain(car[0].type);
     });
 });
+
+// Ställ spelaren i en bil på ringvägen (rak väg österut, rad 3)
+function onRingRoad(w, type = 'bmw') {
+    const car = createVehicle(type, 8 * TILE + 32, 3 * TILE + 32, 0);
+    w.vehicles.push(car);
+    car.driver = 'player'; w.player.vehicle = car;
+    w.player.x = car.x; w.player.y = car.y;
+    return car;
+}
+
+describe('Gatuliv', () => {
+    it('påkörningar ger combo, KO och tappade plånböcker', () => {
+        const w = makeWorld(40);
+        const car = onRingRoad(w);
+        car.vx = 300;
+        for (let i = 0; i < 6; i++) w.knockPed(createPed(car.x + 30, car.y, w.rnd), car);
+        expect(w.combo).toBeGreaterThanOrEqual(3);
+        expect(w.drops.length).toBeGreaterThan(0);
+        expect(w.profile.cityStats.knockouts).toBe(6);
+    });
+
+    it('går att köra över folk som står i vägen — alla hinner inte hoppa undan', () => {
+        const w = makeWorld(51);
+        const car = onRingRoad(w);
+        car.vx = 300;
+        w.peds = [];
+        for (let i = 0; i < 6; i++) w.peds.push(createPed(car.x + 110 + i * 40, car.y + (i % 2 ? 6 : -6), w.rnd));
+        for (let i = 0; i < 90; i++) w.update(DT, { ...IDLE, throttle: 1 });
+        expect(w.profile.cityStats.knockouts).toBeGreaterThanOrEqual(3);
+    });
+
+    it('plånböcker på marken plockas upp', () => {
+        const w = makeWorld(41);
+        standIn(w, 'orten');
+        w.drops.push({ x: w.player.x, y: w.player.y, amount: 120, life: 20 });
+        const m0 = w.profile.money;
+        w.update(DT, IDLE);
+        expect(w.profile.money).toBe(m0 + 120);
+        expect(w.drops.length).toBe(0);
+    });
+
+    it('rån: vissa lämnar över plånboken, andra slår tillbaka', () => {
+        const w = makeWorld(42);
+        standIn(w, 'centrum');
+        let paid = 0, fought = 0;
+        for (let i = 0; i < 16; i++) {
+            const ped = createPed(w.player.x + 12, w.player.y, w.rnd, { type: 'civ' });
+            w.peds = [ped];
+            const m0 = w.profile.money;
+            w.robCd = 0;
+            w.tryRob();
+            if (w.profile.money > m0) paid++;
+            if (ped.attack) fought++;
+        }
+        expect(paid).toBeGreaterThan(0);
+        expect(fought).toBeGreaterThan(0);
+        expect(w.profile.cityStats.robbed).toBe(paid);
+    });
+
+    it('en utslagen person går att länsa', () => {
+        const w = makeWorld(43);
+        standIn(w, 'orten');
+        const ped = createPed(w.player.x + 10, w.player.y, w.rnd);
+        ped.down = 5;
+        w.peds = [ped];
+        const m0 = w.profile.money;
+        w.tryRob();
+        expect(w.profile.money).toBeGreaterThan(m0);
+        expect(ped.robbed).toBe(true);
+    });
+
+    it('köper vapen och ammo hos Pang-Pelle, men inte med snuten efter sig', () => {
+        const profile = createPlayerState('kimit');
+        profile.money = 10000;
+        const w = makeWorld(44, profile);
+        expect(w.buyWeapon('pistol')).toBe(true);
+        expect(profile.weapons).toContain('pistol');
+        expect(profile.ammo.pistol).toBe(24);
+        expect(profile.money).toBe(8500);
+        expect(w.buyAmmo('pistol')).toBe(true);
+        expect(profile.ammo.pistol).toBe(48);
+        setStars(w.wanted, 2);
+        expect(w.buyWeapon('uzi')).toBe(false);
+    });
+
+    it('skott träffar den som står framför dig', () => {
+        const profile = createPlayerState('kimit');
+        profile.weapons = ['pistol']; profile.ammo = { pistol: 5 }; profile.weapon = 'pistol';
+        const w = makeWorld(45, profile);
+        w.player.x = 8 * TILE + 32; w.player.y = 3 * TILE + 32; w.player.angle = 0;
+        const ped = createPed(w.player.x + 90, w.player.y, w.rnd, { type: 'gang', gang: 'dods', hp: 20 });
+        w.peds = [ped];
+        w.update(DT, { ...IDLE, punch: true, attack: true });
+        expect(profile.ammo.pistol).toBe(4);
+        for (let i = 0; i < 30; i++) w.update(DT, IDLE);
+        expect(ped.down > 0 || ped.hp < 20).toBe(true);
+    });
+
+    it('opps skjuter tillbaka när du är beväpnad', () => {
+        const profile = createPlayerState('kimit');
+        profile.weapons = ['pistol']; profile.ammo = { pistol: 10 };
+        const w = makeWorld(46, profile);
+        standIn(w, 'vasterort');
+        w.spawnOpps('dods');
+        expect(w.peds.some(pd => pd.gun)).toBe(true);
+        let shot = false;
+        for (let i = 0; i < 60 * 20 && !shot; i++) { w.update(DT, IDLE); if (w.bullets.some(b => b.from === 'npc')) shot = true; }
+        expect(shot).toBe(true);
+    });
+
+    it('en rånare tar pengar av den som inte slåss', () => {
+        const profile = createPlayerState('kimit');
+        profile.money = 10000;
+        const w = makeWorld(47, profile);
+        standIn(w, 'orten');
+        w.spawnMugger();
+        for (let i = 0; i < 60 * 40 && profile.money === 10000; i++) w.update(DT, IDLE);
+        expect(profile.money).toBeLessThan(10000);
+    });
+
+    it('en fin bil imponerar mer än en cykel', () => {
+        expect(dateChance(createVehicle('rolls', 0, 0, 0))).toBeGreaterThan(dateChance(createVehicle('cykel', 0, 0, 0)));
+        expect(dateChance(null)).toBe(0);
+    });
+
+    it('dejt: hämta vid nattklubben, kör hem till henne, några timmar senare...', () => {
+        const profile = createPlayerState('kimit');
+        const w = makeWorld(48, profile);
+        w.time = (22 - 19.5) * 24; // 22:00
+        const club = city.markers.club;
+        const car = createVehicle('rolls', club.x, club.y, 0);
+        w.vehicles.push(car); car.driver = 'player'; w.player.vehicle = car;
+        w.player.x = club.x; w.player.y = club.y;
+        w.player.hp = 40;
+        w.update(DT, IDLE);
+        expect(w.date).toBeTruthy();
+        const dest = w.date.dest;
+        car.x = dest.x; car.y = dest.y; car.vx = 0; car.vy = 0;
+        w.update(DT, IDLE);
+        expect(w.date).toBe(null);
+        expect(w.player.hp).toBe(100);
+        expect(profile.rep).toBe(5);
+        expect(profile.dateThisRound).toBe(true);
+        expect(profile.cityStats.dates).toBe(1);
+        expect(w.fade).toBeTruthy();
+    });
+
+    it('dejten hoppar av om du krockar för mycket', () => {
+        const w = makeWorld(49);
+        w.time = (22 - 19.5) * 24;
+        const club = city.markers.club;
+        const car = createVehicle('rolls', club.x, club.y, 0);
+        w.vehicles.push(car); car.driver = 'player'; w.player.vehicle = car;
+        w.player.x = club.x; w.player.y = club.y;
+        w.update(DT, IDLE);
+        expect(w.date).toBeTruthy();
+        for (let i = 0; i < 4; i++) { w.damageVehicle(car, 30, null); w.update(DT, IDLE); }
+        expect(w.date).toBe(null);
+        expect(w.profile.dateThisRound).toBe(false);
+    });
+
+    it('nattklubben är stängd på dagen', () => {
+        const w = makeWorld(50);
+        w.time = (12 - 19.5 + 24) * 24; // 12:00
+        const club = city.markers.club;
+        const car = createVehicle('rolls', club.x, club.y, 0);
+        w.vehicles.push(car); car.driver = 'player'; w.player.vehicle = car;
+        w.player.x = club.x; w.player.y = club.y;
+        w.update(DT, IDLE);
+        expect(w.date).toBe(null);
+        expect(w.events.some(e => e.type === 'msg' && e.text.includes('20:00'))).toBe(true);
+    });
+});
+

@@ -78,8 +78,9 @@ body.city-open .cbd-leaf {
 .ct-right {
     right: 14px;
     grid-template-columns: 62px 62px 74px;
-    grid-template-rows: 62px 74px;
+    grid-template-rows: 50px 62px 74px;
     grid-template-areas:
+        "rob wpn ."
         "act hb horn"
         ". down gas";
     align-items: end;
@@ -109,6 +110,8 @@ body.city-open .cbd-leaf {
 .ct-right .ct-horn { grid-area: horn; height: 62px; font-size: 20px; }
 .ct-right [data-key="down"] { grid-area: down; }
 .ct-right .ct-gas { grid-area: gas; background: rgba(255, 210, 63, 0.35); }
+.ct-right .ct-rob { grid-area: rob; height: 50px; font-size: 18px; }
+.ct-right .ct-wpn { grid-area: wpn; height: 50px; font-size: 18px; }
 
 /* ── Modaler ── */
 .city-modal {
@@ -256,7 +259,7 @@ body.city-open .cbd-leaf {
 /* Smala skärmar: knapparna under HUD-kolumnen så de inte krockar med pengarna */
 @media (max-width: 560px) {
     .city-topbar {
-        top: 160px;
+        top: 196px;
         left: 10px;
         transform: none;
     }
@@ -285,4 +288,46 @@ body.city-open .cbd-leaf {
 .city-go.join {
     background: var(--gang);
     color: #111;
+}
+
+/* Pang-Pelles vapenlåda */
+.gun-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-bottom: 14px;
+}
+
+.gun-row {
+    display: grid;
+    grid-template-columns: 34px 1fr auto;
+    align-items: center;
+    gap: 10px;
+    background: rgba(255, 255, 255, 0.05);
+    border-left: 3px solid var(--gang);
+    border-radius: 4px;
+    padding: 8px 10px;
+}
+
+.gun-icon {
+    font-size: 24px;
+    text-align: center;
+}
+
+.gun-name {
+    font-family: 'Bungee', Impact, sans-serif;
+    font-size: 13px;
+}
+
+.gun-name small {
+    display: block;
+    font-family: system-ui, sans-serif;
+    font-size: 11px;
+    color: rgba(255, 255, 255, 0.6);
+}
+
+.gun-row .city-go {
+    font-size: 12px;
+    padding: 8px 12px;
+    white-space: nowrap;
 }

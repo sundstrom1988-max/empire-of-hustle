@@ -9,14 +9,15 @@ import { TILE, T, DX, DY, DIR_ANGLE, GANGS, DISTRICTS } from './constants.js';
 import { tileAt, laneDirs, districtAt, flowField, isSolidAt, isWalkableTile } from './map.js';
 import { createVehicle, createGangVehicle, pickTrafficType, fenceValue, VEHICLES } from './vehicles.js';
 import { stepVehicle, collideVehicles, stepWalker, distToVehicle, impactDamage, collideCircleWithMap } from './physics.js';
-import { initLaneAI, laneControl, chaseControl, pedControl, createPed, lineClear } from './ai.js';
+import { initLaneAI, laneControl, chaseControl, pedControl, createPed, lineClear, angleDiff } from './ai.js';
 import { createWanted, addHeat, stars, updateWanted, copTarget, copSpeedFactor, clearWanted, CRIME } from './wanted.js';
 import { createMission, updateMission, applyRespect, adjustRespect, emptyRespect, isHostile, gangById, phoneAccess, canJoin } from './missions.js';
 import { mulberry32 } from './rng.js';
+import { WEAPONS, ownsWeapon, hasGun, nextWeapon, weaponPurchase, dateChance } from './weapons.js';
 import { SHOPS } from '../data/gameData.js';
 
 export const CLOCK_START = 19.5; // 19:30 — kvällen är ung
-const NO_INPUT = { throttle: 0, steer: 0, handbrake: false, mx: 0, my: 0, run: false, action: false, horn: false, punch: false };
+const NO_INPUT = { throttle: 0, steer: 0, handbrake: false, mx: 0, my: 0, run: false, action: false, horn: false, punch: false, attack: false, rob: false, weapon: false };
 const PICKUP_TYPES = [['cash', 45], ['repair', 15], ['nitro', 15], ['bribe', 12], ['health', 13]];
 const GANG_RADIO = { kebab: 1, orden: 2, taco: 0, dods: 0, hdmc: 2, bmc: 1 };
 export const GOODS_PRICE = 120;
@@ -29,6 +30,13 @@ const METRO_LINES = [
 ];
 const METRO_SCARED = ['Aj, mitt hår!! 😭', 'Okej okej! 😳', 'Inte ansiktet!!', 'Min latte! ☕💦'];
 const OPP_SHOUTS = ['Vad gör du på vår gata?!', 'Det där är VÅR turf!', 'Du är död, bror!', 'Fel område, clown!'];
+const FIGHT_BACK = ['Råna MIG? Kom igen då!', 'Vad fan gör du?!', 'Du valde fel kille, bror!', 'Nu jävlar!'];
+const HAND_OVER = ['Okej okej, ta den!', 'Ta allt, skada mig inte!', 'Snälla, jag har barn!', 'Här, här!'];
+const MUGGER_LINES = ['Plånboken. NU.', 'Ge hit stålarna, bror!', 'Fel gata, fel tid.'];
+const COMBO_NAMES = ['KNOCKOUT!', 'DUBBEL!', 'TRIPPEL!', 'BOWLING!', 'STRIKE!!'];
+const ROUGH_TURFS = new Set(['orten', 'industrin', 'hamnen', 'vasterort']);
+const DATE_NAMES = ['Jasmine', 'Bella', 'Nadia', 'Sanna', 'Leila', 'Moa', 'Yasmin', 'Felicia', 'Amira', 'Ronja'];
+const DATE_NOPE = ['"I DEN där? Haha, nej."', '"Min pappa har en finare bil."', '"Ring mig när du har en riktig bil."', '"Jag väntar på min Uber, tack."'];
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
 const center = t => t * TILE + TILE / 2;
 
@@ -82,10 +90,23 @@ export class World {
         this.buyerCooldown = 1.5;
         this.punchCd = 0;
         this.warnedTurf = new Set();
+        // Gatuliv: påkörningscombo, tappade plånböcker, rån, skott, rånare, dejter
+        this.combo = 0; this.comboT = 0;
+        this.drops = [];
+        this.robCd = 0;
+        this.bullets = [];
+        this.shotHeatT = 0;
+        this.noAmmoT = 0;
+        this.muggerT = 60;
+        this.date = null;
+        this.fade = null;
         profile.respect = { ...emptyRespect(), ...(profile.respect || {}) };
+        if (!Array.isArray(profile.weapons)) profile.weapons = [];
+        if (!profile.ammo || typeof profile.ammo !== 'object') profile.ammo = {};
+        if (!ownsWeapon(profile, profile.weapon)) profile.weapon = 'fists';
         this.player = {
             x: city.spawn.x, y: city.spawn.y, vx: 0, vy: 0, r: 7, angle: -Math.PI / 2,
-            hp: 100, maxHp: 100, vehicle: null, dead: false, nitro: 0, walkPhase: 0, bustT: 0, hitT: 0, punchT: 0,
+            hp: 100, maxHp: 100, vehicle: null, dead: false, nitro: 0, walkPhase: 0, bustT: 0, hitT: 0, hurtT: 0, punchT: 0, muzzle: 0,
             charIcon: profile.char?.icon || '😎', color: profile.char?.color || '#ff4fd8'
         };
         this.setupOwnedCars();
@@ -180,22 +201,32 @@ export class World {
         this.hornT = Math.max(0, this.hornT - dt);
         this.gangHitT = Math.max(0, this.gangHitT - dt);
         this.punchCd = Math.max(0, this.punchCd - dt);
+        this.robCd = Math.max(0, this.robCd - dt);
+        this.shotHeatT = Math.max(0, this.shotHeatT - dt);
+        this.noAmmoT = Math.max(0, this.noAmmoT - dt);
+        this.comboT = Math.max(0, this.comboT - dt);
+        if (this.comboT <= 0) this.combo = 0;
         for (const g in this.beef) this.beef[g] = Math.max(0, this.beef[g] - dt);
+        if (this.fade && (this.fade.t += dt) >= this.fade.dur) this.fade = null;
         const playing = this.state === 'play';
         if (!playing) {
             this.stateT += dt;
             if (this.stateT > 3.8 && !this.finished) this.finished = this.state;
         }
-        this.updatePlayer(dt, playing ? input : NO_INPUT);
+        this.updatePlayer(dt, playing && !this.fade ? input : NO_INPUT);
         this.updateFlow(dt);
         this.manageSpawns(dt);
         this.updateVehicles(dt);
         this.updatePeds(dt);
         this.resolveCollisions();
+        this.updateBullets(dt);
         this.updateFires(dt);
         if (playing) {
             this.updateInteractions();
+            this.updateDrops(dt);
             this.updateSelling(dt);
+            this.updateMuggers(dt);
+            this.updateDate(dt);
             this.updateMissionState(dt);
             this.updateWantedState(dt);
         }
@@ -209,6 +240,7 @@ export class World {
         const p = this.player;
         p.nitro = Math.max(0, p.nitro - dt);
         p.hitT = Math.max(0, p.hitT - dt);
+        p.hurtT = Math.max(0, p.hurtT - dt);
         if (p.vehicle) {
             const v = p.vehicle;
             const ctl = { throttle: input.throttle, steer: input.steer, handbrake: input.handbrake, nitro: p.nitro > 0 && input.throttle > 0 };
@@ -223,7 +255,11 @@ export class World {
             stepWalker(p, input.mx, input.my, speed, dt, this.city);
             if (Math.hypot(input.mx, input.my) > 0.1) p.walkPhase += dt * speed * 0.12;
             p.punchT = Math.max(0, p.punchT - dt);
-            if (input.punch) this.playerPunch();
+            p.muzzle = Math.max(0, (p.muzzle || 0) - dt);
+            if (input.weapon) this.cycleWeapon();
+            const w = WEAPONS[this.profile.weapon] || WEAPONS.fists;
+            if (input.punch || (w.auto && input.attack)) this.playerAttack();
+            if (input.rob) this.tryRob();
             if (input.action) this.tryEnterVehicle();
         }
     }
@@ -577,8 +613,10 @@ export class World {
     // ── Fotgängare ──
     updatePeds(dt) {
         for (const ped of this.peds) {
+            ped.muzzle = Math.max(0, (ped.muzzle || 0) - dt);
             if (ped.down > 0) {
                 ped.down -= dt;
+                if (ped.spin) { ped.angle += ped.spin * dt; ped.spin *= Math.max(0, 1 - 3 * dt); }
                 ped.vx *= Math.max(0, 1 - 4 * dt); ped.vy *= Math.max(0, 1 - 4 * dt);
                 ped.x += ped.vx * dt; ped.y += ped.vy * dt;
                 collideCircleWithMap(ped, ped.r, this.city);
@@ -620,8 +658,16 @@ export class World {
                 if (Math.hypot(t.x - ped.x, t.y - ped.y) < 16 && ped.hitCd <= 0) { ped.hitCd = 0.7; this.hitPed(t, 9, ped); }
                 return;
             }
+            if (ped.mugger && p.vehicle) {
+                // Rånare ger sig inte på en bil
+                ped.attack = false; ped.mugger = false; ped.mode = 'flee'; ped.t = 3;
+                return;
+            }
             const reach = p.vehicle ? distToVehicle(p.vehicle, ped.x, ped.y) < 8 : d < 16;
-            if (reach && ped.hitCd <= 0) {
+            if (ped.gun && !p.dead && d > 36 && d < 340 && ped.hitCd <= 0 && lineClear(this.city, ped.x, ped.y, p.x, p.y)) {
+                ped.hitCd = 1.3 + this.rnd() * 1.1;
+                this.npcShoot(ped);
+            } else if (reach && ped.hitCd <= 0) {
                 ped.hitCd = 0.8;
                 this.hitPlayer(ped);
             }
@@ -651,33 +697,165 @@ export class World {
         return isHostile(this.profile.respect || {}, gang) || (this.beef[gang] || 0) > 0;
     }
 
-    // ── Slagsmål ──
-    playerPunch() {
-        const p = this.player;
+    // ── Slagsmål och vapen ──
+    cycleWeapon() {
+        const prof = this.profile;
+        prof.weapon = nextWeapon(prof);
+        const w = WEAPONS[prof.weapon];
+        this.sfx('click', 0.5);
+        const ammo = w.melee ? '' : ` · ${prof.ammo[w.id] || 0} skott`;
+        this.floater(this.player.x, this.player.y - 30, `${w.icon} ${w.name}${ammo}`, '#e5e7eb');
+    }
+
+    // SPACE till fots: slag, slag med trä eller skott beroende på vapen
+    playerAttack() {
+        const p = this.player, prof = this.profile;
         if (this.punchCd > 0 || p.dead) return;
-        this.punchCd = 0.35;
+        if (!ownsWeapon(prof, prof.weapon)) prof.weapon = 'fists';
+        const id = prof.weapon || 'fists', w = WEAPONS[id] || WEAPONS.fists;
+        if (!w.melee && !((prof.ammo[id] || 0) > 0)) {
+            this.punchCd = 0.25;
+            this.sfx('click', 0.7);
+            if (this.noAmmoT <= 0) { this.noAmmoT = 3; this.message(`${w.icon} Slut på ammo! Q byter vapen — mer ammo hos Pang-Pelle 🔫`); }
+            return;
+        }
+        this.punchCd = w.cd;
         p.punchT = 0.18;
-        let best = null, bd = 30;
+        if (w.melee) this.melee(w);
+        else this.shoot(id, w);
+    }
+
+    melee(w) {
+        const p = this.player;
+        let best = null, bd = w.range;
         for (const ped of this.peds) {
             if (ped.down > 0) continue;
             const dx = ped.x - p.x, dy = ped.y - p.y;
             const dd = Math.hypot(dx, dy);
-            if (dd > 30) continue;
-            const facing = Math.abs(((Math.atan2(dy, dx) - p.angle + Math.PI * 3) % (Math.PI * 2)) - Math.PI);
+            if (dd > w.range) continue;
+            const facing = Math.abs(angleDiff(p.angle, Math.atan2(dy, dx)));
             const score = dd + (facing > 1.3 ? 14 : 0);
             if (score < bd) { bd = score; best = ped; }
         }
-        this.sfx(best ? 'punch' : 'skid', best ? 1 : 0.2);
+        this.sfx(best ? (w.id === 'bat' ? 'bat' : 'punch') : 'swing', best ? 1 : 0.4);
         if (!best) return;
         const civilian = !best.attack && best.type !== 'gang';
-        this.hitPed(best, 15 + this.rnd() * 6, 'player');
+        this.hitPed(best, w.dmg[0] + this.rnd() * (w.dmg[1] - w.dmg[0]), 'player');
         if (civilian) addHeat(this.wanted, CRIME.ped * 0.5, this.copNear(450, true));
-        if (best.type === 'metro') { this.pedSay(best, METRO_SCARED[Math.floor(this.rnd() * METRO_SCARED.length)]); best.boredT = 40; best.creepT = 0; }
-        if (best.type === 'gang' && !best.attack && best.gang !== this.profile.gang) {
-            // Slår du en av dem slår alla tillbaka
-            this.profile.respect = adjustRespect(this.profile.respect, best.gang, -4);
+        this.provoke(best);
+    }
+
+    shoot(id, w) {
+        const p = this.player, prof = this.profile;
+        prof.ammo[id] = (prof.ammo[id] || 0) - 1;
+        const aim = this.autoAim(p.x, p.y, p.angle, w.range);
+        if (aim !== null) p.angle = aim;
+        const sx = p.x + Math.cos(p.angle) * 12, sy = p.y + Math.sin(p.angle) * 12;
+        for (let i = 0; i < w.pellets; i++) {
+            const a = p.angle + (this.rnd() - 0.5) * 2 * w.spread;
+            this.bullets.push({ x: sx, y: sy, px: sx, py: sy, vx: Math.cos(a) * w.speed, vy: Math.sin(a) * w.speed, life: w.range / w.speed, dmg: w.dmg, from: 'player' });
+        }
+        p.muzzle = 0.07;
+        this.shake = Math.max(this.shake, id === 'shotgun' ? 0.3 : 0.08);
+        this.sfx(id === 'pistol' ? 'shot' : id, id === 'uzi' ? 0.6 : 1);
+        // Skott hörs: folk springer och snuten kommer
+        this.scarePeds(p.x, p.y, 260);
+        if (this.shotHeatT <= 0) { addHeat(this.wanted, CRIME.shot, this.copNear(700, false)); this.shotHeatT = 2; }
+        if (prof.ammo[id] <= 0) this.message(`${w.icon} Sista skottet! Q byter vapen.`);
+    }
+
+    // Sikta åt rätt håll: närmaste mål i en kon framför dig (opps först)
+    autoAim(x, y, angle, range) {
+        let best = null, bs = Infinity;
+        for (const ped of this.peds) {
+            if (ped.down > 0 || (ped.gang && ped.gang === this.profile.gang && !ped.attack)) continue;
+            const dx = ped.x - x, dy = ped.y - y, d = Math.hypot(dx, dy);
+            if (d > range || d < 4) continue;
+            const a = Math.atan2(dy, dx);
+            const diff = Math.abs(angleDiff(angle, a));
+            if (diff > 0.5) continue;
+            const score = d * (1 + diff * 3) * (ped.attack ? 0.4 : 1);
+            if (score < bs && lineClear(this.city, x, y, ped.x, ped.y)) { bs = score; best = a; }
+        }
+        return best;
+    }
+
+    npcShoot(ped) {
+        const p = this.player;
+        const a = Math.atan2(p.y - ped.y, p.x - ped.x) + (this.rnd() - 0.5) * 0.36;
+        ped.angle = a;
+        ped.muzzle = 0.08;
+        const g = gangById(ped.gang);
+        const sx = ped.x + Math.cos(a) * 10, sy = ped.y + Math.sin(a) * 10;
+        this.bullets.push({ x: sx, y: sy, px: sx, py: sy, vx: Math.cos(a) * 720, vy: Math.sin(a) * 720, life: 0.6, dmg: 5 + this.rnd() * 3, from: 'npc', reason: g ? `Skjuten av ${g.name}` : 'Skjuten' });
+        this.sfxAt('shot', ped.x, ped.y, 0.8);
+    }
+
+    updateBullets(dt) {
+        if (!this.bullets.length) return;
+        const p = this.player;
+        const N = 3; // delsteg så att kulor inte flyger rakt igenom folk
+        for (const b of this.bullets) {
+            b.px = b.x; b.py = b.y;
+            for (let k = 0; k < N && b.life > 0; k++) {
+                b.x += b.vx * dt / N; b.y += b.vy * dt / N;
+                if (isSolidAt(this.city, b.x, b.y)) { b.life = 0; this.spawnParticle('spark', b.x, b.y); break; }
+                if (b.from === 'player') {
+                    if (this.bulletHitPed(b) || this.bulletHitVehicle(b)) b.life = 0;
+                } else if (!p.dead) {
+                    const hit = p.vehicle ? distToVehicle(p.vehicle, b.x, b.y) < 1 : Math.hypot(b.x - p.x, b.y - p.y) < p.r + 3;
+                    if (!hit) continue;
+                    b.life = 0;
+                    if (p.vehicle) {
+                        this.damageVehicle(p.vehicle, b.dmg * 0.5, null);
+                        this.spawnParticle('spark', b.x, b.y);
+                        this.sfx('crash', 0.25);
+                    } else {
+                        p.vx += b.vx * 0.05; p.vy += b.vy * 0.05;
+                        this.sfx('hurt', 0.8);
+                        this.hurtPlayer(b.dmg, b.reason || 'Skjuten');
+                    }
+                }
+            }
+            b.life -= dt;
+        }
+        this.bullets = this.bullets.filter(b => b.life > 0);
+    }
+
+    bulletHitPed(b) {
+        for (const ped of this.peds) {
+            if (ped.down > 0 || Math.abs(ped.x - b.x) > 10 || Math.abs(ped.y - b.y) > 10) continue;
+            if (Math.hypot(ped.x - b.x, ped.y - b.y) > ped.r + 2) continue;
+            const civilian = !ped.attack && ped.type !== 'gang';
+            this.hitPed(ped, b.dmg, 'player');
+            if (civilian) addHeat(this.wanted, CRIME.ped * 0.5, this.copNear(500, true));
+            this.provoke(ped);
+            return true;
+        }
+        return false;
+    }
+
+    bulletHitVehicle(b) {
+        for (const v of this.vehicles) {
+            if (v === this.player.vehicle || v.exploded || Math.abs(v.x - b.x) > 40 || Math.abs(v.y - b.y) > 40) continue;
+            if (distToVehicle(v, b.x, b.y) > 0) continue;
+            this.damageVehicle(v, b.dmg * 0.5, 'player');
+            this.spawnParticle('spark', b.x, b.y);
+            this.sfxAt('crash', b.x, b.y, 0.2);
+            if (v.driver === 'cop' && this.copHitT <= 0) { addHeat(this.wanted, CRIME.copHit, true); this.copHitT = 1; }
+            return true;
+        }
+        return false;
+    }
+
+    // Vad som händer när du ger dig på någon (slag, skott, rån)
+    provoke(ped) {
+        if (ped.type === 'metro') { this.pedSay(ped, METRO_SCARED[Math.floor(this.rnd() * METRO_SCARED.length)]); ped.boredT = 40; ped.creepT = 0; }
+        if (ped.type === 'gang' && !ped.attack && ped.gang !== this.profile.gang) {
+            // Ger du dig på en av dem ger sig alla på dig
+            this.profile.respect = adjustRespect(this.profile.respect, ped.gang, -4);
             for (const o of this.peds) {
-                if (o.gang === best.gang && o.down <= 0 && Math.hypot(o.x - best.x, o.y - best.y) < 260) { o.attack = true; o.attackT = 30; }
+                if (o.gang === ped.gang && o.down <= 0 && Math.hypot(o.x - ped.x, o.y - ped.y) < 260) { o.attack = true; o.attackT = 30; }
             }
         }
     }
@@ -695,8 +873,18 @@ export class World {
             ped.hp = Math.ceil(ped.maxHp * 0.6);
             this.spawnParticle('stars', ped.x, ped.y);
             if (ped.buyer) this.releaseBuyer();
+            if (by === 'player') {
+                if (ped.mugger) { ped.mugger = false; ped.attack = false; this.message('🦹 Rånaren ligger! Ta tillbaka det han tog.'); }
+                this.dropWallet(ped, 0.35);
+            }
         } else if (!ped.attack && ped.type !== 'gang') {
-            ped.mode = 'flee'; ped.t = 2.5; ped.angle = Math.atan2(ped.vy, ped.vx);
+            if (by === 'player' && ped.tough) {
+                // Fel person att bråka med
+                ped.attack = true; ped.attackT = 14; ped.mode = 'walk';
+                this.pedSay(ped, FIGHT_BACK[Math.floor(this.rnd() * FIGHT_BACK.length)]);
+            } else {
+                ped.mode = 'flee'; ped.t = 2.5; ped.angle = Math.atan2(ped.vy, ped.vx);
+            }
         }
     }
 
@@ -708,12 +896,223 @@ export class World {
             this.sfx('crash', 0.35);
             return;
         }
-        const dmg = 6 + this.rnd() * 5 + (ped.vest ? 3 : 0);
-        p.hp -= dmg;
         p.vx += Math.cos(ped.angle) * 90; p.vy += Math.sin(ped.angle) * 90;
-        this.shake = Math.max(this.shake, 0.35);
         this.sfx('punch');
-        if (p.hp <= 0) { p.hp = 0; this.wasted(g ? `Nerslagen av ${g.name}` : 'Nerslagen'); }
+        this.hurtPlayer(6 + this.rnd() * 5 + (ped.vest ? 3 : 0), g ? `Nerslagen av ${g.name}` : ped.mugger ? 'Rånad och nerslagen' : 'Nerslagen');
+        if (ped.mugger && !p.dead) this.mugHit(ped);
+    }
+
+    hurtPlayer(dmg, reason) {
+        const p = this.player;
+        if (p.dead) return;
+        p.hp -= dmg;
+        p.hurtT = 0.3;
+        this.shake = Math.max(this.shake, 0.35);
+        if (p.hp <= 0) { p.hp = 0; this.wasted(reason); }
+    }
+
+    // Tappade plånböcker att plocka upp
+    dropWallet(ped, chance) {
+        if (ped.loot > 0) {
+            this.drops.push({ x: ped.x, y: ped.y, amount: ped.loot, life: 25 });
+            ped.loot = 0;
+            return;
+        }
+        if (ped.robbed || ped.cop || this.rnd() >= chance) return;
+        ped.robbed = true;
+        const base = ped.type === 'metro' ? 120 : ped.type === 'gang' ? 150 : 60;
+        const amount = Math.round((base + this.rnd() * 160) / 10) * 10;
+        this.drops.push({ x: ped.x + (this.rnd() - 0.5) * 14, y: ped.y + (this.rnd() - 0.5) * 14, amount, life: 25 });
+    }
+
+    updateDrops(dt) {
+        if (!this.drops.length) return;
+        const p = this.player;
+        for (const d of this.drops) {
+            d.life -= dt;
+            if (!p.dead && Math.hypot(d.x - p.x, d.y - p.y) < (p.vehicle ? 34 : 22)) {
+                this.addMoney(d.amount, d.x, d.y);
+                this.sfx('coin', 0.7);
+                d.life = 0;
+            }
+        }
+        this.drops = this.drops.filter(d => d.life > 0);
+    }
+
+    // ── Rån (R till fots) ──
+    tryRob() {
+        const p = this.player, prof = this.profile;
+        if (p.vehicle || p.dead || this.robCd > 0) return false;
+        let ped = null, bd = 28;
+        for (const o of this.peds) {
+            const d = Math.hypot(o.x - p.x, o.y - p.y);
+            if (d < bd) { bd = d; ped = o; }
+        }
+        this.robCd = 0.6;
+        if (!ped) { this.message('💰 Gå fram till någon för att råna dem (R).'); return false; }
+        this.robCd = 1.2;
+        p.angle = Math.atan2(ped.y - p.y, ped.x - p.x);
+        if (ped.robbed) { this.pedSay(ped, 'Du har redan tagit allt!', 2); return false; }
+        const witnessed = this.copNear(450, true);
+        const st = prof.cityStats;
+        if (ped.down > 0) {
+            // Länsa fickorna på någon som ligger
+            ped.robbed = true;
+            const amount = ped.loot > 0 ? ped.loot : Math.round(((ped.type === 'gang' ? 150 : 70) + this.rnd() * 200) / 10) * 10;
+            ped.loot = 0;
+            this.addMoney(amount, ped.x, ped.y);
+            this.sfx('coin');
+            if (st) st.robbed = (st.robbed || 0) + 1;
+            addHeat(this.wanted, CRIME.rob * 0.5, witnessed);
+            return true;
+        }
+        // Med ett skjutvapen i handen ger nästan alla upp
+        const armed = !(WEAPONS[prof.weapon] || WEAPONS.fists).melee;
+        let fight = ped.cop || ped.type === 'gang' ? 1 : ped.type === 'metro' ? 0.1 : ped.tough ? 0.8 : 0.3;
+        if (armed) fight *= ped.type === 'gang' || ped.cop ? 0.5 : 0.15;
+        if (ped.attack || this.rnd() < fight) {
+            const wasCalm = !ped.attack;
+            ped.attack = true; ped.attackT = 15; ped.mode = 'walk';
+            this.pedSay(ped, FIGHT_BACK[Math.floor(this.rnd() * FIGHT_BACK.length)]);
+            if (wasCalm) this.provoke(ped);
+            if (ped.cop) addHeat(this.wanted, CRIME.copHit, true);
+            else addHeat(this.wanted, CRIME.rob * 0.5, witnessed);
+            return false;
+        }
+        const rich = ped.type === 'metro' ? 2 : 1;
+        const amount = Math.round((80 + this.rnd() * 300) * rich * (1 + this.round * 0.05) / 10) * 10;
+        ped.robbed = true;
+        ped.mode = 'flee'; ped.t = 4; ped.angle = Math.atan2(ped.y - p.y, ped.x - p.x);
+        if (ped.buyer) this.releaseBuyer();
+        this.pedSay(ped, ped.type === 'metro' ? 'Ta den, ta den! Inte ansiktet! 😭' : HAND_OVER[Math.floor(this.rnd() * HAND_OVER.length)], 2.5);
+        this.addMoney(amount, ped.x, ped.y);
+        this.sfx('coin');
+        if (st) st.robbed = (st.robbed || 0) + 1;
+        addHeat(this.wanted, CRIME.rob, witnessed);
+        return true;
+    }
+
+    // ── Rånare på natten i de tuffa delarna av stan ──
+    updateMuggers(dt) {
+        const p = this.player;
+        if (p.vehicle || p.dead) return;
+        const h = this.hour();
+        if (!(h >= 21 || h < 5) || !ROUGH_TURFS.has(this.district)) return;
+        if ((this.muggerT -= dt) > 0) return;
+        this.muggerT = 80 + this.rnd() * 60;
+        if (!this.peds.some(o => o.mugger)) this.spawnMugger();
+    }
+
+    spawnMugger() {
+        const p = this.player;
+        for (let tries = 0; tries < 40; tries++) {
+            const a = this.rnd() * Math.PI * 2, r = 240 + this.rnd() * 160;
+            const tx = Math.floor((p.x + Math.cos(a) * r) / TILE), ty = Math.floor((p.y + Math.sin(a) * r) / TILE);
+            if (!isWalkableTile(this.city, tx, ty)) continue;
+            const ped = createPed(center(tx), center(ty), this.rnd, { type: 'civ', shirt: '#1f2937', hp: 30, attack: true, attackT: 40 });
+            ped.mugger = true; ped.tough = true; ped.hood = true;
+            this.pedSay(ped, MUGGER_LINES[Math.floor(this.rnd() * MUGGER_LINES.length)], 4);
+            this.peds.push(ped);
+            this.message('🦹 En rånare är ute efter dig! Slå tillbaka (SPACE) eller spring!');
+            return ped;
+        }
+        return null;
+    }
+
+    mugHit(ped) {
+        const p = this.player;
+        ped.mugHits = (ped.mugHits || 0) + 1;
+        if (ped.mugHits < 3) return;
+        const take = Math.min(2000, Math.floor((this.profile.money || 0) * 0.1));
+        ped.mugger = false; ped.attack = false;
+        ped.mode = 'flee'; ped.t = 8; ped.angle = Math.atan2(ped.y - p.y, ped.x - p.x);
+        ped.loot = take; // spöar du honom får du tillbaka det
+        ped.robbed = false;
+        if (take > 0) {
+            this.profile.money -= take;
+            this.floater(p.x, p.y - 20, `-${take.toLocaleString('sv-SE')} kr`, '#ef4444');
+        }
+        this.pedSay(ped, 'Tack för stålarna! 😈', 3);
+        this.message(`🦹 Rånaren tog ${take.toLocaleString('sv-SE')} kr och sprang! Spöa honom för att få tillbaka dem.`);
+        this.sfx('fail', 0.6);
+    }
+
+    // ── Pang-Pelle: vapen och ammo ──
+    buyWeapon(id) { return this.buyFromGunShop(id, 'weapon'); }
+    buyAmmo(id) { return this.buyFromGunShop(id, 'ammo'); }
+
+    buyFromGunShop(id, kind) {
+        const prof = this.profile, w = WEAPONS[id];
+        if (stars(this.wanted) > 0) { this.message('🔫 Pang-Pelle: "Inte med snuten efter dig, är du dum?!"'); return false; }
+        const r = weaponPurchase(prof, id, kind);
+        if (!r.ok) { this.message(`🔫 ${r.reason}`); return false; }
+        if (!this.spend(r.cost)) { this.message(`🔫 Det kostar ${r.cost.toLocaleString('sv-SE')} kr — du har inte råd.`); return false; }
+        if (kind === 'weapon') {
+            prof.weapons.push(id);
+            prof.weapon = id;
+        }
+        if (!w.melee) prof.ammo[id] = (prof.ammo[id] || 0) + w.ammo;
+        this.sfx('reload');
+        this.message(kind === 'weapon'
+            ? `${w.icon} Du köpte ${w.name}! SPACE ${w.melee ? 'slår' : 'skjuter'}, Q byter vapen.`
+            : `${w.icon} +${w.ammo} skott till ${w.name}.`);
+        return true;
+    }
+
+    // ── Nattklubben och dejter ──
+    isClubOpen() { const h = this.hour(); return h >= 20 || h < 5; }
+
+    visitClub() {
+        const v = this.player.vehicle, prof = this.profile;
+        if (this.date) return;
+        if (!this.isClubOpen()) { this.message('🍾 Nattklubben är stängd. Den öppnar 20:00.'); return; }
+        if (prof.dateThisRound) { this.message('🍾 Du har redan haft en dejt den här rundan, playboy. Kom tillbaka nästa runda.'); return; }
+        if (stars(this.wanted) > 0) { this.message('🍾 Ingen hoppar in i en bil med snuten efter sig!'); return; }
+        const name = DATE_NAMES[Math.floor(this.rnd() * DATE_NAMES.length)];
+        if (this.rnd() >= dateChance(v, prof.rep || 0)) {
+            this.message(`💅 ${name}: ${DATE_NOPE[Math.floor(this.rnd() * DATE_NOPE.length)]} (En finare bil hjälper.)`);
+            return;
+        }
+        const club = this.city.markers.club;
+        const spot = this.findSpot(club.x, club.y, 1000, 2400) || this.city.markers.home;
+        const dist = Math.hypot(spot.x - club.x, spot.y - club.y);
+        this.date = { name, mood: 100, dest: { x: spot.x, y: spot.y }, vehicle: v, hpLast: v.hp, t: 0, limit: Math.round(60 + dist / 12) };
+        this.big('DEJT!', '#f472b6', `💃 ${name} hoppar in. Kör henne hem — inga krockar!`);
+        this.sfx('love');
+    }
+
+    updateDate(dt) {
+        const d = this.date;
+        if (!d) return;
+        const p = this.player, v = p.vehicle;
+        d.t += dt;
+        if (!v || v !== d.vehicle) return this.endDate(false, `💔 ${d.name}: "Lämnar du mig HÄR?!" Hon tar en taxi.`);
+        if (v.wrecked) return this.endDate(false, `💔 ${d.name} skriker och springer från den brinnande bilen.`);
+        const dmg = d.hpLast - v.hp;
+        if (dmg > 0) {
+            d.mood -= dmg * 1.2;
+            d.hpLast = v.hp;
+            if (dmg > 4) this.floater(p.x, p.y - 30, '😠', '#f472b6');
+        }
+        if (stars(this.wanted) >= 2) d.mood -= dt * 6; // jagad av snuten — inte romantiskt
+        if (d.mood <= 0) return this.endDate(false, `💔 ${d.name}: "Släpp av mig. NU." Dejten är över.`);
+        if (d.t > d.limit) return this.endDate(false, `💔 ${d.name}: "Vi har kört i evigheter..." Hon ringer en kompis.`);
+        if (Math.hypot(p.x - d.dest.x, p.y - d.dest.y) < 70 && Math.hypot(v.vx, v.vy) < 200) this.endDate(true);
+    }
+
+    endDate(success, text) {
+        const d = this.date;
+        this.date = null;
+        if (!success) { this.message(text); this.sfx('fail', 0.7); return; }
+        const p = this.player, prof = this.profile;
+        p.hp = p.maxHp;
+        prof.rep = (prof.rep || 0) + 5;
+        prof.dateThisRound = true;
+        const st = prof.cityStats; if (st) st.dates = (st.dates || 0) + 1;
+        this.time += 72; // tre timmar senare
+        this.fade = { t: 0, dur: 3.2, text: '🌙 Några timmar senare...', sub: `${d.name}: "Ring mig 😘"` };
+        this.big('❤️ SCORE!', '#f472b6', '+5 rykte · full hälsa');
+        this.sfx('love');
     }
 
     // ── Langning ──
@@ -817,6 +1216,8 @@ export class World {
         const st = this.profile.cityStats; if (st) st.opps = (st.opps || 0) + 1;
         this.big('OPPS!', g.color, `${g.icon} ${g.name} vet att du langar på deras turf`);
         this.sfx('opps');
+        // Bär du skjutvapen kommer de också beväpnade
+        const guns = hasGun(this.profile) ? 2 : 0;
         let n = 0;
         for (let tries = 0; tries < 80 && n < 4; tries++) {
             // Slumpa en punkt runt spelaren och kolla att man kan gå där
@@ -825,6 +1226,8 @@ export class World {
             if (!isWalkableTile(this.city, tx, ty)) continue;
             const x = center(tx), y = center(ty);
             const ped = createPed(x, y, this.rnd, this.gangPedOpts(g, { attack: true, attackT: 60, hp: 45 }));
+            ped.gun = n < guns;
+            if (ped.gun) ped.hitCd = 1.2; // ett ögonblick innan de drar
             if (n === 0) this.pedSay(ped, OPP_SHOUTS[Math.floor(this.rnd() * OPP_SHOUTS.length)], 4);
             this.peds.push(ped);
             n++;
@@ -892,12 +1295,26 @@ export class World {
         return true;
     }
 
+    // Påkörd: flyger, snurrar och ligger kvar en stund. Du får combo och ibland en plånbok.
     knockPed(ped, v) {
-        ped.down = 3 + this.rnd() * 2;
-        ped.vx = v.vx * 0.7; ped.vy = v.vy * 0.7;
+        const sp = Math.hypot(v.vx, v.vy);
+        ped.down = 4 + this.rnd() * 2 + Math.min(3, sp / 200);
+        ped.vx = v.vx * 0.8; ped.vy = v.vy * 0.8;
+        ped.spin = (this.rnd() < 0.5 ? -1 : 1) * (5 + sp / 50);
         ped.mode = 'down';
-        this.sfxAt('punch', ped.x, ped.y, 0.9);
+        if (ped.buyer) this.releaseBuyer();
+        this.sfxAt('thud', ped.x, ped.y, 0.9);
         this.spawnParticle('stars', ped.x, ped.y);
+        if (v.driver !== 'player') return;
+        const st = this.profile.cityStats; if (st) st.knockouts = (st.knockouts || 0) + 1;
+        this.combo = this.comboT > 0 ? this.combo + 1 : 1;
+        this.comboT = 2.5;
+        const label = COMBO_NAMES[Math.min(this.combo, COMBO_NAMES.length) - 1];
+        this.floater(ped.x, ped.y - 18, this.combo > 1 ? `${label} x${this.combo}` : label, '#f472b6');
+        if (this.combo === 3 || this.combo === 5 || this.combo % 10 === 0) { this.big(label, '#f472b6', `${this.combo} i rad! 🎳`); this.sfx('combo'); }
+        if (ped.mugger) { ped.mugger = false; ped.attack = false; }
+        this.dropWallet(ped, 0.3 + 0.12 * this.combo);
+        if (this.date) { this.date.mood -= 25; this.message(`😱 ${this.date.name}: "Körde du just på någon?!"`); }
     }
 
     // ── Krockar ──
@@ -1061,6 +1478,11 @@ export class World {
             if (left > 0) this.emit({ type: 'shop', left, price: GOODS_PRICE, goods: this.profile.cityGoods || 0 });
             else this.message('🎒 Langaren: "Slut för den här rundan, bror."');
         }
+        if (!v && m.guns && this.enterZone('guns', m.guns.x, m.guns.y, 38)) {
+            if (stars(this.wanted) > 0) this.message('🔫 Pang-Pelle: "Inte med snuten efter dig, är du dum?!"');
+            else this.emit({ type: 'guns' });
+        }
+        if (v && m.club && this.enterZone('club', m.club.x, m.club.y, 70) && speed < 220) this.visitClub();
         for (const b of m.businesses) {
             const shop = SHOPS[b.slot];
             if (shop && (this.profile.owned || []).includes(shop.id) && this.enterZone('biz-' + b.slot, b.x, b.y, 62)) this.collectBusiness(shop, b);
@@ -1294,11 +1716,15 @@ export class World {
         if (this.state !== 'play') return;
         if (p.vehicle) {
             if (p.vehicle.wrecked) this.hint = 'E — HOPPA UT!';
+            else if (this.date) this.hint = `💃 Kör ${this.date.name} hem — följ den rosa pilen`;
             return;
         }
         const v = this.nearestVehicle(p.x, p.y, 38);
+        const near = r => this.peds.find(pd => Math.hypot(pd.x - p.x, pd.y - p.y) < r && !pd.robbed && !pd.attack);
+        const gun = !(WEAPONS[this.profile.weapon] || WEAPONS.fists).melee;
         if (v && !v.wrecked) this.hint = v.driver && v.driver !== 'player' ? `E — Sno ${v.spec.name}` : `E — Kör ${v.spec.name}`;
-        else if (this.peds.some(pd => pd.attack && !pd.targetPed && Math.hypot(pd.x - p.x, pd.y - p.y) < 120)) this.hint = 'SPACE — SLÅ!';
+        else if (this.peds.some(pd => pd.attack && !pd.targetPed && Math.hypot(pd.x - p.x, pd.y - p.y) < (gun ? 300 : 120))) this.hint = gun ? 'SPACE — SKJUT!' : 'SPACE — SLÅ!';
+        else if (near(28)) this.hint = near(28).down > 0 ? 'R — Länsa fickorna' : 'R — Råna · SPACE — Slå';
         else if (this.buyer) this.hint = '💸 En kund är på väg...';
         else if ((this.profile.cityGoods || 0) > 0 && this.sellIdle < 1.2) this.hint = '🎒 Stå still så kommer kunderna';
         else if (Math.hypot(p.x - this.city.markers.home.x, p.y - this.city.markers.home.y) < 90 && this.canGoHome()) this.hint = 'ESC — Åk hem till imperiet';

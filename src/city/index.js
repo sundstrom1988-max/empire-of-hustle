@@ -12,6 +12,7 @@ import { Input } from './input.js';
 import { stars } from './wanted.js';
 import { gangById } from './missions.js';
 import { JOIN_RESPECT } from './constants.js';
+import { WEAPONS, WEAPON_ORDER, ownsWeapon } from './weapons.js';
 import { sfx, playStation, stopRadio, STATIONS, engineStart, engineSet, engineStop, sirenSet, sirenStop, unlockAudio } from '../utils/audio.js';
 import { escapeHtml } from '../utils/html.js';
 
@@ -42,6 +43,8 @@ function buildOverlay(touch) {
                 <button data-key="right" aria-label="Höger">▶</button>
             </div>
             <div class="ct-pad ct-right">
+                <button data-key="r" class="ct-rob" aria-label="Råna">💰</button>
+                <button data-key="weapon" class="ct-wpn" aria-label="Byt vapen">🔫</button>
                 <button data-key="act" class="ct-act" aria-label="In/ur bil">E</button>
                 <button data-key="hb" class="ct-hb" aria-label="Handbroms">⤵</button>
                 <button data-key="horn" class="ct-horn" aria-label="Tuta">📯</button>
@@ -55,8 +58,8 @@ function buildOverlay(touch) {
 
 function controlsHelp(touch) {
     return touch
-        ? `<div class="city-help"><b>▲▼◀▶</b> kör / gå · <b>E</b> in/ur bil · <b>⤵</b> handbroms / slå · <b>📯</b> tuta · <b>📻</b> radio</div>`
-        : `<div class="city-help"><b>WASD/Pilar</b> kör/gå · <b>Shift</b> spring · <b>E</b> in/ur bil (sno bilar!) · <b>Space</b> handbroms / slå · <b>H</b> tuta · <b>R</b> radio · <b>P</b> paus · <b>Esc</b> hem</div>`;
+        ? `<div class="city-help"><b>▲▼◀▶</b> kör / gå · <b>E</b> in/ur bil · <b>⤵</b> handbroms / slå / skjut · <b>💰</b> råna · <b>🔫</b> byt vapen · <b>📯</b> tuta · <b>📻</b> radio</div>`
+        : `<div class="city-help"><b>WASD/Pilar</b> kör/gå · <b>Shift</b> spring · <b>E</b> in/ur bil (sno bilar!) · <b>Space</b> handbroms / slå / skjut · <b>R</b> råna (till fots) / radio (i bil) · <b>Q</b> byt vapen · <b>H</b> tuta · <b>P</b> paus · <b>Esc</b> hem</div>`;
 }
 
 export function openCity(profile, opts = {}) {
@@ -128,7 +131,7 @@ function showIntro() {
     showModal('intro', `
         <div class="city-card intro">
             <div class="city-logo">HUSTLE CITY</div>
-            <p class="city-tag">${escapeHtml(p.char?.icon || '')} ${escapeHtml(p.char?.name || '')} rullar ut på gatan. Sno bilar, ta jobb från gängens telefoner ☎️ och gå med i ett gäng. Köp varor av Langaren vid HQ 🎒 och langa — men på fel turf kommer opps. Skaka av snuten på Lackverkstan 🎨.</p>
+            <p class="city-tag">${escapeHtml(p.char?.icon || '')} ${escapeHtml(p.char?.name || '')} rullar ut på gatan. Sno bilar, ta jobb från gängens telefoner ☎️ och gå med i ett gäng. Köp varor av Langaren vid HQ 🎒 och langa — men på fel turf kommer opps. Kör över folk, råna dem, köp vapen hos Pang-Pelle 🔫 i Industrin och plocka upp en dejt vid Nattklubben 🍾 i Centrum efter 20:00. Skaka av snuten på Lackverkstan 🎨.</p>
             ${controlsHelp(session.touch)}
             <button class="city-go" data-act="start">▶ KÖR!</button>
         </div>`);
@@ -193,6 +196,29 @@ function showShop(e) {
     session.pendingShop = e;
 }
 
+// Pang-Pelle i Industrin: vapen och ammo
+function showGuns() {
+    const prof = session.world.profile;
+    const rows = WEAPON_ORDER.filter(id => id !== 'fists').map(id => {
+        const w = WEAPONS[id];
+        const owned = ownsWeapon(prof, id);
+        const info = w.melee ? `${w.dmg[0]}–${w.dmg[1]} skada · närstrid` : `${w.dmg}${w.pellets > 1 ? '×' + w.pellets : ''} skada · ${w.auto ? 'automat · ' : ''}${owned ? `${prof.ammo[id] || 0} skott` : `${w.ammo} skott ingår`}`;
+        const btn = !owned
+            ? `<button class="city-go" data-act="gun:${id}" ${prof.money < w.price ? 'disabled' : ''}>Köp · ${w.price.toLocaleString('sv-SE')} kr</button>`
+            : w.melee ? '<button class="city-go alt" disabled>✔ Din</button>'
+                : `<button class="city-go" data-act="ammo:${id}" ${prof.money < w.ammoPrice ? 'disabled' : ''}>+${w.ammo} skott · ${w.ammoPrice} kr</button>`;
+        return `<div class="gun-row"><div class="gun-icon">${w.icon}</div><div class="gun-name">${escapeHtml(w.name)}<small>${info}</small></div>${btn}</div>`;
+    }).join('');
+    showModal('guns', `
+        <div class="city-card phone" style="--gang:#f97316">
+            <div class="phone-head">🔫 Pang-Pelle · <span>bakdörren i Industrin</span></div>
+            <p class="phone-brief">"Psst. Allt är kallt, inga frågor. Bär du skjutvapen kommer opps också beväpnade — tänk på det."</p>
+            <div class="gun-list">${rows}</div>
+            <div class="phone-member">💰 Du har ${(prof.money || 0).toLocaleString('sv-SE')} kr · SPACE slår/skjuter · Q byter vapen</div>
+            <div class="city-row"><button class="city-go alt" data-act="decline-guns">Klar <small>(Esc)</small></button></div>
+        </div>`);
+}
+
 function onModalAction(act) {
     const s = session;
     if (!s) return;
@@ -225,10 +251,17 @@ function onModalAction(act) {
             resume();
             break;
         case 'decline-shop':
+        case 'decline-guns':
             resume();
             break;
         default:
             if (act.startsWith('buy:')) { s.world.buyGoods(Number(act.slice(4))); resume(); }
+            else if (act.startsWith('gun:') || act.startsWith('ammo:')) {
+                const [kind, id] = act.split(':');
+                if (kind === 'gun') s.world.buyWeapon(id); else s.world.buyAmmo(id);
+                handleEvents();
+                showGuns(); // stanna kvar i butiken
+            }
     }
 }
 
@@ -280,6 +313,7 @@ function handleEvents() {
             case 'sfx': sfx(e.name, e.vol); break;
             case 'phone': showPhone(e); break;
             case 'shop': showShop(e); break;
+            case 'guns': showGuns(); break;
             case 'enterCar': {
                 const v = e.vehicle;
                 if (v.radio >= 0) s.hud.onEvent({ type: 'radio', name: STATIONS[v.radio].name, tag: STATIONS[v.radio].tag });
@@ -308,14 +342,15 @@ function frame(ts) {
                 const ph = s.pendingPhone;
                 const act = s.modalType === 'phone' ? (s.pendingMission ? 'accept' : ph?.canJoin ? 'join' : 'decline')
                     : s.modalType === 'shop' ? `buy:${Math.min(5, s.pendingShop?.left || 0)}`
-                        : s.modalType === 'intro' ? 'start' : 'resume';
+                        : s.modalType === 'guns' ? 'decline-guns'
+                            : s.modalType === 'intro' ? 'start' : 'resume';
                 onModalAction(act);
-            } else if (inp.pressed('exit')) onModalAction({ phone: 'decline', shop: 'decline-shop', pause: 'resume' }[s.modalType] || 'start');
+            } else if (inp.pressed('exit')) onModalAction({ phone: 'decline', shop: 'decline-shop', guns: 'decline-guns', pause: 'resume' }[s.modalType] || 'start');
             else if (inp.pressed('pause') && s.modalType === 'pause') onModalAction('resume');
         } else if (!s.paused) {
             if (inp.pressed('pause')) showPause();
             else if (inp.pressed('exit')) tryGoHome();
-            if (inp.pressed('radio')) cycleRadio();
+            if (s.world.player.vehicle && inp.pressed('r')) cycleRadio(); // till fots betyder R rån
         }
         if (s.closing) return;
         if (!s.paused) {
@@ -323,7 +358,7 @@ function frame(ts) {
             const state = inp.state();
             let steps = 0;
             while (s.acc >= STEP && steps < 5) {
-                s.world.update(STEP, steps === 0 ? state : { ...state, action: false, punch: false });
+                s.world.update(STEP, steps === 0 ? state : { ...state, action: false, punch: false, rob: false, weapon: false });
                 s.acc -= STEP;
                 steps++;
             }
