@@ -42,14 +42,21 @@ export function playDiceBattle() {
     done();
 }
 
-export function playGuessNumber() {
+// Knappar i spelet i stället för prompt(), som blockeras i appar och inbäddade sidor
+const pickBtn = (label, call) => `<button class="mini-pick" onclick="${call}">${label}</button>`;
+
+export function playGuessNumber(guessArg) {
     const p = currentPlayer();
     if (p.money < 300) { showToast('Inte råd! 300 💰 krävs'); return; }
-    const secret = Math.floor(Math.random() * 10) + 1;
-    const guess = parseInt(prompt('Gissa ett tal mellan 1-10:'));
-    if (isNaN(guess)) return;
-    p.money -= 300;
     const result = document.getElementById('minigame-result');
+    const guess = parseInt(guessArg);
+    if (isNaN(guess) || guess < 1 || guess > 10) {
+        result.innerHTML = `<h4 style="margin-bottom:10px;">🔢 Gissa ett tal mellan 1 och 10 (300 💰)</h4>
+            <div class="mini-picks">${Array.from({ length: 10 }, (_, i) => pickBtn(i + 1, `window.game.playGuessNumber(${i + 1})`)).join('')}</div>`;
+        return;
+    }
+    const secret = Math.floor(Math.random() * 10) + 1;
+    p.money -= 300;
     if (guess === secret) {
         p.money += 1500; result.innerHTML = `<h4 style="color:#22c55e">🎯 ${secret} — RÄTT! +1500 💰</h4>`;
         playSound('win'); spawnParticles(['🎯', '💰'], 10);
@@ -82,13 +89,20 @@ export function playSlotMachine() {
     done();
 }
 
-export function playCoinFlip() {
+export function playCoinFlip(betArg) {
     const p = currentPlayer();
-    const bet = parseInt(prompt(`Insats? (Du har ${formatNum(p.money)} 💰)`));
-    if (isNaN(bet) || bet <= 0 || bet > p.money) { showToast('Ogiltig insats!'); return; }
+    const result = document.getElementById('minigame-result');
+    const bet = parseInt(betArg);
+    if (isNaN(bet)) {
+        const opts = [100, 500, 1000, Math.floor(p.money / 2), p.money].filter((v, i, a) => v > 0 && v <= p.money && a.indexOf(v) === i);
+        if (!opts.length) { showToast('Du har inga pengar att satsa!'); return; }
+        result.innerHTML = `<h4 style="margin-bottom:10px;">🪙 Hur mycket vill du satsa? (Du har ${formatNum(p.money)} 💰)</h4>
+            <div class="mini-picks">${opts.map(v => pickBtn(v === p.money ? `ALLT ${formatNum(v)}` : formatNum(v), `window.game.playCoinFlip(${v})`)).join('')}</div>`;
+        return;
+    }
+    if (bet <= 0 || bet > p.money) { showToast('Ogiltig insats!'); return; }
     p.money -= bet;
     const heads = Math.random() < 0.5;
-    const result = document.getElementById('minigame-result');
     if (heads) {
         p.money += bet * 2; result.innerHTML = `<div style="font-size:48px;">🪙</div><h4 style="color:#22c55e">KRONA! +${formatNum(bet)} 💰</h4>`;
         playSound('coin'); spawnParticles(['🪙', '💰'], 8);

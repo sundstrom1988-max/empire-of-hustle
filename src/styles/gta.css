@@ -511,3 +511,23 @@ body {
 .resp-row {
     grid-template-columns: 20px 1fr 70px 34px;
 }
+
+/* Val i minispelen (ersätter popup-rutor) */
+.mini-picks {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    justify-content: center;
+}
+
+.mini-pick {
+    font-family: 'Bungee', Impact, sans-serif;
+    font-size: 14px;
+    min-width: 46px;
+    padding: 10px 12px;
+    color: #111;
+    background: var(--gta-yellow);
+    border: 2px solid #000;
+    border-radius: 4px;
+    box-shadow: 3px 3px 0 #000;
+}
