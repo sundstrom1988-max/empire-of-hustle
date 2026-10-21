@@ -5,7 +5,7 @@ import { mulberry32 } from '../src/city/rng.js';
 import { createPlayerState } from '../src/game/state.js';
 import { setStars, stars } from '../src/city/wanted.js';
 import { createVehicle } from '../src/city/vehicles.js';
-import { createPed } from '../src/city/ai.js';
+import { createPed, initLaneAI } from '../src/city/ai.js';
 import { dateChance } from '../src/city/weapons.js';
 import { TILE } from '../src/city/constants.js';
 import { districtAt, isWalkableTile } from '../src/city/map.js';
@@ -168,20 +168,28 @@ describe('World simulation', () => {
         expect(w.profile.money).toBe(5000 - (150 + 400));
     });
 
-    it('collects cash from your own business once per round', () => {
+    it('collects cash inside your own business once per round', () => {
         const profile = createPlayerState('mehmet');
         profile.owned = ['kebab']; profile.levels = { kebab: 2 };
         const w = makeWorld(2, profile);
         const mk = city.markers.businesses.find(b => b.slot === 0);
-        w.player.x = mk.x; w.player.y = mk.y;
+        enterDoor(w, mk);
         const m0 = profile.money;
-        w.update(DT, IDLE);
+        expect(w.place?.pl).toBe(mk);
+        expect(w.placeAction('collect').close).toBe(false);
         expect(profile.money).toBe(m0 + Math.floor(80 * 2 * 0.3));
+        w.leavePlace();
         w.player.x += 500; w.update(DT, IDLE);
-        w.player.x = mk.x; w.update(DT, IDLE);
-        expect(profile.money).toBe(m0 + Math.floor(80 * 2 * 0.3));
+        enterDoor(w, mk);
+        expect(w.placeInfo().actions.some(a => a.id === 'collect')).toBe(false);
     });
 });
+
+// Gå fram till ett ställes dörr (mot husväggen) så att man går in
+function enterDoor(w, d) {
+    w.player.x = d.door.x; w.player.y = d.door.y;
+    w.update(DT, IDLE);
+}
 
 // Ställ spelaren på en trottoar i ett visst turf
 function standIn(w, turf) {
@@ -511,3 +519,232 @@ describe('Gatuliv', () => {
     });
 });
 
+
+describe('Snuten', () => {
+    // En snutbil på en fil nära spelaren
+    function copCar(w, minD = 60, maxD = 200) {
+        const spot = w.findSpot(w.player.x, w.player.y, minD, maxD);
+        const v = createVehicle('police', spot.x, spot.y, spot.angle);
+        v.driver = 'cop';
+        initLaneAI(v, spot.tx, spot.ty, spot.dir, w.rnd);
+        w.vehicles.push(v);
+        return v;
+    }
+    const noCops = w => { w.vehicles = w.vehicles.filter(v => v.driver !== 'cop'); w.peds = w.peds.filter(p => !p.cop); };
+
+    it('ett brott som ingen snut ser ger inga stjärnor', () => {
+        const w = makeWorld(60);
+        standIn(w, 'orten');
+        noCops(w);
+        const ped = createPed(w.player.x + 12, w.player.y, w.rnd, { type: 'civ' });
+        w.peds = [ped];
+        w.update(DT, { ...IDLE, punch: true });
+        expect(ped.hp).toBeLessThan(ped.maxHp);
+        expect(stars(w.wanted)).toBe(0);
+    });
+
+    it('samma brott framför en snut ger efterlysning', () => {
+        const w = makeWorld(61);
+        w.player.x = 8 * TILE + 32; w.player.y = 3 * TILE + 32;
+        noCops(w);
+        const cop = createVehicle('police', w.player.x + 120, w.player.y, Math.PI);
+        cop.driver = 'cop';
+        w.vehicles.push(cop);
+        const ped = createPed(w.player.x + 12, w.player.y, w.rnd, { type: 'civ' });
+        w.peds = [ped];
+        w.player.angle = 0;
+        w.update(DT, { ...IDLE, punch: true });
+        expect(stars(w.wanted)).toBeGreaterThan(0);
+    });
+
+    it('går att skaka av sig: utom synhåll tappar de spåret och stjärnorna försvinner', () => {
+        const w = makeWorld(62);
+        standIn(w, 'skogsbacken');
+        noCops(w);
+        w.manageSpawns = () => { };   // inga nya snutar i det här testet
+        setStars(w.wanted, 2);
+        w.wanted.seenT = 0;
+        let t = 0;
+        while (stars(w.wanted) > 0 && t < 30) { w.update(DT, IDLE); t += DT; }
+        expect(stars(w.wanted)).toBe(0);
+        expect(t).toBeLessThan(20);
+    });
+
+    it('snutbilar som tappat bort dig patrullerar i stället för att jaga', () => {
+        const w = makeWorld(63);
+        standIn(w, 'hamnen');
+        noCops(w);
+        const v = copCar(w, 700, 1100);
+        setStars(w.wanted, 2);
+        w.wanted.seenT = 10;
+        w.update(DT, IDLE);
+        expect(v.ai.mode).toBe('lane');
+        expect(v.siren).toBe(true);
+    });
+
+    it('till fots kliver snuten ur bilen och springer efter dig', () => {
+        const w = makeWorld(64);
+        w.player.x = 8 * TILE + 32; w.player.y = 3 * TILE + 32;
+        noCops(w);
+        // Snutbil på ringvägen, på väg mot spelaren
+        const v = createVehicle('police', w.player.x + 160, w.player.y, Math.PI);
+        v.driver = 'cop';
+        initLaneAI(v, 10, 3, 3, w.rnd);
+        v.angle = Math.PI;
+        w.vehicles.push(v);
+        setStars(w.wanted, 1);
+        let out = false;
+        for (let i = 0; i < 60 * 8 && !out; i++) {
+            w.update(DT, IDLE);
+            setStars(w.wanted, 1);
+            out = w.peds.some(p => p.cop && p.attack);
+        }
+        expect(out).toBe(true);
+    });
+
+    it('en snut som slås ner reser sig inte, och det ger efterlysning', () => {
+        const w = makeWorld(65);
+        w.player.x = 8 * TILE + 32; w.player.y = 3 * TILE + 32; w.player.angle = 0;
+        noCops(w);
+        w.manageSpawns = () => { };
+        const cop = createPed(w.player.x + 14, w.player.y, w.rnd, { cop: true, shirt: '#1e3a8a', hp: 40, attack: true, attackT: 90 });
+        w.peds = [cop];
+        setStars(w.wanted, 1);
+        for (let i = 0; i < 60 * 6 && !cop.dead; i++) w.update(DT, { ...IDLE, punch: i % 22 === 0 });
+        expect(cop.dead).toBe(true);
+        expect(w.profile.cityStats.copsDown).toBe(1);
+        expect(stars(w.wanted)).toBeGreaterThanOrEqual(2);
+        for (let i = 0; i < 60 * 15; i++) w.update(DT, IDLE);
+        expect(cop.down).toBeGreaterThan(0);
+    });
+
+    it('att köra över en snut sänker honom för gott', () => {
+        const w = makeWorld(66);
+        const car = onRingRoad(w);
+        car.vx = 300;
+        const cop = createPed(car.x + 30, car.y, w.rnd, { cop: true });
+        w.knockPed(cop, car);
+        expect(cop.dead).toBe(true);
+        expect(stars(w.wanted)).toBeGreaterThan(0);
+    });
+});
+
+describe('Slagsmål', () => {
+    it('en mot en: du vinner mot en gängmedlem utan att bli sönderslagen', () => {
+        const w = makeWorld(70);
+        w.player.x = 8 * TILE + 32; w.player.y = 3 * TILE + 32; w.player.angle = 0;
+        w.manageSpawns = () => { };
+        const g = createPed(w.player.x + 16, w.player.y, w.rnd, { type: 'gang', gang: 'dods', attack: true, attackT: 60 });
+        w.peds = [g];
+        for (let i = 0; i < 60 * 5 && !(g.down > 0); i++) w.update(DT, { ...IDLE, punch: i % 22 === 0 });
+        expect(g.down).toBeGreaterThan(0);
+        expect(w.player.hp).toBeGreaterThan(75);
+    });
+
+    it('fyra opps dödar dig inte på några sekunder', () => {
+        const w = makeWorld(71);
+        w.player.x = 8 * TILE + 32; w.player.y = 3 * TILE + 32;
+        w.manageSpawns = () => { };
+        w.peds = [0, 1, 2, 3].map(i => createPed(w.player.x + 14 + i * 4, w.player.y + (i - 1.5) * 9, w.rnd, { type: 'gang', gang: 'dods', attack: true, attackT: 60, hp: 35 }));
+        for (let i = 0; i < 60 * 5; i++) w.update(DT, IDLE);
+        expect(w.state).toBe('play');
+        expect(w.player.hp).toBeGreaterThan(0);
+    });
+
+    it('ett slag avbryter motståndarens slag och knuffar bak honom', () => {
+        const w = makeWorld(72);
+        w.player.x = 8 * TILE + 32; w.player.y = 3 * TILE + 32; w.player.angle = 0;
+        const g = createPed(w.player.x + 15, w.player.y, w.rnd, { type: 'gang', gang: 'dods', attack: true, attackT: 60 });
+        g.windup = 0.2;
+        w.peds = [g];
+        const x0 = g.x;
+        w.update(DT, { ...IDLE, punch: true });
+        expect(g.windup).toBe(0);
+        expect(g.stunT).toBeGreaterThan(0);
+        for (let i = 0; i < 10; i++) w.update(DT, IDLE);
+        expect(g.x).toBeGreaterThan(x0);
+    });
+});
+
+describe('Ställen att gå in i', () => {
+    const armedProfile = (money = 50000) => {
+        const p = createPlayerState('kimit');
+        p.money = money; p.weapons = ['pistol']; p.ammo = { pistol: 10 }; p.weapon = 'pistol';
+        return p;
+    };
+    const quiet = w => { w.vehicles = w.vehicles.filter(v => v.driver !== 'cop'); };
+
+    it('köp en fastighet vid dörren', () => {
+        const profile = createPlayerState('kimit');
+        profile.money = 5000;
+        const w = makeWorld(80, profile);
+        enterDoor(w, city.markers.businesses.find(b => b.slot === 0));
+        expect(w.placeInfo().actions.find(a => a.id === 'buy').disabled).toBe(false);
+        w.placeAction('buy');
+        expect(profile.owned).toContain('kebab');
+        expect(profile.money).toBe(4500);
+        expect(w.placeInfo().actions.some(a => a.id === 'rob')).toBe(false);
+    });
+
+    it('råna en butik med vapen i handen — en gång per runda', () => {
+        const profile = armedProfile(0);
+        const w = makeWorld(81, profile);
+        quiet(w);
+        enterDoor(w, city.markers.businesses.find(b => b.slot === 1));
+        expect(w.placeAction('rob').close).toBe(true);
+        expect(profile.money).toBeGreaterThan(0);
+        expect(profile.cityStats.heists).toBe(1);
+        w.leavePlace();
+        w.player.x += 400; w.update(DT, IDLE);
+        enterDoor(w, city.markers.businesses.find(b => b.slot === 1));
+        expect(w.placeInfo().actions.find(a => a.id === 'rob').disabled).toBe(true);
+    });
+
+    it('gömställe: köp, och vänta ut snuten om ingen såg dig gå in', () => {
+        const profile = armedProfile();
+        const w = makeWorld(82, profile);
+        quiet(w);
+        const house = city.markers.houses.find(h => h.district === 'orten');
+        enterDoor(w, house);
+        w.placeAction('buyhouse');
+        expect(profile.cityHouses).toContain(house.id);
+        w.leavePlace();
+        setStars(w.wanted, 2);
+        w.place = null;
+        w.enterPlace(house);
+        w.place.seen = false;
+        expect(w.placeAction('hide').close).toBe(true);
+        expect(stars(w.wanted)).toBe(0);
+        // Såg de dig gå in går det inte
+        setStars(w.wanted, 2);
+        w.enterPlace(house);
+        w.place.seen = true;
+        expect(w.placeInfo().actions.find(a => a.id === 'hide').disabled).toBe(true);
+    });
+
+    it('bankrån ger mycket pengar och tre stjärnor direkt', () => {
+        const profile = armedProfile(0);
+        const w = makeWorld(83, profile);
+        enterDoor(w, city.markers.bank);
+        w.placeAction('robbank');
+        expect(profile.money).toBeGreaterThan(3000);
+        expect(stars(w.wanted)).toBe(3);
+    });
+
+    it('gymmet gör dig starkare och frisören får snuten att tappa dig', () => {
+        const profile = armedProfile();
+        const w = makeWorld(84, profile);
+        quiet(w);
+        enterDoor(w, city.markers.businesses.find(b => b.slot === 2)); // Hustle Gym
+        w.placeAction('train');
+        expect(profile.strength).toBe(1);
+        expect(w.player.maxHp).toBe(110);
+        expect(w.placeInfo().actions.find(a => a.id === 'train').disabled).toBe(true);
+        w.leavePlace();
+        setStars(w.wanted, 3);
+        w.enterPlace(city.markers.businesses.find(b => b.slot === 1)); // Frisören
+        w.place.seen = false;
+        w.placeAction('look');
+        expect(stars(w.wanted)).toBe(1);
+    });
+});

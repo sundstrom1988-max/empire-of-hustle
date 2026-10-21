@@ -10,7 +10,7 @@ import { tileAt, laneDirs, districtAt, flowField, isSolidAt, isWalkableTile } fr
 import { createVehicle, createGangVehicle, pickTrafficType, fenceValue, VEHICLES } from './vehicles.js';
 import { stepVehicle, collideVehicles, stepWalker, distToVehicle, impactDamage, collideCircleWithMap } from './physics.js';
 import { initLaneAI, laneControl, chaseControl, pedControl, createPed, lineClear, angleDiff } from './ai.js';
-import { createWanted, addHeat, stars, updateWanted, copTarget, copSpeedFactor, clearWanted, CRIME } from './wanted.js';
+import { createWanted, addHeat, stars, updateWanted, copTarget, copSpeedFactor, clearWanted, setStars, lostTrack, CRIME } from './wanted.js';
 import { createMission, updateMission, applyRespect, adjustRespect, emptyRespect, isHostile, gangById, phoneAccess, canJoin } from './missions.js';
 import { mulberry32 } from './rng.js';
 import { WEAPONS, ownsWeapon, hasGun, nextWeapon, weaponPurchase, dateChance } from './weapons.js';
@@ -36,6 +36,15 @@ const MUGGER_LINES = ['Plånboken. NU.', 'Ge hit stålarna, bror!', 'Fel gata, f
 const COMBO_NAMES = ['KNOCKOUT!', 'DUBBEL!', 'TRIPPEL!', 'BOWLING!', 'STRIKE!!'];
 const ROUGH_TURFS = new Set(['orten', 'industrin', 'hamnen', 'vasterort']);
 const DATE_NAMES = ['Jasmine', 'Bella', 'Nadia', 'Sanna', 'Leila', 'Moa', 'Yasmin', 'Felicia', 'Amira', 'Ronja'];
+// Tjänster inne i företagen (gratis i de du äger)
+const SERVICES = {
+    kebab: { id: 'eat', icon: '🥙', label: 'Ät en kebabtallrik', note: '+40 ❤️', price: 60 },
+    barber: { id: 'look', icon: '💈', label: 'Ny frisyr', note: 'Snuten känner inte igen dig: −2 stjärnor', price: 300, needsStars: true },
+    gym: { id: 'train', icon: '🏋️', label: 'Träna', note: '+1 styrka: hårdare slag och mer hälsa', price: 250, perRound: true },
+    studio: { id: 'track', icon: '🎤', label: 'Spela in en disslåt', note: '+3 rykte', price: 400, perRound: true },
+    club: { id: 'vip', icon: '🍾', label: 'VIP-bord', note: '+40 ❤️ och +2 rykte', price: 1000, perRound: true },
+    tech: { id: 'hack', icon: '💻', label: 'Hacka polisens register', note: 'Rensar efterlysningen', price: 2000, needsStars: true }
+};
 const DATE_NOPE = ['"I DEN där? Haha, nej."', '"Min pappa har en finare bil."', '"Ring mig när du har en riktig bil."', '"Jag väntar på min Uber, tack."'];
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
 const center = t => t * TILE + TILE / 2;
@@ -100,13 +109,15 @@ export class World {
         this.muggerT = 60;
         this.date = null;
         this.fade = null;
+        this.place = null;          // stället du är inne i just nu
+        this.meleeHitT = 0;         // man kan bara ta ett slag i taget
         profile.respect = { ...emptyRespect(), ...(profile.respect || {}) };
         if (!Array.isArray(profile.weapons)) profile.weapons = [];
         if (!profile.ammo || typeof profile.ammo !== 'object') profile.ammo = {};
         if (!ownsWeapon(profile, profile.weapon)) profile.weapon = 'fists';
         this.player = {
             x: city.spawn.x, y: city.spawn.y, vx: 0, vy: 0, r: 7, angle: -Math.PI / 2,
-            hp: 100, maxHp: 100, vehicle: null, dead: false, nitro: 0, walkPhase: 0, bustT: 0, hitT: 0, hurtT: 0, punchT: 0, muzzle: 0,
+            hp: 100 + 10 * (profile.strength || 0), maxHp: 100 + 10 * (profile.strength || 0), vehicle: null, dead: false, nitro: 0, walkPhase: 0, bustT: 0, hitT: 0, hurtT: 0, punchT: 0, muzzle: 0,
             charIcon: profile.char?.icon || '😎', color: profile.char?.color || '#ff4fd8'
         };
         this.setupOwnedCars();
@@ -201,6 +212,7 @@ export class World {
         this.hornT = Math.max(0, this.hornT - dt);
         this.gangHitT = Math.max(0, this.gangHitT - dt);
         this.punchCd = Math.max(0, this.punchCd - dt);
+        this.meleeHitT = Math.max(0, this.meleeHitT - dt);
         this.robCd = Math.max(0, this.robCd - dt);
         this.shotHeatT = Math.max(0, this.shotHeatT - dt);
         this.noAmmoT = Math.max(0, this.noAmmoT - dt);
@@ -322,8 +334,8 @@ export class World {
                 this.message(wasCop ? '🚔 Du snodde en SNUTBIL! Galen.' : `🚗 Carjack! Föraren springer för livet.`);
             }
         } else if (v.spec.police) {
-            addHeat(this.wanted, CRIME.copCar, true);
-            this.message('🚔 Du snodde en SNUTBIL!');
+            const seen = addHeat(this.wanted, CRIME.copCar, copWitness);
+            this.message(seen ? '🚔 Du snodde en SNUTBIL — och de såg dig!' : '🚔 Du snodde en SNUTBIL! Ingen såg något...');
         }
         v.driver = 'player';
         v.ai = null;
@@ -342,6 +354,7 @@ export class World {
         const g = v.driver === 'gang' && v.gang ? gangById(v.gang) : null;
         const ped = createPed(side.x, side.y, this.rnd, g ? this.gangPedOpts(g) : { shirt: cop ? '#1e3a8a' : undefined, cop });
         ped.mode = 'flee'; ped.t = 3; ped.angle = v.angle + Math.PI / 2;
+        if (cop && stars(this.wanted) > 0 && !this.player.dead) { ped.attack = true; ped.attackT = 60; ped.mode = 'walk'; ped.gun = stars(this.wanted) >= 3; }
         this.peds.push(ped);
         v.driver = null;
         v.ai = null;
@@ -500,10 +513,14 @@ export class World {
             }
         }
 
-        // Snut: två patrullerar alltid, fler kommer med stjärnorna
-        const cops = this.vehicles.filter(v => v.driver === 'cop' && !v.wrecked && dist(v) < 1800).length;
-        if (cops < Math.max(2, copTarget(s))) {
-            const spot = this.findSpot(p.x, p.y, s > 0 ? 650 : 800, s > 0 ? 1150 : 1400);
+        // Snut: två patrullerar alltid, fler kommer med stjärnorna. Har de tappat bort dig
+        // letar de där de såg dig sist — så det lönar sig att dra därifrån.
+        const lost = s > 0 && lostTrack(this.wanted);
+        const ls = this.wanted.lastSeen;
+        const search = lost && ls && Math.hypot(ls.x - p.x, ls.y - p.y) < 1500 ? ls : null;
+        const cops = this.vehicles.filter(v => v.driver === 'cop' && !v.wrecked && dist(v) < (search ? 2400 : 1800)).length;
+        if (cops < (lost ? Math.max(2, Math.ceil(copTarget(s) / 2)) : Math.max(2, copTarget(s)))) {
+            const spot = search ? this.findSpot(search.x, search.y, 150, 700) : this.findSpot(p.x, p.y, s > 0 ? 650 : 800, s > 0 ? 1150 : 1400);
             if (spot) {
                 const v = createVehicle('police', spot.x, spot.y, spot.angle, { rnd: this.rnd });
                 v.driver = 'cop';
@@ -561,11 +578,15 @@ export class World {
             let ctl = null;
             if (!v.wrecked && v.driver && v.ai) {
                 if (v.driver === 'cop') {
-                    if (s > 0 && !p.dead) {
+                    if (s > 0 && !p.dead && !lostTrack(this.wanted)) {
                         v.ai.mode = 'chase'; v.siren = true;
                         ctl = chaseControl(v, this, dt, sf);
+                        // Är du till fots kliver de ur och springer efter dig
+                        if (!p.vehicle && d < 170 && Math.hypot(v.vx, v.vy) < 70) { this.copGetsOut(v); ctl = { throttle: 0, steer: 0, handbrake: true }; }
                     } else {
-                        if (v.ai.mode === 'chase') { v.ai.mode = 'lane'; v.siren = false; }
+                        // Tappat bort dig: de patrullerar och letar, med blåljus så länge du är efterlyst
+                        if (v.ai.mode === 'chase') v.ai.mode = 'lane';
+                        v.siren = s > 0;
                         ctl = laneControl(v, this, dt);
                     }
                 } else if (v.driver === 'gang') {
@@ -599,9 +620,10 @@ export class World {
             v.wrecked = true;
             v.burnT = 4;
             v.siren = false;
+            const copInside = v.driver === 'cop';
             if (v.driver && v.driver !== 'player') this.ejectDriver(v);
             if (v.lastHitBy === 'player') {
-                addHeat(this.wanted, v.spec.police ? CRIME.copWreck : CRIME.wreck, this.copNear(600, false));
+                addHeat(this.wanted, v.spec.police ? CRIME.copWreck : CRIME.wreck, copInside || this.copNear(600, true));
                 const st = this.profile.cityStats;
                 if (st) st.wrecks = (st.wrecks || 0) + 1;
             }
@@ -614,6 +636,7 @@ export class World {
     updatePeds(dt) {
         for (const ped of this.peds) {
             ped.muzzle = Math.max(0, (ped.muzzle || 0) - dt);
+            ped.flashT = Math.max(0, (ped.flashT || 0) - dt);
             if (ped.down > 0) {
                 ped.down -= dt;
                 if (ped.spin) { ped.angle += ped.spin * dt; ped.spin *= Math.max(0, 1 - 3 * dt); }
@@ -621,6 +644,13 @@ export class World {
                 ped.x += ped.vx * dt; ped.y += ped.vy * dt;
                 collideCircleWithMap(ped, ped.r, this.city);
                 if (ped.down <= 0) { ped.mode = 'flee'; ped.t = 2; }
+                continue;
+            }
+            if (ped.stunT > 0) {
+                // Vacklar bakåt av smällen och kan inte slå under tiden
+                ped.stunT -= dt;
+                stepWalker(ped, 0, 0, 0, dt, this.city);
+                if (ped.say && (ped.say.life -= dt) <= 0) ped.say = null;
                 continue;
             }
             const c = pedControl(ped, this, dt);
@@ -649,7 +679,9 @@ export class World {
         if (ped.attack) {
             ped.attackT -= dt;
             const t = ped.targetPed;
-            if (ped.attackT <= 0 || (!t && (p.dead || d > 950)) || this.state !== 'play' && !t) {
+            const wantedNow = stars(this.wanted);
+            if (ped.cop) ped.gun = wantedNow >= 3; // vid tre stjärnor drar snuten vapen
+            if (ped.attackT <= 0 || (!t && (p.dead || d > 950)) || this.state !== 'play' && !t || (ped.cop && wantedNow === 0)) {
                 ped.attack = false; ped.targetPed = null; ped.mode = 'flee'; ped.t = 2;
                 return;
             }
@@ -663,13 +695,20 @@ export class World {
                 ped.attack = false; ped.mugger = false; ped.mode = 'flee'; ped.t = 3;
                 return;
             }
-            const reach = p.vehicle ? distToVehicle(p.vehicle, ped.x, ped.y) < 8 : d < 16;
-            if (ped.gun && !p.dead && d > 36 && d < 340 && ped.hitCd <= 0 && lineClear(this.city, ped.x, ped.y, p.x, p.y)) {
+            const reach = p.vehicle ? distToVehicle(p.vehicle, ped.x, ped.y) < 8 : d < 18;
+            const canHit = !(ped.cop && p.vehicle); // snuten slår inte på bilar
+            if (ped.windup > 0) {
+                // Slaget är på väg (de drar upp näven) — en smäll från dig hinner avbryta det
+                ped.windup -= dt;
+                if (ped.windup <= 0) {
+                    ped.hitCd = 1 + this.rnd() * 0.5;
+                    if (reach && canHit && this.meleeHitT <= 0) { this.meleeHitT = 0.3; this.hitPlayer(ped); }
+                }
+            } else if (ped.gun && !p.dead && d > 36 && d < 340 && ped.hitCd <= 0 && lineClear(this.city, ped.x, ped.y, p.x, p.y)) {
                 ped.hitCd = 1.3 + this.rnd() * 1.1;
                 this.npcShoot(ped);
-            } else if (reach && ped.hitCd <= 0) {
-                ped.hitCd = 0.8;
-                this.hitPlayer(ped);
+            } else if (reach && canHit && ped.hitCd <= 0) {
+                ped.windup = 0.3;
             }
             return;
         }
@@ -727,20 +766,22 @@ export class World {
 
     melee(w) {
         const p = this.player;
-        let best = null, bd = w.range;
+        const range = w.range + 4;
+        let best = null, bd = Infinity;
         for (const ped of this.peds) {
             if (ped.down > 0) continue;
             const dx = ped.x - p.x, dy = ped.y - p.y;
             const dd = Math.hypot(dx, dy);
-            if (dd > w.range) continue;
+            if (dd > range) continue;
             const facing = Math.abs(angleDiff(p.angle, Math.atan2(dy, dx)));
-            const score = dd + (facing > 1.3 ? 14 : 0);
+            const score = dd + (facing > 1.3 ? 14 : 0) - (ped.attack ? 10 : 0);
             if (score < bd) { bd = score; best = ped; }
         }
         this.sfx(best ? (w.id === 'bat' ? 'bat' : 'punch') : 'swing', best ? 1 : 0.4);
         if (!best) return;
-        const civilian = !best.attack && best.type !== 'gang';
-        this.hitPed(best, w.dmg[0] + this.rnd() * (w.dmg[1] - w.dmg[0]), 'player');
+        p.angle = Math.atan2(best.y - p.y, best.x - p.x);
+        const civilian = !best.attack && best.type !== 'gang' && !best.cop;
+        this.hitPed(best, w.dmg[0] + this.rnd() * (w.dmg[1] - w.dmg[0]) + (this.profile.strength || 0) * 3, 'player');
         if (civilian) addHeat(this.wanted, CRIME.ped * 0.5, this.copNear(450, true));
         this.provoke(best);
     }
@@ -760,7 +801,7 @@ export class World {
         this.sfx(id === 'pistol' ? 'shot' : id, id === 'uzi' ? 0.6 : 1);
         // Skott hörs: folk springer och snuten kommer
         this.scarePeds(p.x, p.y, 260);
-        if (this.shotHeatT <= 0) { addHeat(this.wanted, CRIME.shot, this.copNear(700, false)); this.shotHeatT = 2; }
+        if (this.shotHeatT <= 0 && addHeat(this.wanted, CRIME.shot, this.copNear(700, true))) this.shotHeatT = 2;
         if (prof.ammo[id] <= 0) this.message(`${w.icon} Sista skottet! Q byter vapen.`);
     }
 
@@ -826,7 +867,7 @@ export class World {
         for (const ped of this.peds) {
             if (ped.down > 0 || Math.abs(ped.x - b.x) > 10 || Math.abs(ped.y - b.y) > 10) continue;
             if (Math.hypot(ped.x - b.x, ped.y - b.y) > ped.r + 2) continue;
-            const civilian = !ped.attack && ped.type !== 'gang';
+            const civilian = !ped.attack && ped.type !== 'gang' && !ped.cop;
             this.hitPed(ped, b.dmg, 'player');
             if (civilian) addHeat(this.wanted, CRIME.ped * 0.5, this.copNear(500, true));
             this.provoke(ped);
@@ -865,20 +906,29 @@ export class World {
         const ox = by === 'player' ? this.player : by;
         if (ox) {
             const dx = ped.x - ox.x, dy = ped.y - ox.y, l = Math.hypot(dx, dy) || 1;
-            ped.vx = dx / l * 120; ped.vy = dy / l * 120;
+            ped.vx = dx / l * 160; ped.vy = dy / l * 160;
         }
+        // Träffad: blinkar, vacklar bakåt och tappar slaget den höll på med
+        ped.flashT = 0.12;
+        ped.stunT = Math.max(ped.stunT || 0, by === 'player' ? 0.45 : 0.25);
+        ped.windup = 0;
         this.sfxAt('punch', ped.x, ped.y, 0.8);
+        if (ped.cop && by === 'player' && !ped.assaulted) { ped.assaulted = true; addHeat(this.wanted, CRIME.copAssault, true); } // han såg dig
         if (ped.hp <= 0) {
             ped.down = 4 + this.rnd() * 2;
             ped.hp = Math.ceil(ped.maxHp * 0.6);
+            ped.stunT = 0;
             this.spawnParticle('stars', ped.x, ped.y);
             if (ped.buyer) this.releaseBuyer();
             if (by === 'player') {
-                if (ped.mugger) { ped.mugger = false; ped.attack = false; this.message('🦹 Rånaren ligger! Ta tillbaka det han tog.'); }
-                this.dropWallet(ped, 0.35);
+                if (ped.cop) this.copDown(ped);
+                else {
+                    if (ped.mugger) { ped.mugger = false; ped.attack = false; this.message('🦹 Rånaren ligger! Ta tillbaka det han tog.'); }
+                    this.dropWallet(ped, 0.35);
+                }
             }
         } else if (!ped.attack && ped.type !== 'gang') {
-            if (by === 'player' && ped.tough) {
+            if (by === 'player' && (ped.tough || ped.cop)) {
                 // Fel person att bråka med
                 ped.attack = true; ped.attackT = 14; ped.mode = 'walk';
                 this.pedSay(ped, FIGHT_BACK[Math.floor(this.rnd() * FIGHT_BACK.length)]);
@@ -898,7 +948,7 @@ export class World {
         }
         p.vx += Math.cos(ped.angle) * 90; p.vy += Math.sin(ped.angle) * 90;
         this.sfx('punch');
-        this.hurtPlayer(6 + this.rnd() * 5 + (ped.vest ? 3 : 0), g ? `Nerslagen av ${g.name}` : ped.mugger ? 'Rånad och nerslagen' : 'Nerslagen');
+        this.hurtPlayer(4 + this.rnd() * 4 + (ped.vest ? 2 : 0), g ? `Nerslagen av ${g.name}` : ped.cop ? 'Nerslagen av snuten' : ped.mugger ? 'Rånad och nerslagen' : 'Nerslagen');
         if (ped.mugger && !p.dead) this.mugHit(ped);
     }
 
@@ -1225,7 +1275,7 @@ export class World {
             const tx = Math.floor((p.x + Math.cos(a) * r) / TILE), ty = Math.floor((p.y + Math.sin(a) * r) / TILE);
             if (!isWalkableTile(this.city, tx, ty)) continue;
             const x = center(tx), y = center(ty);
-            const ped = createPed(x, y, this.rnd, this.gangPedOpts(g, { attack: true, attackT: 60, hp: 45 }));
+            const ped = createPed(x, y, this.rnd, this.gangPedOpts(g, { attack: true, attackT: 60, hp: 35 }));
             ped.gun = n < guns;
             if (ped.gun) ped.hitCd = 1.2; // ett ögonblick innan de drar
             if (n === 0) this.pedSay(ped, OPP_SHOUTS[Math.floor(this.rnd() * OPP_SHOUTS.length)], 4);
@@ -1306,6 +1356,7 @@ export class World {
         this.sfxAt('thud', ped.x, ped.y, 0.9);
         this.spawnParticle('stars', ped.x, ped.y);
         if (v.driver !== 'player') return;
+        if (ped.cop) this.copDown(ped);
         const st = this.profile.cityStats; if (st) st.knockouts = (st.knockouts || 0) + 1;
         this.combo = this.comboT > 0 ? this.combo + 1 : 1;
         this.comboT = 2.5;
@@ -1366,9 +1417,10 @@ export class World {
                 if (d >= ped.r) continue;
                 const sp = Math.hypot(v.vx, v.vy);
                 if (sp > 55) {
+                    const wasCop = ped.cop;
                     this.knockPed(ped, v);
-                    if (v.driver === 'player') {
-                        addHeat(this.wanted, CRIME.ped, this.copNear(600, false));
+                    if (v.driver === 'player' && !wasCop) {
+                        addHeat(this.wanted, CRIME.ped, this.copNear(600, true));
                         if (ped.type === 'gang' && ped.gang !== this.profile.gang && this.gangHitT <= 0) {
                             this.profile.respect = adjustRespect(this.profile.respect, ped.gang, -3);
                             this.gangHitT = 0.5;
@@ -1448,7 +1500,7 @@ export class World {
             const d = Math.hypot(ped.x - v.x, ped.y - v.y);
             if (d < R) { ped.down = 4; ped.vx = (ped.x - v.x) / (d || 1) * 200; ped.vy = (ped.y - v.y) / (d || 1) * 200; }
         }
-        if (byPlayer) addHeat(this.wanted, CRIME.explosion, this.copNear(700, false));
+        if (byPlayer) addHeat(this.wanted, CRIME.explosion, this.copNear(700, true));
         if (p.vehicle === v) { p.hp = 0; this.wasted('Du sprängdes i luften!'); }
         else if (!p.vehicle && !p.dead && d0 < R) {
             // Till fots tar du smällen själv; i en hel bil tar bilen den
@@ -1492,9 +1544,14 @@ export class World {
             else this.emit({ type: 'guns' });
         }
         if (v && m.club && this.enterZone('club', m.club.x, m.club.y, 70) && speed < 220) this.visitClub();
-        for (const b of m.businesses) {
-            const shop = SHOPS[b.slot];
-            if (shop && (this.profile.owned || []).includes(shop.id) && this.enterZone('biz-' + b.slot, b.x, b.y, 62)) this.collectBusiness(shop, b);
+        // Gå in genom dörren (mot husväggen). Ditt eget gömställe har garage du kan köra in i.
+        for (const d of this.doors()) {
+            const door = d.door || d;
+            if (!v) {
+                if (this.enterZone('door-' + (d.id || 'biz' + d.slot), door.x, door.y, 20)) this.enterPlace(d, false);
+            } else if (d.kind === 'house' && this.ownsHouse(d) && this.enterZone('garage-' + d.id, door.x, door.y, 52) && speed < 220) {
+                this.enterPlace(d, true);
+            }
         }
     }
 
@@ -1569,7 +1626,7 @@ export class World {
         if (v.wrecked) { this.message('🔧 "Vi tar inte emot brinnande skrot!"'); return; }
         if ((this.profile.fencedThisRound || 0) >= this.maxFence) { this.message('🔧 "Vi är fulla för idag. Kom tillbaka nästa runda."'); return; }
         const val = fenceValue(v);
-        if (v.spec.police) addHeat(this.wanted, 1.2, true);
+        if (v.spec.police) addHeat(this.wanted, 1.2, this.copNear(600, true));
         this.profile.fencedThisRound = (this.profile.fencedThisRound || 0) + 1;
         const st = this.profile.cityStats; if (st) st.fenced = (st.fenced || 0) + 1;
         this.removeVehicle(v);
@@ -1587,6 +1644,164 @@ export class World {
         this.addMoney(amt, mk.x, mk.y);
         this.sfx('coin');
         this.message(`${shop.icon} ${shop.name}: kassan hämtad! +${amt.toLocaleString('sv-SE')} kr`);
+    }
+
+    // ── Ställen att gå in i: fastigheter (företagen), gömställen och banken ──
+    doors() {
+        const m = this.city.markers;
+        return [...m.businesses, ...(m.houses || []), ...(m.bank ? [m.bank] : [])];
+    }
+    placeName(d) { return d.kind === 'business' ? SHOPS[d.slot].name : d.name; }
+    ownsHouse(h) { return (this.profile.cityHouses || []).includes(h.id); }
+    doneThisRound(key) { return (this.profile.cityDone || []).includes(key); }
+    markDone(key) { (this.profile.cityDone || (this.profile.cityDone = [])).push(key); }
+    armed() { const id = this.profile.weapon; return !(WEAPONS[id] || WEAPONS.fists).melee && (this.profile.ammo[id] || 0) > 0; }
+
+    enterPlace(pl, byCar = false) {
+        if (this.place) return;
+        // Såg snuten dig gå in? Då väntar de utanför.
+        this.place = { pl, byCar, seen: stars(this.wanted) > 0 && this.copSees() };
+        if (byCar && this.player.vehicle) { this.player.vehicle.vx = 0; this.player.vehicle.vy = 0; }
+        this.sfx('door');
+        this.emit({ type: 'place' });
+    }
+    leavePlace() { this.place = null; }
+
+    // Vad man kan göra där inne (index.js ritar menyn)
+    placeInfo() {
+        const P = this.place;
+        if (!P) return null;
+        const { pl, byCar, seen } = P;
+        const prof = this.profile, p = this.player, s = stars(this.wanted);
+        const money = prof.money || 0;
+        const kr = n => n.toLocaleString('sv-SE') + ' kr';
+        const actions = [];
+        const add = (id, label, opts = {}) => actions.push({ id, label, ...opts });
+        if (pl.kind === 'business') {
+            const shop = SHOPS[pl.slot];
+            const owned = (prof.owned || []).includes(shop.id);
+            const sv = SERVICES[shop.id];
+            if (!owned) add('buy', `🏢 Köp fastigheten · ${kr(shop.price)}`, { disabled: money < shop.price, note: `Ger ${kr(shop.income)} per runda i imperiet` });
+            else if (!(prof.cityCollected || []).includes(shop.id)) add('collect', '💰 Töm kassan');
+            if (sv) {
+                const price = owned ? 0 : sv.price;
+                const why = sv.id === 'train' && (prof.strength || 0) >= 5 ? 'Du är redan i toppform'
+                    : sv.needsStars && s === 0 ? 'Du är inte efterlyst'
+                        : sv.perRound && this.doneThisRound(sv.id) ? 'Redan gjort den här rundan' : '';
+                add(sv.id, `${sv.icon} ${sv.label} · ${price ? kr(price) : 'gratis'}`, { disabled: !!why || money < price, note: why || sv.note });
+            }
+            if (!owned) {
+                const robbed = this.doneThisRound('rob:' + pl.slot);
+                add('rob', '🔫 Råna kassan', { disabled: robbed, note: robbed ? 'Redan rånad den här rundan' : this.armed() ? 'Med vapen i handen lämnar de över' : 'Utan vapen slänger de ut dig varannan gång' });
+            }
+            add('leave', '🚪 Gå ut');
+            return { icon: shop.icon, title: shop.name, color: owned ? '#22c55e' : '#ffd23f', desc: owned ? `Din fastighet · nivå ${(prof.levels || {})[shop.id] || 1}` : `${shop.desc}. TILL SALU.`, actions };
+        }
+        if (pl.kind === 'house') {
+            const owned = this.ownsHouse(pl);
+            if (!owned) add('buyhouse', `🏡 Köp · ${kr(pl.price)}`, { disabled: money < pl.price, note: 'Gömställe: vila, laga bilen i garaget och vänta ut snuten' });
+            else {
+                add('rest', '🛏️ Vila', { disabled: p.hp >= p.maxHp, note: 'Full hälsa' });
+                if (byCar && p.vehicle) add('repair', '🔧 Laga bilen i garaget', { disabled: p.vehicle.hp >= p.vehicle.maxHp });
+                if (s > 0) add('hide', '🤫 Vänta ut snuten', { disabled: seen, note: seen ? 'Snuten såg dig gå in — de väntar utanför!' : 'Ingen såg dig — efterlysningen försvinner' });
+            }
+            add('leave', byCar ? '🚗 Kör ut' : '🚪 Gå ut');
+            return { icon: owned ? '🏡' : '🔑', title: pl.name, color: owned ? '#22c55e' : '#38bdf8', desc: owned ? 'Ditt gömställe' : `TILL SALU · ${kr(pl.price)}`, actions };
+        }
+        const done = this.doneThisRound('bank');
+        add('robbank', '💰 Råna banken', { disabled: done || !this.armed(), note: done ? 'Redan rånad den här rundan' : this.armed() ? 'Kameror överallt — snuten kommer direkt (3 stjärnor)' : 'Du behöver ett laddat skjutvapen i handen (Pang-Pelle 🔫)' });
+        add('leave', '🚪 Gå ut');
+        return { icon: '🏦', title: pl.name, color: '#a78bfa', desc: 'Valvet är fullt och vakterna ser nervösa ut.', actions };
+    }
+
+    // Gör något där inne. { close: true } = man går ut igen.
+    placeAction(id) {
+        const P = this.place;
+        if (!P) return { close: true };
+        const act = this.placeInfo().actions.find(a => a.id === id);
+        if (!act || act.disabled) return { close: id === 'leave' };
+        const { pl } = P;
+        const prof = this.profile, p = this.player, st = prof.cityStats;
+        switch (id) {
+            case 'leave': return { close: true };
+            case 'buy': {
+                const shop = SHOPS[pl.slot];
+                if (!this.spend(shop.price)) break;
+                prof.owned.push(shop.id);
+                prof.levels = prof.levels || {};
+                prof.levels[shop.id] = 1;
+                this.sfx('mission');
+                this.big('FASTIGHET KÖPT!', '#22c55e', `${shop.icon} ${shop.name} · ${shop.income.toLocaleString('sv-SE')} kr per runda`);
+                break;
+            }
+            case 'collect': this.collectBusiness(SHOPS[pl.slot], pl); break;
+            case 'rob': {
+                const shop = SHOPS[pl.slot];
+                this.markDone('rob:' + pl.slot);
+                if (!this.armed() && this.rnd() < 0.5) {
+                    this.sfx('bat');
+                    this.hurtPlayer(12, 'Utslängd med ett basebollträ');
+                    this.message(`${shop.icon} Kassören drog fram ett basebollträ och slängde ut dig!`);
+                    return { close: true };
+                }
+                const amount = Math.round(Math.min(6000, 250 + shop.income * (0.5 + this.rnd() * 0.5)) * (1 + this.round * 0.05) / 10) * 10;
+                this.addMoney(amount);
+                this.sfx('coin');
+                if (st) st.heists = (st.heists || 0) + 1;
+                const seen = addHeat(this.wanted, CRIME.robShop, this.copNear(450, true, pl.door || pl));
+                this.message(`${shop.icon} Kassan tömd: +${amount.toLocaleString('sv-SE')} kr. ${seen ? '🚨 En snut såg dig!' : 'Ingen snut såg något.'}`);
+                return { close: true };
+            }
+            case 'eat': case 'look': case 'train': case 'track': case 'vip': case 'hack': {
+                const shop = SHOPS[pl.slot], sv = SERVICES[shop.id];
+                if (!prof.owned.includes(shop.id) && !this.spend(sv.price)) break;
+                if (sv.perRound) this.markDone(sv.id);
+                this.sfx('coin');
+                if (id === 'eat') { p.hp = Math.min(p.maxHp, p.hp + 40); this.message('🥙 Mums. +40 hälsa.'); }
+                else if (id === 'look') {
+                    if (P.seen) this.message('💈 Snyggt — men snuten såg dig gå in. De vet hur du ser ut.');
+                    else {
+                        this.wanted.heat = Math.max(0, this.wanted.heat - 2);
+                        if (this.wanted.heat <= 0) clearWanted(this.wanted);
+                        this.message('💈 Ny frisyr! Snuten letar efter någon annan.');
+                    }
+                } else if (id === 'train') {
+                    prof.strength = Math.min(5, (prof.strength || 0) + 1);
+                    p.maxHp += 10; p.hp += 10;
+                    this.message(`🏋️ Styrka ${prof.strength}/5 — dina slag tar hårdare.`);
+                } else if (id === 'track') { prof.rep = (prof.rep || 0) + 3; this.message('🎤 Disslåten går viralt i orten. +3 rykte.'); }
+                else if (id === 'vip') { p.hp = Math.min(p.maxHp, p.hp + 40); prof.rep = (prof.rep || 0) + 2; this.message('🍾 Champagne och vibes. +40 hälsa, +2 rykte.'); }
+                else { clearWanted(this.wanted); this.message('💻 Registret rensat. Snuten vet inte vem du är längre.'); }
+                break;
+            }
+            case 'buyhouse': {
+                if (!this.spend(pl.price)) break;
+                prof.cityHouses.push(pl.id);
+                this.sfx('mission');
+                this.big('NYTT GÖMSTÄLLE!', '#22c55e', `🏡 ${pl.name}`);
+                break;
+            }
+            case 'rest': p.hp = p.maxHp; this.time += 24; this.message('🛏️ Du sov en timme. Full hälsa.'); break;
+            case 'repair': p.vehicle.hp = p.vehicle.maxHp; this.sfx('spray'); this.message('🔧 Bilen är lagad.'); break;
+            case 'hide':
+                clearWanted(this.wanted);
+                this.time += 48;
+                this.message('🤫 Du höll dig undan i två timmar. Snuten har gett upp.');
+                return { close: true };
+            case 'robbank': {
+                this.markDone('bank');
+                const amount = Math.round((3000 + this.rnd() * 5000) * (1 + this.round * 0.05) / 10) * 10;
+                this.addMoney(amount);
+                if (st) st.heists = (st.heists || 0) + 1;
+                // Kamerorna såg allt: larmet går och snuten vet var du är
+                setStars(this.wanted, 3);
+                this.wanted.lastSeen = { x: (pl.door || pl).x, y: (pl.door || pl).y };
+                this.big('BANKRÅN!', '#ef4444', `+${amount.toLocaleString('sv-SE')} kr · 🚨 larmet går!`);
+                this.sfx('opps');
+                return { close: true };
+            }
+        }
+        return { close: false };
     }
 
     // ── Uppdrag ──
@@ -1613,18 +1828,46 @@ export class World {
     }
 
     // ── Efterlysning, BUSTED ──
-    copNear(r, needSight) {
-        const p = this.player;
-        return this.vehicles.some(v => v.driver === 'cop' && !v.wrecked &&
-            Math.abs(v.x - p.x) < r && Math.abs(v.y - p.y) < r &&
-            Math.hypot(v.x - p.x, v.y - p.y) < r &&
-            (!needSight || lineClear(this.city, v.x, v.y, p.x, p.y)));
+    // Finns det en snut (i bil eller till fots) nära en plats, och ser den dit?
+    copNear(r, needSight, at = this.player) {
+        const near = e => Math.abs(e.x - at.x) < r && Math.abs(e.y - at.y) < r && Math.hypot(e.x - at.x, e.y - at.y) < r &&
+            (!needSight || lineClear(this.city, e.x, e.y, at.x, at.y));
+        return this.vehicles.some(v => v.driver === 'cop' && !v.wrecked && near(v)) ||
+            this.peds.some(o => o.cop && !(o.down > 0) && near(o));
+    }
+
+    // Ser någon snut dig just nu?
+    copSees() {
+        if (this.player.dead) return false;
+        return this.copNear(560, true);
+    }
+
+    // Snuten kliver ur bilen och springer efter dig
+    copGetsOut(v) {
+        const spot = this.sideSpot(v, 1) || this.sideSpot(v, -1);
+        if (!spot) return;
+        const ped = createPed(spot.x, spot.y, this.rnd, { cop: true, shirt: '#1e3a8a', hp: 40, attack: true, attackT: 90 });
+        ped.gun = stars(this.wanted) >= 3;
+        if (ped.gun) ped.hitCd = 1;
+        this.pedSay(ped, ped.gun ? 'POLIS! Ner på marken!' : 'Stanna! Polis!', 3);
+        this.peds.push(ped);
+        v.driver = null; v.ai = null; v.siren = true; v.copOut = true;
+    }
+
+    // En snut som går ner reser sig inte — och resten av kåren blir galen
+    copDown(ped) {
+        if (ped.dead) return;
+        ped.dead = true; ped.down = 1e6; ped.attack = false; ped.gun = false; ped.say = null;
+        const st = this.profile.cityStats; if (st) st.copsDown = (st.copsDown || 0) + 1;
+        addHeat(this.wanted, CRIME.copKill, true);
+        this.wanted.lastSeen = { x: this.player.x, y: this.player.y };
+        this.floater(ped.x, ped.y - 18, '🚔 SNUT NERE!', '#60a5fa');
     }
 
     updateWantedState(dt) {
         const p = this.player;
         const before = stars(this.wanted);
-        updateWanted(this.wanted, dt, before > 0 && this.copNear(520, true));
+        updateWanted(this.wanted, dt, this.copSees(), p);
         const after = stars(this.wanted);
         if (after !== before) this.emit({ type: 'wanted', stars: after, up: after > before });
 
@@ -1635,6 +1878,8 @@ export class World {
             const d = Math.hypot(v.x - p.x, v.y - p.y);
             if (pv ? (d < 88 && Math.hypot(pv.vx, pv.vy) < 35) : d < 64) { near = true; break; }
         }
+        // En snut till fots som får tag i dig (och inte vacklar av en smäll)
+        if (!near && !pv) near = this.peds.some(o => o.cop && o.attack && !o.gun && !(o.down > 0) && !(o.stunT > 0) && Math.hypot(o.x - p.x, o.y - p.y) < 20);
         if (after > 0 && near) p.bustT += dt;
         else p.bustT = Math.max(0, p.bustT - dt * 2);
         if (p.bustT > (pv ? 1.6 : 0.9)) this.busted();
@@ -1642,6 +1887,7 @@ export class World {
 
     busted() {
         if (this.state !== 'play') return;
+        this.place = null;
         this.state = 'busted'; this.stateT = 0;
         this.bustedStars = stars(this.wanted);
         if (this.mission) { this.profile.respect = applyRespect(this.profile.respect || {}, this.mission.gang, false); this.mission = null; }
@@ -1737,5 +1983,9 @@ export class World {
         else if (this.buyer) this.hint = '💸 En kund är på väg...';
         else if ((this.profile.cityGoods || 0) > 0 && this.sellIdle < 1.2) this.hint = '🎒 Stå still så kommer kunderna';
         else if (Math.hypot(p.x - this.city.markers.home.x, p.y - this.city.markers.home.y) < 90 && this.canGoHome()) this.hint = 'ESC — Åk hem till imperiet';
+        else {
+            const d = this.doors().find(o => Math.hypot((o.door || o).x - p.x, (o.door || o).y - p.y) < 70);
+            if (d) this.hint = `🚪 ${this.placeName(d)} — gå mot dörren`;
+        }
     }
 }

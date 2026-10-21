@@ -331,3 +331,25 @@ body.city-open .cbd-leaf {
     padding: 8px 12px;
     white-space: nowrap;
 }
+
+/* Inne på ett ställe */
+.place-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-bottom: 14px;
+}
+
+.place-act {
+    text-align: left;
+    font-size: 14px;
+    padding: 10px 14px;
+}
+
+.place-act small {
+    display: block;
+    margin-top: 3px;
+    font-family: system-ui, sans-serif;
+    font-size: 11px;
+    opacity: 0.75;
+}

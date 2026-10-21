@@ -131,7 +131,7 @@ function showIntro() {
     showModal('intro', `
         <div class="city-card intro">
             <div class="city-logo">HUSTLE CITY</div>
-            <p class="city-tag">${escapeHtml(p.char?.icon || '')} ${escapeHtml(p.char?.name || '')} rullar ut på gatan. Sno bilar, ta jobb från gängens telefoner ☎️ och gå med i ett gäng. Köp varor av Langaren vid HQ 🎒 och langa — men på fel turf kommer opps. Kör över folk, råna dem, köp vapen hos Pang-Pelle 🔫 i Industrin och plocka upp en dejt vid Nattklubben 🍾 i Centrum efter 20:00. Skaka av snuten på Lackverkstan 🎨.</p>
+            <p class="city-tag">${escapeHtml(p.char?.icon || '')} ${escapeHtml(p.char?.name || '')} rullar ut på gatan. Sno bilar, ta jobb från gängens telefoner ☎️ och gå med i ett gäng. Köp varor av Langaren vid HQ 🎒 och langa — men på fel turf kommer opps. Kör över folk, råna dem, köp vapen hos Pang-Pelle 🔫 i Industrin och plocka upp en dejt vid Nattklubben 🍾 i Centrum efter 20:00. Gå in genom dörrarna: köp fastigheter och gömställen, råna butiker och banken. Snuten bryr sig bara om det de ser — kommer du utom synhåll tappar de spåret.</p>
             ${controlsHelp(session.touch)}
             <button class="city-go" data-act="start">▶ KÖR!</button>
         </div>`);
@@ -219,6 +219,22 @@ function showGuns() {
         </div>`);
 }
 
+// Inne på ett ställe: fastighet, gömställe eller banken
+function showPlace() {
+    const w = session.world;
+    const info = w.placeInfo();
+    if (!info) { resume(); return; }
+    const p = w.profile;
+    const rows = info.actions.map(a => `<button class="city-go place-act${a.id === 'leave' ? ' alt' : ''}" data-act="place:${a.id}" ${a.disabled ? 'disabled' : ''}>${escapeHtml(a.label)}${a.note ? `<small>${escapeHtml(a.note)}</small>` : ''}</button>`).join('');
+    showModal('place', `
+        <div class="city-card phone" style="--gang:${info.color}">
+            <div class="phone-head">${escapeHtml(info.icon)} ${escapeHtml(info.title)}</div>
+            <p class="phone-brief">${escapeHtml(info.desc)}</p>
+            <div class="place-actions">${rows}</div>
+            <div class="phone-member">💰 ${(p.money || 0).toLocaleString('sv-SE')} kr · ❤️ ${Math.ceil(w.player.hp)}/${w.player.maxHp}${stars(w.wanted) ? ` · 👮 ${stars(w.wanted)}` : ''}</div>
+        </div>`);
+}
+
 function onModalAction(act) {
     const s = session;
     if (!s) return;
@@ -256,6 +272,11 @@ function onModalAction(act) {
             break;
         default:
             if (act.startsWith('buy:')) { s.world.buyGoods(Number(act.slice(4))); resume(); }
+            else if (act.startsWith('place:')) {
+                const r = s.world.placeAction(act.slice(6));
+                handleEvents();
+                if (r.close) { s.world.leavePlace(); resume(); } else showPlace();
+            }
             else if (act.startsWith('gun:') || act.startsWith('ammo:')) {
                 const [kind, id] = act.split(':');
                 if (kind === 'gun') s.world.buyWeapon(id); else s.world.buyAmmo(id);
@@ -314,6 +335,7 @@ function handleEvents() {
             case 'phone': showPhone(e); break;
             case 'shop': showShop(e); break;
             case 'guns': showGuns(); break;
+            case 'place': showPlace(); break;
             case 'enterCar': {
                 const v = e.vehicle;
                 if (v.radio >= 0) s.hud.onEvent({ type: 'radio', name: STATIONS[v.radio].name, tag: STATIONS[v.radio].tag });
@@ -343,9 +365,10 @@ function frame(ts) {
                 const act = s.modalType === 'phone' ? (s.pendingMission ? 'accept' : ph?.canJoin ? 'join' : 'decline')
                     : s.modalType === 'shop' ? `buy:${Math.min(5, s.pendingShop?.left || 0)}`
                         : s.modalType === 'guns' ? 'decline-guns'
+                            : s.modalType === 'place' ? 'place:leave'
                             : s.modalType === 'intro' ? 'start' : 'resume';
                 onModalAction(act);
-            } else if (inp.pressed('exit')) onModalAction({ phone: 'decline', shop: 'decline-shop', guns: 'decline-guns', pause: 'resume' }[s.modalType] || 'start');
+            } else if (inp.pressed('exit')) onModalAction({ phone: 'decline', shop: 'decline-shop', guns: 'decline-guns', place: 'place:leave', pause: 'resume' }[s.modalType] || 'start');
             else if (inp.pressed('pause') && s.modalType === 'pause') onModalAction('resume');
         } else if (!s.paused) {
             if (inp.pressed('pause')) showPause();

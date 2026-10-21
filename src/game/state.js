@@ -61,16 +61,19 @@ export function createPlayerState(charKey) {
         ammo: {},
         weapon: 'fists',
         dateThisRound: false,
+        strength: 0,                // gymmet: hårdare slag och mer hälsa (0–5)
+        cityHouses: [],             // köpta gömställen
+        cityDone: [],               // saker som bara går en gång per runda (rån, gym...)
         missionsThisRound: 0, fencedThisRound: 0,
         cityPickupsTaken: [], cityCollected: [],
-        cityStats: { missions: 0, wrecks: 0, busted: 0, wasted: 0, fenced: 0, sold: 0, opps: 0, robbed: 0, knockouts: 0, dates: 0 }
+        cityStats: { missions: 0, wrecks: 0, busted: 0, wasted: 0, fenced: 0, sold: 0, opps: 0, robbed: 0, knockouts: 0, dates: 0, copsDown: 0, heists: 0 }
     };
 }
 
 const NUMERIC_FIELDS = ['money', 'rep', 'stash', 'jailRoundsLeft', 'bail', 'dealsThisRound', 'rollsThisRound',
     'pitchesThisRound', 'totalEarned', 'totalSpent', 'successfulDeals', 'failedDeals', 'heistCooldown',
-    'sabotagedRounds', 'missionsThisRound', 'fencedThisRound', 'cityGoods', 'goodsBoughtThisRound'];
-const ARRAY_FIELDS = ['owned', 'cars', 'jailRecord', 'moneyHistory', 'pendingEvidence', 'cityPickupsTaken', 'cityCollected', 'weapons'];
+    'sabotagedRounds', 'missionsThisRound', 'fencedThisRound', 'cityGoods', 'goodsBoughtThisRound', 'strength'];
+const ARRAY_FIELDS = ['owned', 'cars', 'jailRecord', 'moneyHistory', 'pendingEvidence', 'cityPickupsTaken', 'cityCollected', 'weapons', 'cityHouses', 'cityDone'];
 const OBJECT_FIELDS = ['levels', 'carPimps', 'respect', 'cityStats', 'ammo'];
 
 // Make a player loaded from an old save or a peer safe to use.
@@ -94,6 +97,7 @@ export function normalizePlayer(raw) {
     p.weapons = [...new Set(p.weapons.filter(id => WEAPONS[id] && id !== 'fists'))];
     if (p.weapon !== 'fists' && !p.weapons.includes(p.weapon)) p.weapon = 'fists';
     p.dateThisRound = !!p.dateThisRound;
+    p.strength = Math.max(0, Math.min(5, Math.floor(p.strength)));
     return p;
 }
 

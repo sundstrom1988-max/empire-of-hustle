@@ -14,6 +14,11 @@ describe('wanted level', () => {
         addHeat(w, 2);
         expect(stars(w)).toBe(3);
     });
+    it('ignores crimes no cop saw', () => {
+        const w = createWanted();
+        expect(addHeat(w, 2, false)).toBe(false);
+        expect(stars(w)).toBe(0);
+    });
     it('caps at five stars', () => {
         const w = createWanted();
         addHeat(w, 50);

@@ -380,7 +380,7 @@ export function endTurn(fromAI = false) {
     // Reset round limits
     p.dealsThisRound = 0; p.rollsThisRound = 0; p.pitchesThisRound = 0;
     p.missionsThisRound = 0; p.fencedThisRound = 0; p.goodsBoughtThisRound = 0; p.dateThisRound = false;
-    p.cityPickupsTaken = []; p.cityCollected = [];
+    p.cityPickupsTaken = []; p.cityCollected = []; p.cityDone = [];
     // Check evidence timers (Gargamel heist)
     checkEvidence();
     // Check win before handing the turn over

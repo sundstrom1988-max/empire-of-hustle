@@ -213,7 +213,7 @@ export function createPed(x, y, rnd = Math.random, opts = {}) {
     const tough = type === 'civ' && !opts.cop && phase < 2;
     // Reaktionstid när en bil kommer: 0,15–0,65 s. De långsamma står som fån i strålkastarljuset.
     const reflex = 0.15 + ((phase * 7.31) % 1) * 0.5;
-    const hp = opts.hp || (type === 'gang' ? (opts.vest ? 50 : 40) : metro ? 12 : tough ? 34 : 15);
+    const hp = opts.hp || (type === 'gang' ? (opts.vest ? 40 : 30) : metro ? 12 : tough ? 34 : 15);
     return {
         ent: 'ped', type, x, y, vx: 0, vy: 0, r: 6.5, angle,
         dir, t, mode: 'walk', tough, reflex, alarm: 0,

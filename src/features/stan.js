@@ -7,6 +7,7 @@
 import { openCity, isCityOpen } from '../city/index.js';
 import { GANGS, JOIN_RESPECT } from '../city/constants.js';
 import { WEAPONS, WEAPON_ORDER, ownsWeapon } from '../city/weapons.js';
+import { HOUSES } from '../city/map.js';
 import { gameState, currentPlayer, formatNum, jailPlayer, canAct, saveGame } from '../game/state.js';
 import { updateHUD } from '../game/core.js';
 import { showToast, startMusic, spawnParticles } from '../utils/effects.js';
@@ -60,6 +61,11 @@ export function renderStanPanel() {
                 <p class="stan-note">Köp mer hos Pang-Pelle 🔫 i Industrin. Åker du fast tar snuten dina vapen.</p>
             </div>
             <div class="stan-card">
+                <h4>🏡 Gömställen och styrka</h4>
+                ${(p.cityHouses || []).map(id => `<div class="stan-stat"><span>🏡 ${HOUSES[id.replace('house-', '')]?.[0] || id}</span><b>✔</b></div>`).join('') || '<p class="stan-note">Inga gömställen än. Gå in genom en dörr med 🔑 TILL SALU i stan.</p>'}
+                <div class="stan-stat"><span>🏋️ Styrka (Hustle Gym)</span><b>${p.strength || 0} / 5</b></div>
+            </div>
+            <div class="stan-card">
                 <h4>🏆 Gatans meriter</h4>
                 <div class="stan-stat"><span>✅ Klarade uppdrag</span><b>${st.missions || 0}</b></div>
                 <div class="stan-stat"><span>💥 Kvaddade bilar</span><b>${st.wrecks || 0}</b></div>
@@ -69,6 +75,8 @@ export function renderStanPanel() {
                 <div class="stan-stat"><span>🎳 Påkörda</span><b>${st.knockouts || 0}</b></div>
                 <div class="stan-stat"><span>💰 Rån</span><b>${st.robbed || 0}</b></div>
                 <div class="stan-stat"><span>💃 Dejter</span><b>${st.dates || 0}</b></div>
+                <div class="stan-stat"><span>🏦 Butiks- och bankrån</span><b>${st.heists || 0}</b></div>
+                <div class="stan-stat"><span>🚔 Snutar nere</span><b>${st.copsDown || 0}</b></div>
                 <div class="stan-stat"><span>🚔 Busted / 💀 Wasted</span><b>${st.busted || 0} / ${st.wasted || 0}</b></div>
             </div>
         </div>`;

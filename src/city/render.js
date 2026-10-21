@@ -114,6 +114,7 @@ export class Renderer {
         this.drawBullets(world, view);
         this.drawTrees(world.city, view);
         this.drawBuildings(world, view);
+        this.drawDoors(world, view);
         this.drawParticles(world, view);
         this.drawTargetMarker(world);
         this.drawSpeech(world, view);
@@ -349,15 +350,37 @@ export class Renderer {
             ctx.lineWidth = 3; ctx.strokeStyle = '#000'; ctx.strokeText(open ? 'NATTKLUBBEN' : 'STÄNGT · 20:00', cl.x, cl.y + 22);
             ctx.fillStyle = neon ? '#f9a8d4' : open ? '#9d174d' : '#9ca3af'; ctx.fillText(open ? 'NATTKLUBBEN' : 'STÄNGT · 20:00', cl.x, cl.y + 22);
         }
-        const owned = world.profile.owned || [];
-        const collected = world.profile.cityCollected || [];
-        for (const b of m.businesses) {
-            const shop = SHOPS[b.slot];
-            if (!shop || !owned.includes(shop.id) || !vis(b)) continue;
-            const done = collected.includes(shop.id);
-            ctx.fillStyle = done ? 'rgba(120,120,120,0.25)' : `rgba(255,210,63,${0.25 + pulse * 0.3})`;
-            ctx.beginPath(); ctx.arc(b.x, b.y, 26, 0, Math.PI * 2); ctx.fill();
-            this.emoji(done ? '✔️' : '💰', b.x, b.y, 18);
+    }
+
+    // Dörrar till fastigheter, gömställen och banken. Ritas ovanpå taken så att skylten alltid syns.
+    drawDoors(world, view) {
+        const ctx = this.ctx, prof = world.profile;
+        for (const d of world.doors()) {
+            const o = d.door || d;
+            if (o.x < view.x0 - 60 || o.x > view.x1 + 60 || o.y < view.y0 - 60 || o.y > view.y1 + 60) continue;
+            let icon, label, color;
+            if (d.kind === 'business') {
+                const shop = SHOPS[d.slot];
+                const owned = (prof.owned || []).includes(shop.id);
+                icon = shop.icon; color = owned ? '#22c55e' : '#ffd23f';
+                label = owned ? ((prof.cityCollected || []).includes(shop.id) ? 'DIN' : 'DIN · 💰') : 'TILL SALU';
+            } else if (d.kind === 'house') {
+                const owned = world.ownsHouse(d);
+                icon = owned ? '🏡' : '🔑'; color = owned ? '#22c55e' : '#38bdf8'; label = owned ? 'GÖMSTÄLLE' : 'TILL SALU';
+            } else { icon = '🏦'; color = '#a78bfa'; label = 'BANKEN'; }
+            const horiz = o.side === N || o.side === S;
+            const dw = horiz ? 22 : 6, dh = horiz ? 6 : 22;
+            ctx.fillStyle = '#2a1a0e'; ctx.fillRect(o.x - dw / 2, o.y - dh / 2, dw, dh);
+            ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.strokeRect(o.x - dw / 2, o.y - dh / 2, dw, dh);
+            // Pulserande markering på trottoaren framför dörren
+            const fx = o.x - DX[o.side] * 15, fy = o.y - DY[o.side] * 15;
+            ctx.globalAlpha = 0.25 + (0.5 + 0.5 * Math.sin(this.t * 4 + o.x)) * 0.35;
+            ctx.fillStyle = color; ctx.beginPath(); ctx.arc(fx, fy, 10, 0, Math.PI * 2); ctx.fill();
+            ctx.globalAlpha = 1;
+            this.emoji(icon, fx, fy - 26, 16);
+            ctx.font = '9px Bungee, Impact, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+            ctx.lineWidth = 3; ctx.strokeStyle = '#000'; ctx.strokeText(label, fx, fy - 13);
+            ctx.fillStyle = color; ctx.fillText(label, fx, fy - 13);
         }
     }
 
@@ -466,7 +489,7 @@ export class Renderer {
 
     pedExtra(ped) {
         const g = ped.vest ? gangById(ped.gang) : null;
-        return { vest: g ? g.color : null, patch: g?.patch, metro: ped.type === 'metro', scooter: ped.scooter, hood: ped.hood, weapon: ped.gun && ped.attack ? 'pistol' : null };
+        return { vest: g ? g.color : null, patch: g?.patch, metro: ped.type === 'metro', scooter: ped.scooter, hood: ped.hood, weapon: ped.gun && ped.attack ? 'pistol' : null, punch: ped.windup > 0 };
     }
 
     drawPeds(world, view) {
@@ -475,6 +498,19 @@ export class Renderer {
             if (ped.x < view.x0 - 20 || ped.x > view.x1 + 20 || ped.y < view.y0 - 20 || ped.y > view.y1 + 20) continue;
             this.drawPedShape(ctx, ped, ped.cop ? '#1e3a8a' : ped.shirt, ped.skin, ped.cop ? '#0f172a' : ped.hair, ped.phase, 1.3, this.pedExtra(ped));
             if (ped.muzzle > 0) this.muzzle(ped.x, ped.y, ped.angle, 16);
+            if (ped.flashT > 0) {
+                // Träffad: vit blixt
+                ctx.globalAlpha = 0.75; ctx.fillStyle = '#fff';
+                ctx.beginPath(); ctx.arc(ped.x, ped.y, 10, 0, Math.PI * 2); ctx.fill();
+                ctx.globalAlpha = 1;
+            }
+            if ((ped.attack || ped.cop) && !(ped.down > 0) && ped.hp < ped.maxHp) {
+                // Livsmätare för den du slåss mot
+                ctx.fillStyle = 'rgba(0,0,0,0.7)'; ctx.fillRect(ped.x - 11, ped.y - 29, 22, 5);
+                ctx.fillStyle = ped.hp / ped.maxHp < 0.35 ? '#ef4444' : '#facc15';
+                ctx.fillRect(ped.x - 10, ped.y - 28, 20 * Math.max(0, ped.hp / ped.maxHp), 3);
+            }
+            if (ped.dead) continue;
             if (ped.down > 0 && ped.down > 2) this.emoji('💫', ped.x, ped.y - 14, 12);
             else if (ped.attack && ped.down <= 0) {
                 // Opps: röd ring och arg min

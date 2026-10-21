@@ -103,14 +103,16 @@ export class Hud {
         const blink = this.wantedFlash > 0 && Math.sin(this.t * 18) > 0;
         const size = narrow ? 18 : 22;
         const wy = 26 + moneySize * 0.9 + (narrow ? 24 : 30);
+        const lost = s > 0 && world.wanted.seenT > 4;
         ctx.font = `${size}px ${EMOJI_FONT}`;
         ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
         for (let i = 0; i < 5; i++) {
             const x = W - 14 - size * 0.6 - (4 - i) * (size + 4);
-            ctx.globalAlpha = i < s ? (blink ? 0.35 : 1) : 0.18;
+            ctx.globalAlpha = i < s ? (blink ? 0.35 : lost ? 0.5 + 0.3 * Math.sin(this.t * 4) : 1) : 0.18;
             ctx.fillText('👮', x, wy);
         }
         ctx.globalAlpha = 1;
+        if (s > 0) outlined(ctx, lost ? '🔍 SNUTEN LETAR — HÅLL DIG UNDAN' : '👀 SNUTEN SER DIG', W - 14, wy + size * 0.5 + 10, narrow ? 10 : 12, lost ? '#cbd5e1' : '#f87171', 'right', BIG_FONT, 3);
 
         // ── Respekt (uppe till vänster) ──
         // Tre rader: ditt gäng, turfets gäng och det gäng som hatar dig mest

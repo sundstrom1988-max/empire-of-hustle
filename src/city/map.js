@@ -73,6 +73,11 @@ function gridLines(rng, size) {
 
 // Där shoppar hamnar (index = SHOPS-ordningen i gameData)
 const BUSINESS_DISTRICTS = ['orten', 'orten', 'vasterort', 'industrin', 'centrum', 'centrum', 'centrum', 'hamnen'];
+// Gömställen: namn och pris per turf
+export const HOUSES = {
+    orten: ['Lägenheten i Orten', 9000], vasterort: ['Radhuset i Västerort', 14000], industrin: ['Loftet i Industrin', 12000],
+    centrum: ['Takvåningen i Centrum', 30000], skogsbacken: ['Villan i Skogsbacken', 24000], hamnen: ['Sjöboden i Hamnen', 11000]
+};
 
 // Takfärger, hushöjd och hur ofta ett kvarter blir park eller parkering
 const PALETTES = {
@@ -339,6 +344,19 @@ export function generateCity(seed = 1337) {
         }
     });
 
+    // Dörren sitter på husväggen bakom trottoaren: man går in genom att gå mot väggen
+    const withDoor = m => {
+        if (!m) return m;
+        for (let d = 0; d < 4; d++) {
+            if (tileAt({ tiles }, m.tx + DX[d], m.ty + DY[d]) !== T.BUILDING) continue;
+            m.door = { x: m.x + DX[d] * (TILE / 2 - 5), y: m.y + DY[d] * (TILE / 2 - 5), side: d };
+            return m;
+        }
+        m.door = { x: m.x, y: m.y, side: 0 };
+        return m;
+    };
+    businesses.forEach(withDoor);
+
     const places = [];
     for (const district of Object.keys(PLACE_NAMES)) {
         const names = PLACE_NAMES[district].slice();
@@ -350,6 +368,14 @@ export function generateCity(seed = 1337) {
             places.push(mk([x, y], { kind: 'place', name: names.shift(), district }));
         }
     }
+
+    // Gömställen att köpa (ett per turf) och banken i Centrum
+    const houses = Object.entries(HOUSES).map(([district, [name, price]]) => {
+        const [cx, cy] = TURF_CENTER[district];
+        const t = nearestCurb(cx + 4, cy + 3, (x, y) => districtOfTile(x, y) === district && nextToBuilding(x, y), 5);
+        return withDoor(mk(t, { kind: 'house', id: 'house-' + district, district, name, price }));
+    }).filter(Boolean);
+    const bank = withDoor(mk(nearestCurb(30, 18, (x, y) => districtOfTile(x, y) === 'centrum' && nextToBuilding(x, y), 5), { kind: 'bank', id: 'bank', name: 'Stadsbanken' }));
 
     // Pickup-platser och gatlampor
     const pickupSpots = [];
@@ -383,6 +409,6 @@ export function generateCity(seed = 1337) {
     return {
         seed, w: W_, h: H_, tiles, lanes, bld, buildings, xs, ys,
         spawn, homeParking, lotSpots, pickupSpots, lights, laneTiles, sidewalkTiles,
-        markers: { home, dealer, phones, sprays, fence, club, guns, businesses, places }
+        markers: { home, dealer, phones, sprays, fence, club, guns, businesses, places, houses, bank }
     };
 }
