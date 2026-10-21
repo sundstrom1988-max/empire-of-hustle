@@ -179,28 +179,15 @@ export class Hud {
         }
         if (this.radio) {
             ctx.globalAlpha = Math.min(1, this.radio.life);
-            outlined(ctx, `📻 ${this.radio.text}`, W / 2, H * 0.32, narrow ? 15 : 19, '#7dd3fc', 'center', BIG_FONT, 4);
-            if (this.radio.sub) outlined(ctx, this.radio.sub, W / 2, H * 0.32 + 22, 12, '#e5e7eb', 'center', BIG_FONT, 3);
+            outlined(ctx, `📻 ${this.radio.text}`, W / 2, H * 0.6, narrow ? 15 : 19, '#7dd3fc', 'center', BIG_FONT, 4);
+            if (this.radio.sub) outlined(ctx, this.radio.sub, W / 2, H * 0.6 + 22, 12, '#e5e7eb', 'center', BIG_FONT, 3);
             ctx.globalAlpha = 1;
         }
 
-        // ── Pil mot målet ──
-        const m = world.mission;
-        if (date) this.drawArrow(ctx, r, world, date.dest, '#f472b6', `💃 ${date.name}s lägenhet`);
-        if (m && m.target) this.drawArrow(ctx, r, world, m.target, '#ffd23f', m.target.label);
-        else if (!m && !date && left > 0 && world.state === 'play') {
-            // Visa vägen till närmaste öppna telefon
-            let best = null, bd = Infinity;
-            for (const ph of world.city.markers.phones) {
-                if (!phoneAccess(profile, ph.gang)) continue;
-                const d = Math.hypot(ph.x - p.x, ph.y - p.y);
-                if (d < bd) { bd = d; best = ph; }
-            }
-            if (best && bd > 260) this.drawArrow(ctx, r, world, best, 'rgba(255,255,255,0.75)', '☎️ Telefon', true);
-        }
-
         // ── Personsökare (uppdrag + meddelanden) ──
+        const m = world.mission;
         const pagerW = Math.min(440, W - 24);
+        const bottomPad = opts.touch ? 236 : 22; // ovanför touchknapparna
         const lines = [];
         ctx.font = `${narrow ? 18 : 20}px ${PAGER_FONT}`;
         if (m) {
@@ -209,11 +196,11 @@ export class Hud {
             if (m.type === 'vip' && m.stage === 1 && m.damage !== undefined) lines.push({ text: `VIP-skick: ${Math.round((1 - Math.min(1, m.damage * 1.2)) * 100)}%`, color: '#bef264' });
         }
         for (const msg of this.msgs) for (const l of wrap(ctx, msg.text, pagerW - 24)) lines.push({ text: l, color: '#d9f99d', alpha: Math.min(1, msg.life) });
+        const lh = narrow ? 18 : 20;
+        const ph = lines.length ? lines.length * lh + 18 : 0;
+        const py = H - ph - bottomPad;
         if (lines.length) {
-            const lh = narrow ? 18 : 20;
-            const ph = lines.length * lh + 18;
             const px = (W - pagerW) / 2;
-            const py = H - ph - (opts.touch ? 168 : 22);
             ctx.fillStyle = 'rgba(12,26,8,0.88)'; ctx.fillRect(px, py, pagerW, ph);
             ctx.strokeStyle = '#4d7c0f'; ctx.lineWidth = 2; ctx.strokeRect(px + 1, py + 1, pagerW - 2, ph - 2);
             ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
@@ -229,8 +216,24 @@ export class Hud {
             }
         }
 
-        // ── Tips ──
-        if (world.hint) outlined(ctx, world.hint, W / 2, H - (opts.touch ? 150 : 22) - (lines.length ? lines.length * 20 + 40 : 0), narrow ? 13 : 16, '#fff', 'center', BIG_FONT, 4);
+        // ── Pil mot målet ──
+        if (date) this.drawArrow(ctx, r, world, date.dest, '#f472b6', `💃 ${date.name}s lägenhet`, false, py);
+        if (m && m.target) this.drawArrow(ctx, r, world, m.target, '#ffd23f', m.target.label, false, py);
+        else if (!m && !date && left > 0 && world.state === 'play') {
+            // Visa vägen till närmaste öppna telefon
+            let best = null, bd = Infinity;
+            for (const ph of world.city.markers.phones) {
+                if (!phoneAccess(profile, ph.gang)) continue;
+                const d = Math.hypot(ph.x - p.x, ph.y - p.y);
+                if (d < bd) { bd = d; best = ph; }
+            }
+            if (best && bd > 260) this.drawArrow(ctx, r, world, best, 'rgba(255,255,255,0.75)', '☎️ Telefon', true, py);
+        }
+
+        // ── Tips ── (på touch heter knapparna annat än tangenterna)
+        let hint = world.hint;
+        if (hint && opts.touch) hint = hint.replace('ESC —', '🏠 HEM —').replaceAll('SPACE —', '⤵ —').replace(/^R —/, '💰 —');
+        if (hint) outlined(ctx, hint, W / 2, py - (lines.length ? 22 : 8), narrow ? 13 : 16, '#fff', 'center', BIG_FONT, 4);
 
         // ── Stor text ──
         if (this.big) {
@@ -240,9 +243,9 @@ export class Hud {
             const a = Math.min(1, b.life / 0.5);
             ctx.save();
             ctx.globalAlpha = a;
-            ctx.translate(W / 2, H * 0.42);
-            ctx.scale(scale, scale);
             const big = b.text === 'WASTED' || b.text === 'BUSTED';
+            ctx.translate(W / 2, big ? H * 0.42 : narrow ? H * 0.4 : H * 0.3);
+            ctx.scale(scale, scale);
             outlined(ctx, b.text, 0, 0, narrow ? (big ? 54 : 30) : (big ? 92 : 50), b.color, 'center', BIG_FONT, big ? 10 : 7);
             if (b.sub) outlined(ctx, b.sub, 0, narrow ? 38 : 58, narrow ? 13 : 18, '#fff', 'center', BIG_FONT, 4);
             ctx.restore();
@@ -271,7 +274,7 @@ export class Hud {
         }
     }
 
-    drawArrow(ctx, r, world, target, color, label, small = false) {
+    drawArrow(ctx, r, world, target, color, label, small = false, bottom = r.h) {
         const W = r.w, H = r.h;
         const sp = r.worldToScreen(target.x, target.y);
         const margin = 46;
@@ -280,8 +283,8 @@ export class Hud {
         const ang = Math.atan2(sp.y - cy, sp.x - cx);
         const rx = W / 2 - margin, ry = H / 2 - margin - 30;
         const k = Math.min(rx / Math.abs(Math.cos(ang) || 1e-6), ry / Math.abs(Math.sin(ang) || 1e-6));
-        const ax = cx + Math.cos(ang) * k, ay = cy + Math.sin(ang) * k + 20;
         const sz = small ? 14 : 22;
+        const ax = cx + Math.cos(ang) * k, ay = Math.min(cy + Math.sin(ang) * k + 20, bottom - sz - 30);
         ctx.save();
         ctx.translate(ax, ay);
         ctx.rotate(ang);

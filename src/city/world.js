@@ -985,7 +985,7 @@ export class World {
         ped.mode = 'flee'; ped.t = 4; ped.angle = Math.atan2(ped.y - p.y, ped.x - p.x);
         if (ped.buyer) this.releaseBuyer();
         this.pedSay(ped, ped.type === 'metro' ? 'Ta den, ta den! Inte ansiktet! 😭' : HAND_OVER[Math.floor(this.rnd() * HAND_OVER.length)], 2.5);
-        this.addMoney(amount, ped.x, ped.y);
+        this.addMoney(amount, p.x, p.y + 44); // under dig, så den inte går genom pratbubblan
         this.sfx('coin');
         if (st) st.robbed = (st.robbed || 0) + 1;
         addHeat(this.wanted, CRIME.rob, witnessed);
@@ -1310,8 +1310,17 @@ export class World {
         this.combo = this.comboT > 0 ? this.combo + 1 : 1;
         this.comboT = 2.5;
         const label = COMBO_NAMES[Math.min(this.combo, COMBO_NAMES.length) - 1];
-        this.floater(ped.x, ped.y - 18, this.combo > 1 ? `${label} x${this.combo}` : label, '#f472b6');
-        if (this.combo === 3 || this.combo === 5 || this.combo % 10 === 0) { this.big(label, '#f472b6', `${this.combo} i rad! 🎳`); this.sfx('combo'); }
+        const cf = this.comboFloater;
+        if (this.combo <= 2) {
+            // En comboruta som räknar upp, inte en hög texter ovanpå varandra
+            const text = this.combo > 1 ? `${label} x${this.combo}` : label;
+            if (cf && cf.life > 0 && this.floaters.includes(cf)) Object.assign(cf, { x: ped.x, y: ped.y - 18, text, life: 1.6 });
+            else { this.floater(ped.x, ped.y - 18, text, '#f472b6'); this.comboFloater = this.floaters[this.floaters.length - 1]; }
+        } else {
+            if (cf) cf.life = 0;
+            this.big(label, '#f472b6', `${this.combo} i rad! 🎳`);
+            if (this.combo === 3 || this.combo === 5 || this.combo % 10 === 0) this.sfx('combo');
+        }
         if (ped.mugger) { ped.mugger = false; ped.attack = false; }
         this.dropWallet(ped, 0.3 + 0.12 * this.combo);
         if (this.date) { this.date.mood -= 25; this.message(`😱 ${this.date.name}: "Körde du just på någon?!"`); }
