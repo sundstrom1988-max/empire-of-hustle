@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { World, startSpot } from '../src/city/world.js';
+import { INTERIORS } from '../src/city/interiors.js';
+import { SHOPS } from '../src/data/gameData.js';
 import { generateCity } from '../src/city/map.js';
 import { mulberry32 } from '../src/city/rng.js';
 import { createPlayerState } from '../src/game/state.js';
@@ -837,14 +839,26 @@ describe('Gå in med E', () => {
         expect(w.hint).toContain('kliv ur');
     });
 
-    it('nattklubben går att gå in på till fots — dansa och VIP, dejten kräver bil', () => {
+    it('nattklubben: till fots går man in i klubbens rum (menyn om rummet saknas)', () => {
         const w = makeWorld(92);
         const c = city.markers.club;
         w.peds = []; w.manageSpawns = () => { };
         w.time = (21 - 19.5) * 24; // 21:00, öppet
         w.player.x = c.x; w.player.y = c.y;
         w.update(DT, IDLE);
-        expect(w.place?.pl.kind).toBe('nightclub');
+        if (INTERIORS.club) {
+            expect(w.interior?.id).toBe('club');
+            expect(w.interior.biz.slot).toBe(SHOPS.findIndex(s => s.id === 'club'));
+            w.exitInterior();
+            expect(w.interior).toBe(null);
+            expect(Math.hypot(w.player.x - c.x, w.player.y - c.y)).toBeLessThan(60);
+        } else expect(w.place?.pl.kind).toBe('nightclub');
+    });
+
+    it('nattklubbens meny (reserv): dansa och VIP, dejten kräver bil', () => {
+        const w = makeWorld(94);
+        w.time = (21 - 19.5) * 24;
+        w.enterPlace(w.nightclubPlace());
         const info = w.placeInfo();
         expect(info.actions.map(a => a.id)).toEqual(['dance', 'nightvip', 'date', 'leave']);
         expect(info.actions.find(a => a.id === 'date').disabled).toBe(true);

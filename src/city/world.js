@@ -1754,7 +1754,7 @@ export class World {
         if (!v && m.guns?.door && this.enterZone('door-guns', m.guns.door.x, m.guns.door.y, 20)) this.enterInterior('gunshop', m.guns);
         if (!v && m.stripclub?.door && this.enterZone('door-stripclub', m.stripclub.door.x, m.stripclub.door.y, 20)) this.enterInterior('stripclub', m.stripclub);
         if (v && m.club && this.enterZone('club', m.club.x, m.club.y, 70) && speed < 220) this.visitClub();
-        if (!v && m.club && this.enterZone('club-foot', m.club.x, m.club.y, 26)) this.enterPlace(this.nightclubPlace());
+        if (!v && m.club && this.enterZone('club-foot', m.club.x, m.club.y, 26)) this.enterNightclub();
         // Gå in genom dörren (mot husväggen). Ditt eget gömställe har garage du kan köra in i.
         for (const d of this.doors()) {
             const door = d.door || d;
@@ -2141,8 +2141,8 @@ export class World {
             state: INT.createInteriorState(id, this.rnd),
             seen: stars(this.wanted) > 0 && this.copSees(), // såg snuten dig gå in väntar de utanför
             exitArmed: false,
-            biz: marker.kind === 'business' ? marker : null, // ett av företagen: kassa och meny vid disken
-            zoneKey: marker.kind === 'business' ? 'door-biz' + marker.slot : 'door-' + (id === 'gunshop' ? 'guns' : id)
+            biz: marker.kind === 'business' ? marker : marker.biz || null, // ett av företagen: kassa och meny vid disken
+            zoneKey: marker.kind === 'business' ? 'door-biz' + marker.slot : marker.kind === 'nightclub' ? 'club-foot' : 'door-' + (id === 'gunshop' ? 'guns' : id)
         };
         p.x = def.spawn.x; p.y = def.spawn.y; p.vx = p.vy = 0; p.angle = -Math.PI / 2;
         this.bullets = [];
@@ -2154,8 +2154,8 @@ export class World {
             const own = this.propertyInfo('stripclub');
             this.message(`💎 Välkommen till Club Diamant. Inga vapen, inga bråk. ${own.mine ? 'Klubben är din.' : own.owner ? `Ägare: ${this.nameOf ? this.nameOf(own.owner) : own.owner}.` : 'Till salu — prata med managern.'}`);
         } else if (id === 'gunshop') this.message('🔫 Pang-Pelle: "Kom in, kom in. Prata med mig vid disken."');
-        else if (marker && marker.kind === 'business') {
-            const shop = SHOPS[marker.slot], owned = (this.profile.owned || []).includes(shop.id);
+        else if (marker && (marker.kind === 'business' || marker.biz)) {
+            const shop = SHOPS[(marker.biz || marker).slot], owned = (this.profile.owned || []).includes(shop.id);
             this.message(`${shop.icon} ${shop.name} — ${owned ? 'ditt ställe. Personalen jobbar, kassan fylls.' : 'öppet och fullt av folk. Till salu: prata med disken.'}`);
         }
         return true;
@@ -2334,6 +2334,14 @@ export class World {
         return out;
     }
 
+    // 🍾-entrén i Centrum leder in i nattklubbens rum (samma verksamhet som Nattklubben VIP)
+    enterNightclub() {
+        const m = this.city.markers, slot = SHOPS.findIndex(s => s.id === 'club');
+        const biz = m.businesses.find(b => b.slot === slot) || null;
+        if (INT.INTERIORS.club && m.club && !this.player.vehicle) this.enterInterior('club', { ...m.club, kind: 'nightclub', biz });
+        else this.enterPlace(this.nightclubPlace());
+    }
+
     nightclubPlace() {
         const c = this.city.markers.club;
         return c ? { kind: 'nightclub', id: 'nightclub', name: 'Nattklubben', x: c.x, y: c.y } : null;
@@ -2355,7 +2363,7 @@ export class World {
         }
         for (const sd of this.specialDoors()) consider(sd.door.x, sd.door.y, sd.icon, sd.name, () => this.enterInterior(sd.id, sd.id === 'stripclub' ? m.stripclub : m.guns));
         const nc = this.nightclubPlace();
-        if (nc) consider(nc.x, nc.y, '🍾', nc.name, () => this.enterPlace(nc), 14);
+        if (nc) consider(nc.x, nc.y, '🍾', nc.name, () => this.enterNightclub(), 14);
         return best;
     }
 
