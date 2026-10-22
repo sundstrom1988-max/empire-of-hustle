@@ -443,8 +443,11 @@ function populateGunshop(def, rnd) {
 export function createInteriorState(id, rnd = Math.random) {
     const def = INTERIORS[id];
     if (!def) throw new Error('Okänd interiör: ' + id);
-    const npcs = def.theme === 'club' ? populateClub(def, rnd) : populateGunshop(def, rnd);
-    return { id, def, t: 0, npcs, focus: null, talking: 0 };
+    const th = THEMES.get(def.theme);
+    const npcs = th ? th.populate(def, rnd) : def.theme === 'club' ? populateClub(def, rnd) : populateGunshop(def, rnd);
+    // events: det rummet berättar för världen (t.ex. { type: 'sale', x, y } när en kund betalar)
+    // owned/flow/panic sätts av världen: spelaren äger stället, hur mycket folk, rån pågår (sekunder)
+    return { id, def, t: 0, npcs, focus: null, talking: 0, events: [], owned: false, flow: 1, panic: 0 };
 }
 
 // ── Animation ──
@@ -590,7 +593,7 @@ export function updateInterior(state, dt, rnd = Math.random) {
     if (!(dt > 0)) return;
     if (dt > 0.1) dt = 0.1;
     state.t += dt;
-    const t = state.t, npcs = state.npcs;
+    const t = state.t, npcs = state.npcs, th = THEMES.get(state.def.theme);
     state.talking = 0;
     for (let i = 0; i < npcs.length; i++) if (npcs[i].say) state.talking++;
     for (let i = 0; i < npcs.length; i++) {
@@ -600,7 +603,7 @@ export function updateInterior(state, dt, rnd = Math.random) {
             case 'floor': stepFloorDancer(n, dt, t); break;
             case 'seat': stepSeated(n, state, dt, t, rnd); break;
             case 'patrol': stepPatrol(n, state, dt, rnd); break;
-            default: n.phase += dt;
+            default: if (!(th && th.step && th.step(n, state, dt, rnd))) n.phase += dt;
         }
         if (n.say) {
             if ((n.say.life -= dt) <= 0) n.say = null;
@@ -609,6 +612,7 @@ export function updateInterior(state, dt, rnd = Math.random) {
             trySay(state, n, pick(rnd, n.lines), 2.6);
         }
     }
+    if (th && th.update) th.update(state, dt, rnd);
 }
 
 // ═══════════════════════════════════════════
@@ -775,7 +779,8 @@ function staticLayer(ctx, def) {
 export function clearInteriorCache() { layers = new WeakMap(); }
 
 function paintStatic(g, def) {
-    if (def.theme === 'club') paintClub(g, def); else paintGun(g, def);
+    const th = THEMES.get(def.theme);
+    if (th) th.paint(g, def); else if (def.theme === 'club') paintClub(g, def); else paintGun(g, def);
 }
 
 // Mörk vägg med ljusare insida mot rummet
@@ -1576,15 +1581,17 @@ export function drawInterior(ctx, state, view, t, drawPerson) {
     if (t === undefined) t = state.t;
     const v = view || { x0: 0, y0: 0, x1: def.w * TS, y1: def.h * TS };
     drawStaticLayer(ctx, def, v);
-    if (def.theme === 'club') dynClub(ctx, state, v, t); else dynGun(ctx, state, v, t);
+    const th = THEMES.get(def.theme);
+    if (th) { if (th.dyn) th.dyn(ctx, state, v, t); } else if (def.theme === 'club') dynClub(ctx, state, v, t); else dynGun(ctx, state, v, t);
     const draw = drawPerson || fallbackPerson, npcs = state.npcs;
     for (let i = 0; i < npcs.length; i++) {
         const n = npcs[i];
         if (n.x < v.x0 - 40 || n.x > v.x1 + 40 || n.y < v.y0 - 40 || n.y > v.y1 + 40) continue;
         draw(ctx, n);
         accessory(ctx, n, t);
+        if (th && th.accessory) th.accessory(ctx, n, t);
     }
-    if (def.theme === 'club') drawPoleTops(ctx, def, v);
+    if (th) { if (th.over) th.over(ctx, state, v, t); } else if (def.theme === 'club') drawPoleTops(ctx, def, v);
 }
 
 // ═══════════════════════════════════════════
@@ -1635,13 +1642,15 @@ export function drawInteriorLights(ctx, state, view, t) {
     ctx.save();
     ctx.beginPath(); ctx.rect(0, 0, def.w * TS, def.h * TS); ctx.clip(); // inget sken utanför rummet
     ctx.globalCompositeOperation = 'lighter';
-    const glows = def.theme === 'club' ? CLUB_GLOWS : GUN_GLOWS;
+    const th = THEMES.get(def.theme);
+    const glows = th ? th.glows || [] : def.theme === 'club' ? CLUB_GLOWS : GUN_GLOWS;
     for (let i = 0; i < glows.length; i++) {
         const g = glows[i];
         const pulse = g[5] ? 0.7 + 0.3 * Math.sin(t * g[5] + i) : 1;
         lightGlow(ctx, g[0], g[1], g[2], g[3], g[4] * pulse, v);
     }
-    if (def.theme === 'club') {
+    if (th && th.lights) th.lights(ctx, state, v, t, (x, y, r, hex, a) => lightGlow(ctx, x, y, r, hex, a, v));
+    if (!th && def.theme === 'club') {
         // dansgolvets rörliga färgfläckar
         lightGlow(ctx, 480 + Math.sin(t * 0.6) * 90, 300 + Math.cos(t * 0.5) * 40, 250, '#a855f7', 0.1, v);
         lightGlow(ctx, 480 + Math.cos(t * 0.45) * 110, 310 + Math.sin(t * 0.7) * 36, 220, '#22e5ff', 0.08, v);
@@ -1666,3 +1675,38 @@ export function drawInteriorLights(ctx, state, view, t) {
     }
     ctx.restore();
 }
+
+// ═══════════════════════════════════════════
+//  FLER RUM — verksamheterna (interiors-biz-*.js) registrerar sig här
+//  theme = {
+//    populate(def, rnd) → npcs        personal och kunder när man kommer in
+//    update(state, dt, rnd)            kundflöde, köer, försäljning (state.events), panik
+//    step(n, state, dt, rnd) → bool    egna beteenden (n.beh) — true om hanterad
+//    paint(g, def)                     statiskt lager (golv, väggar, möbler, skyltar)
+//    dyn(ctx, state, view, t)          rörliga detaljer under folk (skärmar, ånga, maskiner)
+//    accessory(ctx, n, t)              saker i händerna (mat, hantlar, laptop …)
+//    over(ctx, state, view, t)         sådant som ska ligga ovanpå folk
+//    glows: [[x, y, r, '#hex', styrka, puls]], lights(ctx, state, view, t, glow)
+//  }
+//  def.legend = { 'K': { name: 'grill', solid: true } } lägger till egna möbeltecken.
+// ═══════════════════════════════════════════
+const THEMES = new Map();
+
+export function registerInterior(def, theme) {
+    if (def.legend) for (const [ch, info] of Object.entries(def.legend)) {
+        LEGEND[ch] = info;
+        SOLID[ch.charCodeAt(0)] = info.solid ? 1 : 0;
+    }
+    if (!def.zones) def.zones = [];
+    INTERIORS[def.id] = def;
+    THEMES.set(def.theme, theme);
+}
+
+// Samma verktyg som klubben och vapenaffären är byggda med
+export const KIT = {
+    TS, PI, TAU, tc, rand, pick, clamp, SKINS, HAIRS, SHIRTS, DRINKS, SIGN_FONT, EMOJI_FONT,
+    makeNpc, patrol, seated, trySay, angDiff, wrapAngle, turnToward,
+    chAt, solidTile, interiorSolid, circleClear, nearestFreeSpot,
+    tileHash, rgba, rr, disc, box, softShadow, neonText, neonLine, zoneAt, eachTile, sprite, glowSprite,
+    wallPass, aoPass, slabGroup, plankFloor, carpetTile, plantAt, exitArrow, glassAt
+};

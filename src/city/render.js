@@ -411,7 +411,7 @@ export class Renderer {
                 const shop = SHOPS[d.slot];
                 const owned = (prof.owned || []).includes(shop.id);
                 icon = shop.icon; color = owned ? '#22c55e' : '#ffd23f';
-                label = owned ? ((prof.cityCollected || []).includes(shop.id) ? 'DIN' : 'DIN · 💰') : 'TILL SALU';
+                label = owned ? ((prof.cityCollected || []).includes(shop.id) ? 'ÖPPET · DIN' : 'ÖPPET · DIN · 💰') : 'ÖPPET · TILL SALU';
             } else if (d.kind === 'house') {
                 const owned = world.ownsHouse(d);
                 icon = owned ? '🏡' : '🔑'; color = owned ? '#22c55e' : '#38bdf8'; label = owned ? 'GÖMSTÄLLE' : 'TILL SALU';

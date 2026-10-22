@@ -184,20 +184,37 @@ describe('World simulation', () => {
         expect(w.profile.money).toBe(5000 - (150 + 400));
     });
 
-    it('collects cash inside your own business once per round', () => {
+    it('tömmer kassan (det kunderna betalat) i sin egen verksamhet en gång per runda', () => {
         const profile = createPlayerState('mehmet');
         profile.owned = ['kebab']; profile.levels = { kebab: 2 };
         const w = makeWorld(2, profile);
         const mk = city.markers.businesses.find(b => b.slot === 0);
         enterDoor(w, mk);
-        const m0 = profile.money;
-        expect(w.place?.pl).toBe(mk);
+        if (!w.place) w.enterPlace(w.interior?.biz || mk); // har stället ett rum: menyn vid disken
+        const m0 = profile.money, till = w.tillOf(0);
+        expect(till).toBeGreaterThan(0);
         expect(w.placeAction('collect').close).toBe(false);
-        expect(profile.money).toBe(m0 + Math.floor(80 * 2 * 0.3));
-        w.leavePlace();
-        w.player.x += 500; w.update(DT, IDLE);
-        enterDoor(w, mk);
-        expect(w.placeInfo().actions.some(a => a.id === 'collect')).toBe(false);
+        expect(profile.money).toBe(m0 + till);
+        expect(w.tillOf(0)).toBe(0);
+        expect(w.placeInfo().actions.find(a => a.id === 'collect').disabled).toBe(true);
+    });
+
+    it('kassan fylls av försäljning och rånet tar det som ligger där', () => {
+        const profile = createPlayerState('mehmet');
+        profile.weapons = ['pistol']; profile.ammo = { pistol: 5 }; profile.weapon = 'pistol';
+        const w = makeWorld(3, profile);
+        w.tills[1] = 0;
+        w.bizSale(1, 10, 10); w.bizSale(1, 10, 10);
+        expect(w.tillOf(1)).toBe(180); // två klippningar à 90 kr
+        for (let i = 0; i < 50; i++) w.bizSale(1, 10, 10);
+        expect(w.tillOf(1)).toBe(90 * 8); // kassan rymmer åtta försäljningar
+        const mk = city.markers.businesses.find(b => b.slot === 1);
+        w.vehicles = w.vehicles.filter(v => v.driver !== 'cop');
+        w.enterPlace(mk);
+        const m0 = profile.money;
+        w.placeAction('rob');
+        expect(profile.money).toBe(m0 + 720);
+        expect(w.tillOf(1)).toBe(0);
     });
 });
 
@@ -764,6 +781,30 @@ describe('Slagsmål mot andra spelare', () => {
         w.update(DT, { ...IDLE, punch: true });
         expect(w.player.protT).toBe(0);
         expect(w.netSnapshot().prot).toBe(false);
+    });
+});
+
+describe('Verksamheterna lever', () => {
+    it('folk går in i butikerna och kommer ut igen, och de som går in handlar', () => {
+        const w = makeWorld(95);
+        const b = city.markers.businesses[0];
+        const DXS = [0, 1, 0, -1], DYS = [-1, 0, 1, 0];
+        w.player.x = b.door.x - DXS[b.door.side] * 120; w.player.y = b.door.y - DYS[b.door.side] * 120;
+        w.manageSpawns = () => { };
+        w.peds = [];
+        // Några fotgängare utanför
+        for (let i = 0; i < 6; i++) w.peds.push(createPed(b.door.x - DXS[b.door.side] * 60 + i * 6, b.door.y - DYS[b.door.side] * 60, w.rnd, {}));
+        w.tills[b.slot] = 0;
+        let cameOut = 0, wentIn = 0;
+        for (let i = 0; i < 60 * 40; i++) {
+            const before = w.peds.length;
+            w.update(DT, IDLE);
+            if (w.peds.length > before) cameOut++;
+            if (w.peds.length < before) wentIn++;
+        }
+        expect(cameOut).toBeGreaterThan(0);
+        expect(wentIn).toBeGreaterThan(0);
+        expect(w.tillOf(b.slot)).toBeGreaterThan(0);
     });
 });
 

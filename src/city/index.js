@@ -328,6 +328,9 @@ function showCityPhone() {
 function showInteraction(id) {
     const w = session.world;
     if (id === 'seller') { showGuns(); return; }
+    // Disken i ett av företagen: verksamhetens meny (köp, töm kassan, tjänsten, råna).
+    // Händelsen 'place' plockas upp av handleEvents som kör just nu.
+    if (id === 'counter' && w.interior?.biz) { w.enterPlace(w.interior.biz); return; }
     const money = w.profile.money || 0;
     const card = (color, head, brief, rows) => `
         <div class="city-card phone" style="--gang:${color}">

@@ -9,7 +9,7 @@ import { TILE, T, DX, DY, DIR_ANGLE, GANGS, DISTRICTS } from './constants.js';
 import { tileAt, laneDirs, districtAt, flowField, isSolidAt, isWalkableTile } from './map.js';
 import { createVehicle, createGangVehicle, pickTrafficType, fenceValue, VEHICLES } from './vehicles.js';
 import { stepVehicle, collideVehicles, stepWalker, distToVehicle, impactDamage, collideCircleWithMap } from './physics.js';
-import { initLaneAI, laneControl, chaseControl, pedControl, createPed, lineClear, angleDiff } from './ai.js';
+import { initLaneAI, laneControl, chaseControl, pedControl, createPed, lineClear, angleDiff, seek } from './ai.js';
 import { createWanted, addHeat, stars, updateWanted, copTarget, copSpeedFactor, clearWanted, setStars, lostTrack, CRIME } from './wanted.js';
 import { createMission, updateMission, applyRespect, adjustRespect, emptyRespect, isHostile, gangById, phoneAccess, canJoin } from './missions.js';
 import { mulberry32 } from './rng.js';
@@ -18,6 +18,7 @@ import { crewCandidates, canRecruit, makeMember, spotNear, updateCrew, crewOrder
 import { cityItemDefs, itemGain, ITEM_TYPES, ARMOR_CAP } from './items.js';
 import { PROPERTIES, pvpLoss, SPAWN_PROTECTION } from '../multiplayer/authority.js';
 import * as INT from './interiors.js';
+import { bizInterior, bizFlow, salePrice, tillCap } from './businesses.js';
 import { SHOPS } from '../data/gameData.js';
 
 export const CLOCK_START = 19.5; // 19:30 — kvällen är ung
@@ -137,6 +138,10 @@ export class World {
         this.pvpT = 0;              // nere efter en PvP-strid: räknar ner till comeback
         this.pending = {};          // väntande svar från värden (köp, upptagning)
         this.localTaken = new Set();
+        // Verksamheterna går hela tiden: kassan har redan en del i sig när man kommer
+        this.tills = SHOPS.map(s => Math.round(tillCap(s) * (0.35 + this.rnd() * 0.35) / 10) * 10);
+        this.bizT = 0;
+        this.shopperT = 1;
         this.lastHurtT = -99;
         this.carHitT = {};
         profile.respect = { ...emptyRespect(), ...(profile.respect || {}) };
@@ -254,6 +259,7 @@ export class World {
         if (this.comboT <= 0) this.combo = 0;
         for (const g in this.beef) this.beef[g] = Math.max(0, this.beef[g] - dt);
         if (this.fade && (this.fade.t += dt) >= this.fade.dur) this.fade = null;
+        this.updateBusinesses(dt);
         if (this.interior) { this.updateInteriorMode(dt, this.state === 'play' && !this.fade ? input : NO_INPUT); return; }
         const playing = this.state === 'play';
         if (!playing) {
@@ -265,6 +271,7 @@ export class World {
         this.manageSpawns(dt);
         this.updateVehicles(dt);
         this.updatePeds(dt);
+        if (playing) this.updateShoppers(dt);
         if (playing) updateCrew(this, dt);
         this.updatePvp(dt);
         this.resolveCollisions();
@@ -792,11 +799,26 @@ export class World {
                 if (ped.say && (ped.say.life -= dt) <= 0) ped.say = null;
                 continue;
             }
+            if (ped.goIn && !ped.attack && ped.mode !== 'flee') {
+                // På väg in i en butik: går fram till dörren och försvinner in (och handlar)
+                const g = ped.goIn;
+                if (Math.hypot(g.x - ped.x, g.y - ped.y) < 12) {
+                    ped.gone = true;
+                    const s = SHOPS[g.slot];
+                    this.tills[g.slot] = Math.min(tillCap(s), this.tills[g.slot] + salePrice(s));
+                    continue;
+                }
+                const m = seek(ped, this, g.x, g.y, true);
+                stepWalker(ped, m.mx, m.my, 62, dt, this.city);
+                ped.phase += dt * 62 * 0.12;
+                continue;
+            }
             const c = pedControl(ped, this, dt);
             stepWalker(ped, c.mx, c.my, c.speed, dt, this.city);
             ped.phase += dt * c.speed * 0.12;
             this.updatePedSocial(ped, dt);
         }
+        if (this.peds.some(e => e.gone)) this.peds = this.peds.filter(e => !e.gone);
     }
 
     // Prat, gängbråk och kunder — det som händer mellan folk och dig
@@ -1075,6 +1097,7 @@ export class World {
         ped.flashT = 0.12;
         ped.stunT = Math.max(ped.stunT || 0, by === 'player' ? 0.45 : 0.25);
         ped.windup = 0;
+        ped.goIn = null;
         this.sfxAt('punch', ped.x, ped.y, 0.8);
         const mine = by === 'player' || !!by?.isCrew;
         if (by?.isCrew) ped.lastCrew = by;
@@ -1736,7 +1759,7 @@ export class World {
         for (const d of this.doors()) {
             const door = d.door || d;
             if (!v) {
-                if (this.enterZone('door-' + (d.id || 'biz' + d.slot), door.x, door.y, 20)) this.enterPlace(d, false);
+                if (this.enterZone('door-' + (d.id || 'biz' + d.slot), door.x, door.y, 20)) { if (d.kind === 'business') this.enterBusiness(d); else this.enterPlace(d, false); }
             } else if (d.kind === 'house' && this.ownsHouse(d) && this.enterZone('garage-' + d.id, door.x, door.y, 52) && speed < 220) {
                 this.enterPlace(d, true);
             }
@@ -1826,8 +1849,9 @@ export class World {
     collectBusiness(shop, mk) {
         if (!this.profile.cityCollected) this.profile.cityCollected = [];
         if (this.profile.cityCollected.includes(shop.id)) { this.message(`${shop.icon} Kassan är redan tömd den här rundan.`); return; }
-        const lv = (this.profile.levels || {})[shop.id] || 1;
-        const amt = Math.floor(shop.income * lv * 0.3);
+        // Det kunderna betalat (kassan fylls igen, men töms en gång per runda)
+        const amt = this.tillOf(mk.slot);
+        this.tills[mk.slot] = 0;
         this.profile.cityCollected.push(shop.id);
         this.addMoney(amt, mk.x, mk.y);
         this.sfx('coin');
@@ -2116,7 +2140,9 @@ export class World {
             id, def, door: { x: door.x, y: door.y, side: door.side ?? 0 },
             state: INT.createInteriorState(id, this.rnd),
             seen: stars(this.wanted) > 0 && this.copSees(), // såg snuten dig gå in väntar de utanför
-            exitArmed: false
+            exitArmed: false,
+            biz: marker.kind === 'business' ? marker : null, // ett av företagen: kassa och meny vid disken
+            zoneKey: marker.kind === 'business' ? 'door-biz' + marker.slot : 'door-' + (id === 'gunshop' ? 'guns' : id)
         };
         p.x = def.spawn.x; p.y = def.spawn.y; p.vx = p.vy = 0; p.angle = -Math.PI / 2;
         this.bullets = [];
@@ -2127,7 +2153,11 @@ export class World {
         if (id === 'stripclub') {
             const own = this.propertyInfo('stripclub');
             this.message(`💎 Välkommen till Club Diamant. Inga vapen, inga bråk. ${own.mine ? 'Klubben är din.' : own.owner ? `Ägare: ${this.nameOf ? this.nameOf(own.owner) : own.owner}.` : 'Till salu — prata med managern.'}`);
-        } else this.message('🔫 Pang-Pelle: "Kom in, kom in. Prata med mig vid disken."');
+        } else if (id === 'gunshop') this.message('🔫 Pang-Pelle: "Kom in, kom in. Prata med mig vid disken."');
+        else if (marker && marker.kind === 'business') {
+            const shop = SHOPS[marker.slot], owned = (this.profile.owned || []).includes(shop.id);
+            this.message(`${shop.icon} ${shop.name} — ${owned ? 'ditt ställe. Personalen jobbar, kassan fylls.' : 'öppet och fullt av folk. Till salu: prata med disken.'}`);
+        }
         return true;
     }
 
@@ -2141,7 +2171,7 @@ export class World {
         // Gick du in utan att synas tappar snuten spåret under tiden; såg de dig står de kvar
         if (I.seen) this.wanted.seenT = 0;
         this.interior = null;
-        this.inside.add('door-' + (I.id === 'gunshop' ? 'guns' : I.id));
+        this.inside.add(I.zoneKey);
         this.sfx('door');
         this.emit({ type: 'interior', id: null, music: null });
     }
@@ -2159,7 +2189,18 @@ export class World {
         INT.collideInterior(def, p, p.r);
         p.hurtT = Math.max(0, (p.hurtT || 0) - dt);
         p.protT = Math.max(0, (p.protT || 0) - dt);
+        if (I.biz) {
+            const shop = SHOPS[I.biz.slot];
+            I.state.owned = (this.profile.owned || []).includes(shop.id);
+            I.state.flow = bizFlow(shop.id, this.hour());
+        }
         INT.updateInterior(I.state, dt, this.rnd);
+        // Kunderna som betalade vid disken: pengarna hamnar i kassan
+        const ev = I.state.events;
+        if (ev && ev.length) {
+            for (const e of ev) if (e.type === 'sale' && I.biz) this.bizSale(I.biz.slot, e.x, e.y);
+            ev.length = 0;
+        }
         // Prata med folk (E) och vapen/bråk är förbjudna här inne
         this.nearInteraction = INT.interactionAt(def, p.x, p.y);
         if (input.action && this.nearInteraction) this.emit({ type: 'interact', id: this.nearInteraction.id });
@@ -2232,6 +2273,55 @@ export class World {
         return true;
     }
 
+    // ── Verksamheterna lever: kassor, kunder, försäljning ──
+    // Kassorna fylls lite i taget även när man inte är där (inne i rummet sköter kunderna det)
+    updateBusinesses(dt) {
+        if ((this.bizT -= dt) > 0) return;
+        this.bizT = 1;
+        const h = this.hour(), inside = this.interior?.biz?.slot;
+        SHOPS.forEach((s, slot) => {
+            if (slot === inside) return;
+            this.tills[slot] = Math.min(tillCap(s), this.tills[slot] + salePrice(s) * bizFlow(s.id, h) / 8);
+        });
+    }
+
+    // En kund betalade vid disken
+    bizSale(slot, x, y) {
+        const s = SHOPS[slot];
+        if (!s) return;
+        const price = salePrice(s), cap = tillCap(s);
+        this.tills[slot] = Math.min(cap, this.tills[slot] + price);
+        this.floater(x, y - 18, `+${price.toLocaleString('sv-SE')} kr`, this.tills[slot] >= cap ? '#9ca3af' : '#86efac');
+        this.sfx('coin', 0.25);
+    }
+
+    tillOf(slot) { return Math.floor(this.tills[slot] || 0); }
+
+    // Ute på gatan: folk går in i butikerna och kommer ut igen
+    updateShoppers(dt) {
+        if ((this.shopperT -= dt) > 0) return;
+        this.shopperT = 0.9 + this.rnd() * 0.8;
+        const p = this.player, h = this.hour();
+        const near = this.city.markers.businesses.filter(b => Math.hypot(b.door.x - p.x, b.door.y - p.y) < 650);
+        if (!near.length) return;
+        const b = near[Math.floor(this.rnd() * near.length)], s = SHOPS[b.slot], o = b.door;
+        if (this.rnd() > bizFlow(s.id, h) * 0.7) return;
+        const fx = o.x - DX[o.side] * 16, fy = o.y - DY[o.side] * 16;
+        if (this.rnd() < 0.5) {
+            // Någon kommer ut
+            if (this.peds.length >= 60) return;
+            const ped = createPed(fx, fy, this.rnd, {});
+            ped.angle = Math.atan2(-DY[o.side], -DX[o.side]);
+            ped.shopper = true;
+            this.peds.push(ped);
+        } else {
+            // Någon i närheten går in
+            const cand = this.peds.find(e => !e.goIn && !e.attack && !e.cop && !e.buyer && !e.mugger && e.type !== 'gang' && !(e.down > 0)
+                && Math.hypot(e.x - fx, e.y - fy) < 240 && Math.hypot(e.x - p.x, e.y - p.y) > 40);
+            if (cand) cand.goIn = { x: fx, y: fy, ox: o.x, oy: o.y, slot: b.slot };
+        }
+    }
+
     // Rummen man går omkring i (inte menyer): Club Diamant och Pang-Pelle
     specialDoors() {
         const m = this.city.markers, out = [];
@@ -2261,7 +2351,7 @@ export class World {
         for (const pl of this.doors()) {
             const o = pl.door || pl;
             const icon = pl.kind === 'business' ? SHOPS[pl.slot].icon : pl.kind === 'house' ? (this.ownsHouse(pl) ? '🏡' : '🔑') : '🏦';
-            consider(o.x, o.y, icon, this.placeName(pl), () => this.enterPlace(pl, false));
+            consider(o.x, o.y, icon, this.placeName(pl), () => (pl.kind === 'business' ? this.enterBusiness(pl) : this.enterPlace(pl, false)));
         }
         for (const sd of this.specialDoors()) consider(sd.door.x, sd.door.y, sd.icon, sd.name, () => this.enterInterior(sd.id, sd.id === 'stripclub' ? m.stripclub : m.guns));
         const nc = this.nightclubPlace();
@@ -2279,6 +2369,13 @@ export class World {
     doneThisRound(key) { return (this.profile.cityDone || []).includes(key); }
     markDone(key) { (this.profile.cityDone || (this.profile.cityDone = [])).push(key); }
     armed() { const id = this.profile.weapon; return !(WEAPONS[id] || WEAPONS.fists).melee && (this.profile.ammo[id] || 0) > 0; }
+
+    // Företagen har riktiga rum med personal och kunder (annars menyn vid dörren)
+    enterBusiness(pl) {
+        const id = bizInterior(pl.slot);
+        if (id && !this.player.vehicle && !this.interior) { this.enterInterior(id, pl); return; }
+        this.enterPlace(pl, false);
+    }
 
     enterPlace(pl, byCar = false) {
         if (this.place) return;
@@ -2304,8 +2401,13 @@ export class World {
             const shop = SHOPS[pl.slot];
             const owned = (prof.owned || []).includes(shop.id);
             const sv = SERVICES[shop.id];
-            if (!owned) add('buy', `🏢 Köp fastigheten · ${kr(shop.price)}`, { disabled: money < shop.price, note: `Ger ${kr(shop.income)} per runda i imperiet` });
-            else if (!(prof.cityCollected || []).includes(shop.id)) add('collect', '💰 Töm kassan');
+            const till = this.tillOf(pl.slot), inRoom = this.interior?.biz === pl;
+            const guests = inRoom ? this.interior.state.npcs.filter(n => n.customer || n.kind === 'customer').length : 0;
+            if (!owned) add('buy', `🏢 Köp verksamheten · ${kr(shop.price)}`, { disabled: money < shop.price, note: `Personalen fortsätter jobba åt dig · ${kr(shop.income)} per runda i imperiet + kassan här` });
+            else {
+                const done = (prof.cityCollected || []).includes(shop.id);
+                add('collect', `💰 Töm kassan · ${kr(till)}`, { disabled: done || till < 1, note: done ? 'Redan tömd den här rundan — den fylls till nästa' : 'Allt kunderna betalat' });
+            }
             if (sv) {
                 const price = owned ? 0 : sv.price;
                 const why = sv.id === 'train' && (prof.strength || 0) >= 5 ? 'Du är redan i toppform'
@@ -2315,10 +2417,11 @@ export class World {
             }
             if (!owned) {
                 const robbed = this.doneThisRound('rob:' + pl.slot);
-                add('rob', '🔫 Råna kassan', { disabled: robbed, note: robbed ? 'Redan rånad den här rundan' : this.armed() ? 'Med vapen i handen lämnar de över' : 'Utan vapen slänger de ut dig varannan gång' });
+                add('rob', `🔫 Råna kassan · ${kr(till)}`, { disabled: robbed, note: robbed ? 'Redan rånad den här rundan' : this.armed() ? 'Med vapen i handen lämnar de över' : 'Utan vapen slänger de ut dig varannan gång' });
             }
-            add('leave', '🚪 Gå ut');
-            return { icon: shop.icon, title: shop.name, color: owned ? '#22c55e' : '#ffd23f', desc: owned ? `Din fastighet · nivå ${(prof.levels || {})[shop.id] || 1}` : `${shop.desc}. TILL SALU.`, actions };
+            add('leave', inRoom ? '👋 Klar' : '🚪 Gå ut');
+            const live = `Kassan: ${kr(till)}${inRoom ? ` · ${guests} kunder inne` : ''}`;
+            return { icon: shop.icon, title: shop.name, color: owned ? '#22c55e' : '#ffd23f', desc: owned ? `Din verksamhet · nivå ${(prof.levels || {})[shop.id] || 1} · ${live}` : `${shop.desc}. Öppet och till salu. ${live}`, actions };
         }
         if (pl.kind === 'house') {
             const owned = this.ownsHouse(pl);
@@ -2377,9 +2480,13 @@ export class World {
                     this.sfx('bat');
                     this.hurtPlayer(12, 'Utslängd med ett basebollträ');
                     this.message(`${shop.icon} Kassören drog fram ett basebollträ och slängde ut dig!`);
+                    if (this.interior?.biz === pl) this.exitInterior();
                     return { close: true };
                 }
-                const amount = Math.round(Math.min(6000, 250 + shop.income * (0.5 + this.rnd() * 0.5)) * (1 + this.round * 0.05) / 10) * 10;
+                // Man får det som ligger i kassan just nu; kunderna flyr
+                const amount = Math.max(20, this.tillOf(pl.slot));
+                this.tills[pl.slot] = 0;
+                if (this.interior?.biz === pl) this.interior.state.panic = 10;
                 this.addMoney(amount);
                 this.sfx('coin');
                 if (st) st.heists = (st.heists || 0) + 1;
