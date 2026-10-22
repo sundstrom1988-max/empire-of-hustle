@@ -207,15 +207,15 @@ describe('World simulation', () => {
         const w = makeWorld(3, profile);
         w.tills[1] = 0;
         w.bizSale(1, 10, 10); w.bizSale(1, 10, 10);
-        expect(w.tillOf(1)).toBe(180); // två klippningar à 90 kr
+        expect(w.tillOf(1)).toBe(500); // två klippningar à 250 kr
         for (let i = 0; i < 50; i++) w.bizSale(1, 10, 10);
-        expect(w.tillOf(1)).toBe(90 * 8); // kassan rymmer åtta försäljningar
+        expect(w.tillOf(1)).toBe(250 * 8); // kassan rymmer åtta försäljningar
         const mk = city.markers.businesses.find(b => b.slot === 1);
         w.vehicles = w.vehicles.filter(v => v.driver !== 'cop');
         w.enterPlace(mk);
         const m0 = profile.money;
         w.placeAction('rob');
-        expect(profile.money).toBe(m0 + 720);
+        expect(profile.money).toBe(m0 + 2000);
         expect(w.tillOf(1)).toBe(0);
     });
 });

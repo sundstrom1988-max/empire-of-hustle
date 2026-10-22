@@ -11,7 +11,7 @@ import { INTERIORS } from './interiors.js';
 import { SHOPS } from '../data/gameData.js';
 
 // Vad en kund betalar vid disken (kr)
-export const SALE_PRICE = { kebab: 40, barber: 90, gym: 150, studio: 250, club: 200, tech: 600, tower: 1200, rocket: 2500 };
+export const SALE_PRICE = { kebab: 85, barber: 250, gym: 150, studio: 600, club: 200, tech: 600, tower: 1200, rocket: 2500 }; // som skyltarna i rummen
 // Kassan rymmer så här många försäljningar innan den är full
 export const TILL_SALES = 8;
 

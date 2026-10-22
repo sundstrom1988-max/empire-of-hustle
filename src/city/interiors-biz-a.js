@@ -17,10 +17,10 @@
 import { registerInterior, updateInterior, KIT } from './interiors.js';
 
 const {
-    TS, PI, TAU, tc, rand, pick, clamp, SKINS, HAIRS, SHIRTS, SIGN_FONT, EMOJI_FONT,
+    TS, PI, TAU, tc, rand, pick, SKINS, HAIRS, SHIRTS, SIGN_FONT,
     makeNpc, trySay, turnToward, chAt, solidTile, circleClear, nearestFreeSpot,
     tileHash, rgba, rr, disc, box, softShadow, neonText, neonLine, eachTile,
-    wallPass, aoPass, slabGroup, plankFloor, carpetTile, plantAt, exitArrow, glassAt, glowSprite
+    wallPass, aoPass, slabGroup, plankFloor, plantAt, exitArrow
 } = KIT;
 
 const BODY = 10; // hur nära möbler och väggar en gående kropp får komma (px)
@@ -460,6 +460,7 @@ function stepCust(R, n, st, dt, rnd) {
 
 // Spelets slagsmål är över (n.brawl nollställt, n.leaving satt): tillbaka till dörren som en vanlig gående, även personalen
 function stepLeaving(R, n, st, dt) {
+    if (n.down > 0) return;                  // utslagen: ligger kvar tills spelets kod reser den
     const d = st.def.door;
     if (n.c) { n.c.hold = null; n.c.seat = null; n.c.tw = null; n.c.flee = false; }
     n.act = null;
@@ -1042,7 +1043,6 @@ function staffTool(ctx, n, t) {
 }
 
 function itemOf(ctx, n, t) {
-    const L = n.look || {};
     if (n.pose === 'sit') {
         // sittande saknar händer i renderaren: en arm och en hand om maten
         if (n.act === 'eat' && n.item === 'wrap') {
@@ -1333,7 +1333,7 @@ function barberTopWall(g) {
         g.strokeStyle = '#ff2d55'; g.beginPath(); g.arc(-8, -7, 2.4, 0, TAU); g.moveTo(-5.6, 7); g.arc(-8, 7, 2.4, 0, TAU); g.stroke();
         g.restore();
     }
-    label(g, 'Fade · skägg · allt du behöver, bram', 288, 34, 7, '#e9c46a');
+    label(g, 'Fade, skägg, allt du behöver bram', 272, 34, 6.4, '#e9c46a');
     // speglar över stolarna
     for (const cx of CHAIRS) mirrorAt(g, tc(cx), 40, 108, 40);
     // inramade frisyrer mellan speglarna
@@ -1484,11 +1484,10 @@ function dynBarber(ctx, st, v, t) {
 function accessoryBarber(ctx, n, t, st) {
     if (n.act === 'cut') {
         // frisörens cape: en ring runt huvudet så att ansiktet syns
-        const L = n.look || {}, p = at(n, 0, 0);
+        const p = at(n, 0, 0);
         ctx.fillStyle = '#20232b'; ctx.beginPath(); ctx.ellipse(p.x, p.y, 11.6, 13.6, 0, 0, TAU); ctx.ellipse(p.x + p.c * 0.8, p.y + p.s * 0.8, 5.7, 5.7, 0, 0, TAU); ctx.fill('evenodd');
         ctx.strokeStyle = 'rgba(255,255,255,0.2)'; ctx.lineWidth = 1; ctx.beginPath(); ctx.ellipse(p.x, p.y, 10.8, 12.8, 0, 0, TAU); ctx.stroke();
         ctx.strokeStyle = '#f2f2f4'; ctx.lineWidth = 1.8; ctx.beginPath(); ctx.arc(p.x + p.c * 0.8, p.y + p.s * 0.8, 6.3, 0, TAU); ctx.stroke();
-        void L;
     }
     if (n.act === 'read') {
         const a = n.angle, p = at(n, 9, 0), cols = ['#dc2626', '#2563eb', '#f59e0b', '#16a34a'];
@@ -1741,7 +1740,6 @@ function gymEquipment(g, def) {
         g.beginPath(); g.moveTo(cx - 17, yc + 28); g.lineTo(cx - 17, y0 + 18); g.moveTo(cx + 17, yc + 28); g.lineTo(cx + 17, y0 + 18); g.stroke(); g.lineCap = 'butt';
     });
     // hantelställ
-    eachTile(def, 'H', (tx, ty) => { if (chAt(def, tx - 1, ty) === 'H') return; });
     {
         const x0 = 12 * TS, y0 = 3 * TS, w = 4 * TS;
         g.fillStyle = 'rgba(0,0,0,0.3)'; g.fillRect(x0 + 2, y0 + 4, w, TS);
@@ -1884,8 +1882,7 @@ function dynGym(ctx, st, v, t) {
 
 function lineBar(ctx, n, lx, lift, plateCols, w = 22) {
     // stången sedd uppifrån: tvärs över kroppen, skivorna blir större när den lyfts (närmare kameran)
-    const c = at(n, lx, 0), sc = 1 + 0.28 * lift, ax = -Math.sin(n.angle), ay = Math.cos(n.angle);
-    ctx.fillStyle = 'rgba(0,0,0,0.25)'; ctx.fillRect(c.x - w * ax - 1 + 3, c.y - w * ay + 3 - 1, 2, 2);
+    const c = at(n, lx, 0), sc = 1 + 0.28 * lift;
     ctx.save(); ctx.translate(c.x, c.y); ctx.rotate(n.angle);
     ctx.fillStyle = 'rgba(0,0,0,0.22)'; ctx.fillRect(-1 + 3 * lift, -w * sc + 2, 2.4, w * 2 * sc);
     ctx.fillStyle = '#d3d9e0'; ctx.fillRect(-1.2 * sc, -w * sc, 2.4 * sc, w * 2 * sc);
@@ -1909,9 +1906,9 @@ function accessoryGym(ctx, n, t) {
             ctx.fillStyle = side > 0 ? '#d9570f' : '#8a94a1'; ctx.beginPath(); ctx.arc(p.x, p.y, r * 0.55, 0, TAU); ctx.fill();
         }
     } else if (n.act === 'lift') {
-        const lift = 0.5 + 0.5 * Math.sin(n.phase), c = lineBar(ctx, n, 11 + 5 * lift, lift, ['#c2261b'], 23);
+        const lift = 0.5 + 0.5 * Math.sin(n.phase);
+        lineBar(ctx, n, 11 + 5 * lift, lift, ['#c2261b'], 23);
         for (const side of [-1, 1]) { const h = at(n, 9 + 4 * lift, side * 5.6); armTo(ctx, n, side, h.x, h.y); }
-        void c;
     } else if (n.act === 'press') {
         const lift = 0.5 + 0.5 * Math.sin(n.phase);
         for (const side of [-1, 1]) { const h = at(n, 5 + 2 * lift, side * 8); armTo(ctx, n, side, h.x, h.y); }
@@ -2133,9 +2130,9 @@ function studioTopWall(g) {
         for (let i = 0; i < 5; i++) { const hh = [3, 8, 12, 7, 4][i]; g.moveTo(sx + dir * i * 5, 16 - hh); g.lineTo(sx + dir * i * 5, 16 + hh); }
         g.stroke(); g.lineCap = 'butt';
     }
-    label(g, 'Producera hits · sälj beats', 352, 33, 7, '#d9b8ff');
+    label(g, 'Producera hits, sälj beats', 352, 33, 7, '#d9b8ff');
     // båsens skyltar
-    for (const [i, cx] of BOOTHS.entries()) { box(g, cx - 14, 8 * 0 + 38, 0, 0, '#000'); label(g, i ? 'STUDIO B' : 'STUDIO A', cx, 86 - 6, 6, '#c4a1ff', { font: SIGN_FONT, weight: 400 }); }
+    for (const [i, cx] of BOOTHS.entries()) label(g, i ? 'STUDIO B' : 'STUDIO A', cx, 80, 6, '#c4a1ff', { font: SIGN_FONT, weight: 400 });
     wallLip(g, x0, x1, 3, S_WALL);
 }
 
@@ -2302,11 +2299,7 @@ function dynStudio(ctx, st, v, t) {
         const cx = x0 + 7 + i * 13.75;
         const lv = Math.max(0, Math.min(1, lvl * (0.25 + 0.75 * Math.abs(Math.sin(t * (3.1 + (i % 5) * 0.9) + i * 1.7)) * (0.6 + 0.4 * Math.sin(t * 1.3 + i)))));
         const n = Math.round(lv * 6);
-        for (let k = 0; k < 6; k++) {
-            ctx.fillStyle = k < n ? (k > 4 ? '#ef4444' : k > 2 ? '#facc15' : '#22c55e') : 'rgba(255,255,255,0.07)';
-            ctx.fillRect(cx - 5 + (k % 2) * 5.2, y0 + 28 - (k >> 1) * 0 - 0, 0, 0);
-        }
-        // sex LED i en kolumn längs remsans nederkant (mot producenten)
+        // sex LED i en rad längs remsans nederkant (mot producenten)
         for (let k = 0; k < 6; k++) {
             ctx.fillStyle = k < n ? (k > 4 ? '#ef4444' : k > 2 ? '#facc15' : '#22c55e') : 'rgba(255,255,255,0.08)';
             ctx.fillRect(cx - 4.5 + k * 1.6, y0 + 26.5, 1.3, 2.4);
