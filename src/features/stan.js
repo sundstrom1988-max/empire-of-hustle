@@ -8,20 +8,29 @@ import { openCity, isCityOpen } from '../city/index.js';
 import { GANGS, JOIN_RESPECT } from '../city/constants.js';
 import { WEAPONS, WEAPON_ORDER, ownsWeapon } from '../city/weapons.js';
 import { HOUSES } from '../city/map.js';
-import { gameState, currentPlayer, formatNum, jailPlayer, canAct, saveGame } from '../game/state.js';
+import { ROLES, CREW_MAX } from '../city/crew.js';
+import { PROPERTIES } from '../multiplayer/authority.js';
+import { gameState, currentPlayer, myPlayer, formatNum, jailPlayer, canAct, saveGame } from '../game/state.js';
 import { updateHUD } from '../game/core.js';
 import { showToast, startMusic, spawnParticles } from '../utils/effects.js';
 import { stopRadio, unlockAudio } from '../utils/audio.js';
-import { syncState } from '../multiplayer/sync.js';
+import { syncState, syncMe } from '../multiplayer/sync.js';
 import { closePhone } from './phone.js';
+import { escapeHtml } from '../utils/html.js';
+
+// Online är stan gemensam och öppen för alla, även mellan turerna
+function canGoToCity() {
+    if (gameState.gameOver) return false;
+    return gameState.isOnline ? !!myPlayer() : canAct();
+}
 
 export function renderStanPanel() {
     const el = document.getElementById('stan-content');
-    const p = currentPlayer();
+    const p = myPlayer();
     if (!el || !p) return;
     const left = Math.max(0, gameState.maxMissionsPerRound - (p.missionsThisRound || 0));
     const st = p.cityStats || {};
-    const blocked = p.inJail ? '🔒 Du sitter i häktet' : !canAct() ? '⏳ Inte din tur' : '';
+    const blocked = p.inJail ? '🔒 Du sitter i häktet' : !canGoToCity() ? '⏳ Inte din tur' : '';
     el.innerHTML = `
         <div class="stan-hero">
             <div class="stan-hero-title">HUSTLE CITY</div>
@@ -64,6 +73,13 @@ export function renderStanPanel() {
                 <h4>🏡 Gömställen och styrka</h4>
                 ${(p.cityHouses || []).map(id => `<div class="stan-stat"><span>🏡 ${HOUSES[id.replace('house-', '')]?.[0] || id}</span><b>✔</b></div>`).join('') || '<p class="stan-note">Inga gömställen än. Gå in genom en dörr med 🔑 TILL SALU i stan.</p>'}
                 <div class="stan-stat"><span>🏋️ Styrka (Hustle Gym)</span><b>${p.strength || 0} / 5</b></div>
+                <div class="stan-stat"><span>🦺 Skyddsväst</span><b>${Math.round(p.armor || 0)} / 100</b></div>
+                <div class="stan-stat"><span>💎 Club Diamant</span><b>${clubOwnerText(p)}</b></div>
+            </div>
+            <div class="stan-card">
+                <h4>👥 Crew (${(p.crew || []).length}/${CREW_MAX})</h4>
+                ${(p.crew || []).map(m => `<div class="stan-stat"><span>${ROLES[m.role]?.icon || '👤'} ${escapeHtml(m.name)} · ${ROLES[m.role]?.name || ''}</span><b>❤️ ${m.hp}</b></div>`).join('') || '<p class="stan-note">Inget crew än. Rekrytera vid 👥 nära HQ eller anställ vakten på Club Diamant.</p>'}
+                <p class="stan-note">I stan: 1 följ · 2 stanna · 3 anfall. Du betalar en gång — inga löner.</p>
             </div>
             <div class="stan-card">
                 <h4>🏆 Gatans meriter</h4>
@@ -77,9 +93,17 @@ export function renderStanPanel() {
                 <div class="stan-stat"><span>💃 Dejter</span><b>${st.dates || 0}</b></div>
                 <div class="stan-stat"><span>🏦 Butiks- och bankrån</span><b>${st.heists || 0}</b></div>
                 <div class="stan-stat"><span>🚔 Snutar nere</span><b>${st.copsDown || 0}</b></div>
+                <div class="stan-stat"><span>⚔️ PvP vinster / förluster</span><b>${st.pvpWins || 0} / ${st.pvpLosses || 0}</b></div>
                 <div class="stan-stat"><span>🚔 Busted / 💀 Wasted</span><b>${st.busted || 0} / ${st.wasted || 0}</b></div>
             </div>
         </div>`;
+}
+
+function clubOwnerText(p) {
+    const own = (gameState.cityOwners || {}).stripclub;
+    if (!own) return `Till salu · ${PROPERTIES.stripclub.price.toLocaleString('sv-SE')} kr`;
+    if (own.owner === p.charKey) return `Din · +${PROPERTIES.stripclub.income.toLocaleString('sv-SE')} kr/runda`;
+    return escapeHtml(gameState.players.find(x => x.charKey === own.owner)?.char?.name || own.owner);
 }
 
 function weaponRows(p) {
@@ -109,14 +133,17 @@ function gangCard(p) {
     </div>`;
 }
 
+let cityProfile = null;
+
 export function goToCity() {
-    const p = currentPlayer();
+    const p = myPlayer();
     if (!p || isCityOpen()) return;
-    if (!canAct()) { showToast('⏳ Vänta på din tur!'); return; }
+    if (!canGoToCity()) { showToast('⏳ Vänta på din tur!'); return; }
     if (p.inJail) { showToast('🔒 Du sitter i häktet — ingen stan för dig!'); return; }
     unlockAudio();
     stopRadio();
     closePhone();
+    cityProfile = p;
     openCity(p, {
         round: gameState.round,
         maxMissions: gameState.maxMissionsPerRound,
@@ -128,7 +155,9 @@ export function goToCity() {
 }
 
 function onCityClosed(result) {
-    const p = currentPlayer();
+    // Samma spelare som åkte ut (online kan turen ha gått vidare under tiden)
+    const p = cityProfile || myPlayer();
+    cityProfile = null;
     if (!p) return;
     if (!p.cityStats) p.cityStats = {};
     if (result.reason === 'busted') {
@@ -157,6 +186,7 @@ function onCityClosed(result) {
     window.game?.refreshUI?.();
     renderStanPanel();
     saveGame();
-    if (gameState.isOnline) syncState();
+    // Online: den som har turen skickar hela läget, annars bara sin egen spelare
+    if (gameState.isOnline) { if (p === currentPlayer()) syncState(); else syncMe(); }
     if (!gameState.musicMuted) startMusic();
 }

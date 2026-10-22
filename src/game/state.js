@@ -25,7 +25,9 @@ function defaultGameState() {
         accountKey: null,
         myCharKey: null,
         aiThinking: false,
-        gameOver: false
+        gameOver: false,
+        turnSeq: 0,             // räknas upp vid varje turbyte — äldre turlägen ignoreras
+        cityOwners: {}          // delade fastigheter i stan (stripklubben) — bara värden ändrar
     };
 }
 
@@ -63,17 +65,19 @@ export function createPlayerState(charKey) {
         dateThisRound: false,
         strength: 0,                // gymmet: hårdare slag och mer hälsa (0–5)
         cityHouses: [],             // köpta gömställen
+        crew: [],                   // anställda: { id, name, role, trait, hp, dmg, speed, cost }
+        armor: 0,                   // skyddsväst 0–100
         cityDone: [],               // saker som bara går en gång per runda (rån, gym...)
         missionsThisRound: 0, fencedThisRound: 0,
         cityPickupsTaken: [], cityCollected: [],
-        cityStats: { missions: 0, wrecks: 0, busted: 0, wasted: 0, fenced: 0, sold: 0, opps: 0, robbed: 0, knockouts: 0, dates: 0, copsDown: 0, heists: 0 }
+        cityStats: { missions: 0, wrecks: 0, busted: 0, wasted: 0, fenced: 0, sold: 0, opps: 0, robbed: 0, knockouts: 0, dates: 0, copsDown: 0, heists: 0, pvpWins: 0, pvpLosses: 0 }
     };
 }
 
 const NUMERIC_FIELDS = ['money', 'rep', 'stash', 'jailRoundsLeft', 'bail', 'dealsThisRound', 'rollsThisRound',
     'pitchesThisRound', 'totalEarned', 'totalSpent', 'successfulDeals', 'failedDeals', 'heistCooldown',
-    'sabotagedRounds', 'missionsThisRound', 'fencedThisRound', 'cityGoods', 'goodsBoughtThisRound', 'strength'];
-const ARRAY_FIELDS = ['owned', 'cars', 'jailRecord', 'moneyHistory', 'pendingEvidence', 'cityPickupsTaken', 'cityCollected', 'weapons', 'cityHouses', 'cityDone'];
+    'sabotagedRounds', 'missionsThisRound', 'fencedThisRound', 'cityGoods', 'goodsBoughtThisRound', 'strength', 'armor'];
+const ARRAY_FIELDS = ['owned', 'cars', 'jailRecord', 'moneyHistory', 'pendingEvidence', 'cityPickupsTaken', 'cityCollected', 'weapons', 'cityHouses', 'cityDone', 'crew'];
 const OBJECT_FIELDS = ['levels', 'carPimps', 'respect', 'cityStats', 'ammo'];
 
 // Make a player loaded from an old save or a peer safe to use.
@@ -98,6 +102,12 @@ export function normalizePlayer(raw) {
     if (p.weapon !== 'fists' && !p.weapons.includes(p.weapon)) p.weapon = 'fists';
     p.dateThisRound = !!p.dateThisRound;
     p.strength = Math.max(0, Math.min(5, Math.floor(p.strength)));
+    p.armor = Math.max(0, Math.min(100, p.armor));
+    // Crew från en sparfil eller en annan spelare: bara giltiga roller, högst fyra
+    p.crew = p.crew.filter(m => m && typeof m === 'object' && ['guard', 'gunner', 'scout'].includes(m.role) && typeof m.name === 'string')
+        .slice(0, 4).map(m => ({ id: String(m.id), name: m.name.slice(0, 20), role: m.role, trait: String(m.trait || '').slice(0, 40),
+            hp: Math.max(1, Math.min(200, Number(m.hp) || 60)), dmg: Array.isArray(m.dmg) ? m.dmg.slice(0, 2).map(v => Math.max(1, Math.min(40, Number(v) || 10))) : [10, 14],
+            speed: Math.max(80, Math.min(260, Number(m.speed) || 160)), cost: Number(m.cost) || 0 }));
     return p;
 }
 
@@ -131,28 +141,73 @@ export function jailPlayer(p, reason, rounds) {
 }
 
 // ── Online merge ──
+// Online äger varje klient sin egen spelare: min data skrivs bara av mig (även
+// mellan turerna, t.ex. när jag är i stan). Den som har turen bestämmer turläget,
+// och bara värden bestämmer delade saker (HOST_KEYS) och vem som är AI/frånkopplad.
 // Spelarobjekt uppdateras på plats så att referenser (t.ex. i Stan) håller.
-// Under min egen online-tur är jag källan till min spelares data: en äldre
-// kopia från värden (t.ex. när någon går med) får inte skriva över den.
-export function mergeRemoteState(remote) {
+export const HOST_KEYS = ['cityOwners'];
+const HOST_PLAYER_FIELDS = ['disconnected', 'isAI', 'peerId'];
+
+function assignPlayer(existing, fresh) {
+    for (const key of Object.keys(existing)) if (!(key in fresh)) delete existing[key];
+    return Object.assign(existing, fresh);
+}
+
+// opts.protect: skydda min egen spelare (av bara vid första välkomsten)
+// opts.fromHost: får sätta HOST_KEYS
+// opts.onlyPlayer: värden tar bara emot avsändarens egen spelare från en gäst
+export function mergeRemoteState(remote, opts = {}) {
     if (!remote || typeof remote !== 'object') return false;
-    const protectKey = gameState.isOnline && isMyTurn() ? gameState.myCharKey : null;
+    const { protect = true, fromHost = true, onlyPlayer = null } = opts;
+    const protectKey = protect && gameState.isOnline ? gameState.myCharKey : null;
+    const staleTurn = (Number(remote.turnSeq) || 0) < (Number(gameState.turnSeq) || 0);
     for (const [k, v] of Object.entries(remote)) {
         if (LOCAL_KEYS.includes(k) || k === 'players') continue;
+        if (HOST_KEYS.includes(k)) { if (fromHost) gameState[k] = v; continue; }
+        if (staleTurn) continue; // ett äldre turläge än vårt
         gameState[k] = v;
     }
     if (Array.isArray(remote.players)) {
-        const old = new Map(gameState.players.map(p => [p.charKey, p]));
-        gameState.players = remote.players.map(rp => {
-            const fresh = normalizePlayer(rp);
-            const existing = old.get(fresh.charKey);
-            if (!existing) return fresh;
-            if (fresh.charKey === protectKey) return existing;
-            for (const key of Object.keys(existing)) if (!(key in fresh)) delete existing[key];
-            return Object.assign(existing, fresh);
-        });
+        if (onlyPlayer) {
+            const rp = remote.players.find(p => p && p.charKey === onlyPlayer);
+            const existing = gameState.players.find(p => p.charKey === onlyPlayer);
+            if (rp && existing) {
+                const keep = Object.fromEntries(HOST_PLAYER_FIELDS.map(f => [f, existing[f]]));
+                assignPlayer(existing, Object.assign(normalizePlayer(rp), keep));
+            }
+        } else {
+            const old = new Map(gameState.players.map(p => [p.charKey, p]));
+            gameState.players = remote.players.map(rp => {
+                const fresh = normalizePlayer(rp);
+                const existing = old.get(fresh.charKey);
+                if (!existing) return fresh;
+                if (fresh.charKey === protectKey) {
+                    for (const f of HOST_PLAYER_FIELDS) existing[f] = fresh[f];
+                    return existing;
+                }
+                return assignPlayer(existing, fresh);
+            });
+        }
     }
     if (!(gameState.currentPlayerIdx >= 0 && gameState.currentPlayerIdx < gameState.players.length)) gameState.currentPlayerIdx = 0;
+    return true;
+}
+
+// Min egen spelare (online), annars den som har turen
+export function myPlayer() {
+    if (!gameState.isOnline) return currentPlayer();
+    return gameState.players.find(p => p.charKey === gameState.myCharKey) || null;
+}
+
+// Något någon annan gjorde mot en spelare (t.ex. Gargamels stöld): läggs på av den som äger spelaren
+export function applyPlayerDelta(p, delta) {
+    if (!p || !delta || typeof delta !== 'object') return false;
+    for (const [k, v] of Object.entries(delta)) {
+        if (!['money', 'rep', 'sabotagedRounds'].includes(k)) continue;
+        const n = Number(v);
+        if (!Number.isFinite(n)) continue;
+        p[k] = Math.max(0, (Number(p[k]) || 0) + n);
+    }
     return true;
 }
 
@@ -192,6 +247,7 @@ export function loadGame(accountKey) {
     Object.assign(gameState, parsed, keepLocal);
     gameState.players = parsed.players.map(normalizePlayer);
     if (!(gameState.currentPlayerIdx >= 0 && gameState.currentPlayerIdx < gameState.players.length)) gameState.currentPlayerIdx = 0;
+    if (!gameState.cityOwners || typeof gameState.cityOwners !== 'object') gameState.cityOwners = {};
     gameState.aiThinking = false;
     gameState.gameOver = false;
     gameState.isOnline = false; // en sparfil återupptas alltid offline

@@ -14,6 +14,10 @@ import { createWanted, addHeat, stars, updateWanted, copTarget, copSpeedFactor, 
 import { createMission, updateMission, applyRespect, adjustRespect, emptyRespect, isHostile, gangById, phoneAccess, canJoin } from './missions.js';
 import { mulberry32 } from './rng.js';
 import { WEAPONS, ownsWeapon, hasGun, nextWeapon, weaponPurchase, dateChance } from './weapons.js';
+import { crewCandidates, canRecruit, makeMember, spotNear, updateCrew, crewOrder, CREW_RECOVER, ROLES } from './crew.js';
+import { cityItemDefs, itemGain, ITEM_TYPES, ARMOR_CAP } from './items.js';
+import { PROPERTIES, pvpLoss, SPAWN_PROTECTION } from '../multiplayer/authority.js';
+import * as INT from './interiors.js';
 import { SHOPS } from '../data/gameData.js';
 
 export const CLOCK_START = 19.5; // 19:30 — kvällen är ung
@@ -111,15 +115,31 @@ export class World {
         this.fade = null;
         this.place = null;          // stället du är inne i just nu
         this.meleeHitT = 0;         // man kan bara ta ett slag i taget
+        // Delad stad online: andra riktiga spelare kommer via nätet (null = offline)
+        this.net = opts.net || null;
+        this.crew = [];
+        this.interior = null;
+        this.feed = [];             // korta händelser: vem som kom, gick, sänkte vem
+        this.showMap = false;
+        this.lastAttacker = null;   // senaste spelare som träffade mig
+        this.pvpT = 0;              // nere efter en PvP-strid: räknar ner till comeback
+        this.pending = {};          // väntande svar från värden (köp, upptagning)
+        this.localTaken = new Set();
+        this.lastHurtT = -99;
+        this.carHitT = {};
         profile.respect = { ...emptyRespect(), ...(profile.respect || {}) };
         if (!Array.isArray(profile.weapons)) profile.weapons = [];
         if (!profile.ammo || typeof profile.ammo !== 'object') profile.ammo = {};
         if (!ownsWeapon(profile, profile.weapon)) profile.weapon = 'fists';
         this.player = {
-            x: city.spawn.x, y: city.spawn.y, vx: 0, vy: 0, r: 7, angle: -Math.PI / 2,
+            x: city.spawn.x, y: city.spawn.y, vx: 0, vy: 0, r: 8.5, angle: -Math.PI / 2,
             hp: 100 + 10 * (profile.strength || 0), maxHp: 100 + 10 * (profile.strength || 0), vehicle: null, dead: false, nitro: 0, walkPhase: 0, bustT: 0, hitT: 0, hurtT: 0, punchT: 0, muzzle: 0,
             charIcon: profile.char?.icon || '😎', color: profile.char?.color || '#ff4fd8'
         };
+        this.player.armor = Math.max(0, Math.min(ARMOR_CAP, profile.armor || 0));
+        this.player.protT = 0;
+        if (!Array.isArray(profile.crew)) profile.crew = [];
+        this.crew = profile.crew.map((m, i) => { const s = spotNear(city, city.spawn.x, city.spawn.y, i); return makeMember(m, i, s.x, s.y); });
         this.setupOwnedCars();
         this.setupPickups();
         this.updateDistrict();
@@ -220,6 +240,7 @@ export class World {
         if (this.comboT <= 0) this.combo = 0;
         for (const g in this.beef) this.beef[g] = Math.max(0, this.beef[g] - dt);
         if (this.fade && (this.fade.t += dt) >= this.fade.dur) this.fade = null;
+        if (this.interior) { this.updateInteriorMode(dt, this.state === 'play' && !this.fade ? input : NO_INPUT); return; }
         const playing = this.state === 'play';
         if (!playing) {
             this.stateT += dt;
@@ -230,6 +251,8 @@ export class World {
         this.manageSpawns(dt);
         this.updateVehicles(dt);
         this.updatePeds(dt);
+        if (playing) updateCrew(this, dt);
+        this.updatePvp(dt);
         this.resolveCollisions();
         this.updateBullets(dt);
         this.updateFires(dt);
@@ -243,8 +266,96 @@ export class World {
             this.updateWantedState(dt);
         }
         this.updateParticles(dt);
+        this.updateRemotes(dt);
         this.updateDistrict();
         this.updateHint();
+    }
+
+    // ── Delad stad: andra riktiga spelare ──
+    remotes() { return this.net ? [...this.net.remotes().values()] : []; }
+
+    // Mjuka rörelser mellan nätuppdateringarna (~10 per sekund)
+    updateRemotes(dt) {
+        const k = Math.min(1, dt * 12);
+        for (const r of this.remotes()) {
+            r.rx = (r.rx ?? r.x) + (r.x - (r.rx ?? r.x)) * k;
+            r.ry = (r.ry ?? r.y) + (r.y - (r.ry ?? r.y)) * k;
+            let da = (r.a || 0) - (r.ra ?? r.a ?? 0);
+            while (da > Math.PI) da -= Math.PI * 2;
+            while (da < -Math.PI) da += Math.PI * 2;
+            r.ra = (r.ra ?? r.a ?? 0) + da * k;
+            r.phase = (r.phase || 0) + Math.hypot(r.x - r.rx, r.y - r.ry) * 0.25;
+        }
+        for (const f of this.feed) f.life -= dt;
+        if (this.feed.length && this.feed[0].life <= 0) this.feed = this.feed.filter(f => f.life > 0);
+    }
+
+    pushFeed(text, color = '#fff') {
+        this.feed.push({ text, color, life: 6 });
+        if (this.feed.length > 5) this.feed.shift();
+    }
+
+    // Det jag berättar för de andra om mig själv
+    netSnapshot(paused = false) {
+        const p = this.player, v = p.vehicle;
+        const door = this.interior ? this.interior.door : this.place ? (this.place.pl.door || this.place.pl) : null;
+        const inside = this.interior ? this.interior.id : this.place ? (this.place.pl.id || 'biz' + this.place.pl.slot) : null;
+        const pos = p;
+        return {
+            x: Math.round(pos.x), y: Math.round(pos.y), a: +(v ? v.angle : p.angle).toFixed(2),
+            v: v ? v.type : null, vc: v ? v.color : null, in: inside,
+            ox: Math.round(door ? door.x : p.x), oy: Math.round(door ? door.y : p.y),
+            hp: Math.round(p.hp), mhp: p.maxHp, dead: !!p.dead || this.state !== 'play', prot: (p.protT || 0) > 0 || paused,
+            w: this.profile.weapon || 'fists', stars: stars(this.wanted), ar: Math.round(p.armor || 0),
+            crew: this.crew.map(c => ({ x: Math.round(c.x), y: Math.round(c.y), r: c.role, hp: Math.round(c.hp), mhp: c.maxHp, d: c.down > 0 || !!c.hidden, a: +c.angle.toFixed(2) }))
+        };
+    }
+
+    // Händelser från nätet (värden eller den lokala värden offline)
+    onNet(e) {
+        switch (e.type) {
+            case 'joined': this.pushFeed(`🟢 ${e.name} kom ut i stan`, '#86efac'); this.sfx('phone', 0.4); break;
+            case 'left': this.pushFeed(`⚪ ${e.name} lämnade stan`, '#cbd5e1'); break;
+            case 'hurt':
+                if (e.crew >= 0) { const c = this.crew[e.crew]; if (c) this.hurtCrew(c, e.dmg, e.name); break; }
+                if (this.state !== 'play' || this.player.dead || (this.player.protT || 0) > 0 || this.pvpT > 0) break;
+                if (e.veh && this.player.vehicle) { this.damageVehicle(this.player.vehicle, e.dmg * 0.6, null); break; }
+                this.hurtByPlayer(e.dmg, e.from, e.name);
+                break;
+            case 'pvp': {
+                const me = this.profile.charKey;
+                this.pushFeed(e.killer ? `💀 ${e.killerName} sänkte ${e.victimName}${e.amount ? ` (+${e.amount.toLocaleString('sv-SE')} kr)` : ''}` : `💀 ${e.victimName} gick ner`, e.killer === me ? '#86efac' : e.victim === me ? '#fca5a5' : '#fff');
+                if (e.killer === me) {
+                    if (e.amount) this.addMoney(e.amount);
+                    const st = this.profile.cityStats; if (st) st.pvpWins = (st.pvpWins || 0) + 1;
+                    this.big('SEGER!', '#22c55e', `Du sänkte ${e.victimName}${e.amount ? ` · +${e.amount.toLocaleString('sv-SE')} kr` : ''}`);
+                    this.sfx('mission');
+                }
+                break;
+            }
+            case 'reward':
+                this.addMoney(e.amount);
+                this.message(`💰 ${e.reason}: +${Number(e.amount).toLocaleString('sv-SE')} kr`);
+                break;
+            case 'pickupRes':
+                if (e.req !== this.pending.pickup) break;
+                this.pending.pickup = null;
+                if (e.ok) { const it = cityItemDefs(this.city).find(d => d.id === e.item); if (it) this.applyGain(it.type); }
+                else this.message(`📦 ${e.reason || 'Någon hann före'}.`);
+                break;
+            case 'buyRes':
+                if (e.req !== this.pending.buy) break;
+                this.pending.buy = null;
+                if (e.ok) {
+                    // Värden har godkänt: dra beloppet exakt en gång
+                    this.spend(e.price);
+                    const def = PROPERTIES[e.prop];
+                    this.sfx('mission');
+                    this.big(`${def.name.toUpperCase()} ÄR DIN!`, '#f472b6', `${def.icon} −${e.price.toLocaleString('sv-SE')} kr · +${def.income.toLocaleString('sv-SE')} kr per runda`);
+                } else this.message(`💎 Köpet nekades: ${e.reason || 'okänt fel'}.`);
+                break;
+            default: if (this.onNetMore) this.onNetMore(e);
+        }
     }
 
     // ── Spelaren ──
@@ -272,7 +383,7 @@ export class World {
             const w = WEAPONS[this.profile.weapon] || WEAPONS.fists;
             if (input.punch || (w.auto && input.attack)) this.playerAttack();
             if (input.rob) this.tryRob();
-            if (input.action) this.tryEnterVehicle();
+            if (input.action) { if (this.nearItem) this.tryPickup(this.nearItem); else this.tryEnterVehicle(); }
         }
     }
 
@@ -687,7 +798,7 @@ export class World {
             }
             if (t) {
                 if (t.down > 0 || !this.peds.includes(t)) { ped.targetPed = null; return; }
-                if (Math.hypot(t.x - ped.x, t.y - ped.y) < 16 && ped.hitCd <= 0) { ped.hitCd = 0.7; this.hitPed(t, 9, ped); }
+                if (Math.hypot(t.x - ped.x, t.y - ped.y) < 20 && ped.hitCd <= 0) { ped.hitCd = 0.7; this.hitPed(t, 9, ped); }
                 return;
             }
             if (ped.mugger && p.vehicle) {
@@ -695,14 +806,16 @@ export class World {
                 ped.attack = false; ped.mugger = false; ped.mode = 'flee'; ped.t = 3;
                 return;
             }
-            const reach = p.vehicle ? distToVehicle(p.vehicle, ped.x, ped.y) < 8 : d < 18;
+            const reach = p.vehicle ? distToVehicle(p.vehicle, ped.x, ped.y) < 8 : d < 22;
             const canHit = !(ped.cop && p.vehicle); // snuten slår inte på bilar
             if (ped.windup > 0) {
                 // Slaget är på väg (de drar upp näven) — en smäll från dig hinner avbryta det
                 ped.windup -= dt;
                 if (ped.windup <= 0) {
                     ped.hitCd = 1 + this.rnd() * 0.5;
-                    if (reach && canHit && this.meleeHitT <= 0) { this.meleeHitT = 0.3; this.hitPlayer(ped); }
+                    const cm = this.crew.find(c => !c.hidden && !(c.down > 0) && Math.hypot(c.x - ped.x, c.y - ped.y) < Math.min(d, 22));
+                    if (cm) this.hurtCrew(cm, 4 + this.rnd() * 4, null);
+                    else if (reach && canHit && this.meleeHitT <= 0) { this.meleeHitT = 0.3; this.hitPlayer(ped); }
                 }
             } else if (ped.gun && !p.dead && d > 36 && d < 340 && ped.hitCd <= 0 && lineClear(this.city, ped.x, ped.y, p.x, p.y)) {
                 ped.hitCd = 1.3 + this.rnd() * 1.1;
@@ -777,6 +890,15 @@ export class World {
             const score = dd + (facing > 1.3 ? 14 : 0) - (ped.attack ? 10 : 0);
             if (score < bd) { bd = score; best = ped; }
         }
+        // En annan spelare (eller deras crew) inom räckhåll?
+        const rem = this.remoteInReach(p.x, p.y, range);
+        if (rem && (!best || rem.d < bd)) {
+            this.sfx(w.id === 'bat' ? 'bat' : 'punch');
+            p.angle = Math.atan2(rem.y - p.y, rem.x - p.x);
+            this.net.request('hit', { target: rem.id, crew: rem.crew, kind: 'melee', dmg: w.dmg[0] + this.rnd() * (w.dmg[1] - w.dmg[0]) + (this.profile.strength || 0) * 3, src: -1 });
+            this.spawnParticle('spark', rem.x, rem.y);
+            return;
+        }
         this.sfx(best ? (w.id === 'bat' ? 'bat' : 'punch') : 'swing', best ? 1 : 0.4);
         if (!best) return;
         p.angle = Math.atan2(best.y - p.y, best.x - p.x);
@@ -841,8 +963,10 @@ export class World {
             for (let k = 0; k < N && b.life > 0; k++) {
                 b.x += b.vx * dt / N; b.y += b.vy * dt / N;
                 if (isSolidAt(this.city, b.x, b.y)) { b.life = 0; this.spawnParticle('spark', b.x, b.y); break; }
-                if (b.from === 'player') {
-                    if (this.bulletHitPed(b) || this.bulletHitVehicle(b)) b.life = 0;
+                if (b.from === 'player' || b.from === 'crew') {
+                    if (this.bulletHitPed(b) || this.bulletHitRemote(b) || this.bulletHitVehicle(b)) b.life = 0;
+                } else if (this.bulletHitCrew(b)) {
+                    b.life = 0;
                 } else if (!p.dead) {
                     const hit = p.vehicle ? distToVehicle(p.vehicle, b.x, b.y) < 1 : Math.hypot(b.x - p.x, b.y - p.y) < p.r + 3;
                     if (!hit) continue;
@@ -913,14 +1037,16 @@ export class World {
         ped.stunT = Math.max(ped.stunT || 0, by === 'player' ? 0.45 : 0.25);
         ped.windup = 0;
         this.sfxAt('punch', ped.x, ped.y, 0.8);
-        if (ped.cop && by === 'player' && !ped.assaulted) { ped.assaulted = true; addHeat(this.wanted, CRIME.copAssault, true); } // han såg dig
+        const mine = by === 'player' || !!by?.isCrew;
+        if (by?.isCrew) ped.lastCrew = by;
+        if (ped.cop && mine && !ped.assaulted) { ped.assaulted = true; addHeat(this.wanted, CRIME.copAssault, true); } // han såg dig
         if (ped.hp <= 0) {
             ped.down = 4 + this.rnd() * 2;
             ped.hp = Math.ceil(ped.maxHp * 0.6);
             ped.stunT = 0;
             this.spawnParticle('stars', ped.x, ped.y);
             if (ped.buyer) this.releaseBuyer();
-            if (by === 'player') {
+            if (mine) {
                 if (ped.cop) this.copDown(ped);
                 else {
                     if (ped.mugger) { ped.mugger = false; ped.attack = false; this.message('🦹 Rånaren ligger! Ta tillbaka det han tog.'); }
@@ -928,7 +1054,7 @@ export class World {
                 }
             }
         } else if (!ped.attack && ped.type !== 'gang') {
-            if (by === 'player' && (ped.tough || ped.cop)) {
+            if (mine && (ped.tough || ped.cop)) {
                 // Fel person att bråka med
                 ped.attack = true; ped.attackT = 14; ped.mode = 'walk';
                 this.pedSay(ped, FIGHT_BACK[Math.floor(this.rnd() * FIGHT_BACK.length)]);
@@ -1434,6 +1560,20 @@ export class World {
                 break;
             }
         }
+        // Min bil mot andra spelare till fots
+        if (p.vehicle && this.net) {
+            const v = p.vehicle, sp = Math.hypot(v.vx, v.vy);
+            if (sp > 110) {
+                for (const r of this.net.remotes().values()) {
+                    if (r.in || r.v || r.dead || r.prot || this.interior) continue;
+                    if (distToVehicle(v, r.rx, r.ry) > 10) continue;
+                    if (this.time - (this.carHitT[r.id] || -9) < 1) continue;
+                    this.carHitT[r.id] = this.time;
+                    this.net.request('hit', { target: r.id, crew: -1, kind: 'car', dmg: Math.min(70, (sp - 80) * 0.25), src: -1 });
+                    this.sfx('thud');
+                }
+            }
+        }
         // Bilar mot spelaren till fots
         if (!p.vehicle && !p.dead) {
             for (const v of vs) {
@@ -1525,6 +1665,16 @@ export class World {
     updateInteractions() {
         const p = this.player, v = p.vehicle;
         const speed = v ? Math.hypot(v.vx, v.vy) : 0;
+        this.nearItem = null;
+        if (!v && !p.dead) {
+            let bd = 40;
+            for (const it of this.groundItems()) {
+                const d = Math.hypot(it.x - p.x, it.y - p.y);
+                if (d < bd) { bd = d; this.nearItem = it; }
+            }
+        }
+        const rc = this.city.markers.recruit;
+        if (!v && rc && this.enterZone('recruit', rc.x, rc.y, 34)) this.emit({ type: 'recruit' });
         for (const pk of this.pickups) {
             if (!pk.taken && Math.hypot(p.x - pk.x, p.y - pk.y) < (v ? 36 : 26)) this.collectPickup(pk);
         }
@@ -1539,10 +1689,8 @@ export class World {
             if (left > 0) this.emit({ type: 'shop', left, price: GOODS_PRICE, goods: this.profile.cityGoods || 0 });
             else this.message('🎒 Langaren: "Slut för den här rundan, bror."');
         }
-        if (!v && m.guns && this.enterZone('guns', m.guns.x, m.guns.y, 38)) {
-            if (stars(this.wanted) > 0) this.message('🔫 Pang-Pelle: "Inte med snuten efter dig, är du dum?!"');
-            else this.emit({ type: 'guns' });
-        }
+        if (!v && m.guns?.door && this.enterZone('door-guns', m.guns.door.x, m.guns.door.y, 20)) this.enterInterior('gunshop', m.guns);
+        if (!v && m.stripclub?.door && this.enterZone('door-stripclub', m.stripclub.door.x, m.stripclub.door.y, 20)) this.enterInterior('stripclub', m.stripclub);
         if (v && m.club && this.enterZone('club', m.club.x, m.club.y, 70) && speed < 220) this.visitClub();
         // Gå in genom dörren (mot husväggen). Ditt eget gömställe har garage du kan köra in i.
         for (const d of this.doors()) {
@@ -1644,6 +1792,397 @@ export class World {
         this.addMoney(amt, mk.x, mk.y);
         this.sfx('coin');
         this.message(`${shop.icon} ${shop.name}: kassan hämtad! +${amt.toLocaleString('sv-SE')} kr`);
+    }
+
+    // ── Crew ──
+    recruitOffers() { return crewCandidates(this.profile.charKey, this.round).map(c => ({ ...c, ...canRecruit(this.profile, c) })); }
+
+    recruit(id) {
+        const cand = crewCandidates(this.profile.charKey, this.round).find(c => c.id === id);
+        if (!cand) return false;
+        const chk = canRecruit(this.profile, cand);
+        if (!chk.ok) { this.message(`👥 ${chk.reason}`); return false; }
+        if (!this.spend(cand.cost)) return false;
+        const m = { id: cand.id, name: cand.name, role: cand.role, trait: cand.trait, hp: cand.hp, dmg: cand.dmg, speed: cand.speed, cost: cand.cost };
+        this.profile.crew.push(m);
+        const s = spotNear(this.city, this.player.x, this.player.y, this.crew.length);
+        this.crew.push(makeMember(m, this.crew.length, s.x, s.y));
+        this.sfx('mission');
+        this.big('NY I CREWET!', '#22c55e', `${ROLES[m.role].icon} ${m.name} — ${ROLES[m.role].name}`);
+        return true;
+    }
+
+    dismiss(id) {
+        const i = this.profile.crew.findIndex(m => m.id === id);
+        if (i < 0) return false;
+        const [m] = this.profile.crew.splice(i, 1);
+        this.crew = this.crew.filter(c => c.id !== id);
+        this.crew.forEach((c, j) => { c.idx = j; });
+        this.message(`👋 ${m.name} lämnade crewet.`);
+        return true;
+    }
+
+    orderCrew(order) {
+        if (!this.crew.length) { this.message('👥 Du har inget crew. Rekrytera vid 👥 nära HQ.'); return false; }
+        const r = crewOrder(this, order);
+        this.message(r.text);
+        if (r.ok) this.sfx('click', 0.6);
+        return r.ok;
+    }
+
+    crewMelee(c, tgt, dmg) {
+        if (tgt.kind === 'ped') { this.hitPed(tgt.ped, dmg, c); return; }
+        this.net?.request('hit', { target: tgt.id, crew: tgt.kind === 'rcrew' ? tgt.idx : -1, kind: 'melee', dmg, src: c.idx });
+    }
+
+    crewShoot(c, tpos, dmg) {
+        const a = Math.atan2(tpos.y - c.y, tpos.x - c.x) + (this.rnd() - 0.5) * 0.08;
+        c.angle = a;
+        const sx = c.x + Math.cos(a) * 10, sy = c.y + Math.sin(a) * 10;
+        this.bullets.push({ x: sx, y: sy, px: sx, py: sy, vx: Math.cos(a) * 900, vy: Math.sin(a) * 900, life: 0.4, dmg, from: 'crew', src: c.idx });
+        c.muzzle = 0.07;
+        this.sfxAt('shot', c.x, c.y, 0.7);
+    }
+
+    hurtCrew(c, dmg, byName) {
+        if (c.down > 0 || c.hidden) return;
+        c.hp -= dmg;
+        c.flashT = 0.12;
+        if (c.hp <= 0) {
+            c.hp = 0;
+            c.down = CREW_RECOVER;
+            this.floater(c.x, c.y - 22, `💤 ${c.name} nere`, '#f87171');
+            this.message(`👥 ${c.name} slogs ner${byName ? ` av ${byName}` : ''}. Reser sig om ${CREW_RECOVER} s (eller ring doktorn 📱).`);
+        }
+    }
+
+    bulletHitCrew(b) {
+        for (const c of this.crew) {
+            if (c.hidden || c.down > 0 || this.interior) continue;
+            if (Math.abs(c.x - b.x) > 12 || Math.abs(c.y - b.y) > 12) continue;
+            if (Math.hypot(c.x - b.x, c.y - b.y) > c.r + 2) continue;
+            this.hurtCrew(c, b.dmg, null);
+            return true;
+        }
+        return false;
+    }
+
+    // ── Vapen och grejer på marken (värden avgör vem som får dem) ──
+    groundItems() {
+        if (this.interior) return [];
+        const taken = this.net ? this.net.taken() : this.localTaken;
+        return cityItemDefs(this.city).filter(it => !taken.has(it.id));
+    }
+
+    tryPickup(it) {
+        const gain = itemGain(this.profile, it.type, this.player.armor);
+        if (!gain) { this.message(`${ITEM_TYPES[it.type].icon} Du har redan fullt av det där.`); return false; }
+        if (this.pending.pickup) return false;
+        if (!this.net) { this.localTaken.add(it.id); this.applyGain(it.type); return true; }
+        return this.netAsk('pickup', 'pickup', { item: it.id });
+    }
+
+    applyGain(type) {
+        const gain = itemGain(this.profile, type, this.player.armor);
+        const def = ITEM_TYPES[type];
+        if (!gain) { this.message(`${def.icon} Du har redan fullt.`); return; }
+        const prof = this.profile;
+        if (gain.weapon) {
+            prof.weapons.push(gain.weapon);
+            if (gain.ammo) prof.ammo[gain.weapon] = (prof.ammo[gain.weapon] || 0) + gain.ammo;
+            if (prof.weapon === 'fists') prof.weapon = gain.weapon;
+        } else if (gain.ammoFor) prof.ammo[gain.ammoFor] = (prof.ammo[gain.ammoFor] || 0) + gain.ammo;
+        else if (gain.armor) { this.player.armor += gain.armor; prof.armor = this.player.armor; }
+        this.sfx('reload');
+        const what = gain.weapon ? `${def.label}${gain.ammo ? ` + ${gain.ammo} skott` : ''}` : gain.ammoFor ? `+${gain.ammo} skott till ${WEAPONS[gain.ammoFor].name}` : `+${gain.armor} skyddsväst`;
+        this.floater(this.player.x, this.player.y - 30, `${def.icon} ${what}`, '#86efac');
+    }
+
+    // Fråga värden. Id:t sparas innan frågan skickas — offline kommer svaret direkt.
+    netAsk(slot, type, data) {
+        const req = `${this.profile.charKey}-${slot}-${++this.reqSeq || (this.reqSeq = 1)}-${Math.round(this.time * 1000)}`;
+        this.pending[slot] = req;
+        const ok = this.net.request(type, { ...data, req });
+        if (!ok && this.pending[slot] === req) { this.pending[slot] = null; this.message('📡 Ingen kontakt med värden just nu.'); }
+        return !!ok;
+    }
+
+    // ── PvP ──
+    // Närmaste andra spelare (eller deras crew) inom räckhåll till fots
+    remoteInReach(x, y, range) {
+        if (!this.net || this.interior) return null;
+        let best = null;
+        for (const r of this.net.remotes().values()) {
+            if (r.in || r.dead || r.v) continue;
+            const d = Math.hypot(r.rx - x, r.ry - y);
+            if (d <= range && (!best || d < best.d)) best = { id: r.id, crew: -1, x: r.rx, y: r.ry, d };
+            (r.crew || []).forEach((c, idx) => {
+                if (c.d) return;
+                const dc = Math.hypot(c.x - x, c.y - y);
+                if (dc <= range && (!best || dc < best.d)) best = { id: r.id, crew: idx, x: c.x, y: c.y, d: dc };
+            });
+        }
+        return best;
+    }
+
+    bulletHitRemote(b) {
+        if (!this.net || this.interior) return false;
+        for (const r of this.net.remotes().values()) {
+            if (r.in || r.dead) continue;
+            const rad = r.v ? 22 : 11;
+            if (Math.abs(r.rx - b.x) < rad && Math.abs(r.ry - b.y) < rad && Math.hypot(r.rx - b.x, r.ry - b.y) < rad) {
+                this.net.request('hit', { target: r.id, crew: -1, kind: 'bullet', dmg: b.dmg, src: b.src ?? -1, veh: !!r.v });
+                this.spawnParticle('spark', b.x, b.y);
+                return true;
+            }
+            const ci = (r.crew || []).findIndex(c => !c.d && Math.hypot(c.x - b.x, c.y - b.y) < 10);
+            if (ci >= 0) {
+                this.net.request('hit', { target: r.id, crew: ci, kind: 'bullet', dmg: b.dmg, src: b.src ?? -1 });
+                this.spawnParticle('spark', b.x, b.y);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // En annan spelare träffade mig (värden har godkänt träffen)
+    hurtByPlayer(dmg, from, name) {
+        const p = this.player;
+        this.lastAttacker = { id: from, name, t: this.time };
+        this.lastHurtT = this.time;
+        const absorbed = Math.min(p.armor || 0, dmg * 0.6);
+        p.armor = Math.max(0, (p.armor || 0) - absorbed);
+        this.profile.armor = Math.round(p.armor);
+        p.hp -= dmg - absorbed;
+        p.hurtT = 0.3;
+        this.shake = Math.max(this.shake, 0.4);
+        this.sfx('hurt', 0.9);
+        if (p.hp <= 0) this.pvpDefeat(from, name);
+    }
+
+    // Sänkt av en annan spelare: man tappar en del kontanter och kommer tillbaka vid HQ med skydd
+    pvpDefeat(from, name) {
+        const p = this.player;
+        if (this.pvpT > 0) return;
+        if (p.vehicle) { const v = p.vehicle; v.vx *= 0.2; v.vy *= 0.2; p.vehicle = null; v.driver = null; this.emit({ type: 'exitCar' }); }
+        p.hp = 0; p.dead = true;
+        this.pvpT = 4;
+        const lost = pvpLoss(this.profile.money);
+        this.profile.money -= lost;
+        const st = this.profile.cityStats; if (st) st.pvpLosses = (st.pvpLosses || 0) + 1;
+        this.big('SÄNKT', '#ef4444', `${name || 'En rival'} tog dig${lost ? ` · −${lost.toLocaleString('sv-SE')} kr` : ''}`);
+        this.sfx('wasted');
+        this.net?.request('down', { lost });
+    }
+
+    updatePvp(dt) {
+        const p = this.player;
+        p.protT = Math.max(0, (p.protT || 0) - dt);
+        if (this.pvpT <= 0) return;
+        this.pvpT -= dt;
+        if (this.pvpT > 0) return;
+        // Tillbaka vid HQ, med några sekunders skydd så att man inte blir nedskjuten direkt igen
+        const h = this.city.markers.home;
+        p.dead = false; p.hp = p.maxHp; p.x = h.x; p.y = h.y; p.vx = p.vy = 0;
+        p.protT = SPAWN_PROTECTION;
+        this.crew.forEach((c, i) => { const s = spotNear(this.city, h.x, h.y, i); c.x = s.x; c.y = s.y; c.hidden = false; });
+        this.message(`🏠 Tillbaka vid HQ. ${SPAWN_PROTECTION} sekunders skydd.`);
+    }
+
+    // ── Tjänster (telefonen) ──
+    taxiDestinations() {
+        const m = this.city.markers;
+        const list = [['🏠 HQ', m.home], ['💎 Club Diamant', m.stripclub], ['🔫 Pang-Pelle', m.guns], ['🏦 Banken', m.bank], ['🍾 Nattklubben', m.club]];
+        for (const h of m.houses || []) if (this.ownsHouse(h)) list.push([`🏡 ${h.name}`, h]);
+        const p = this.player;
+        return list.filter(([, o]) => o).map(([label, o], i) => {
+            const t = o.door ? { x: o.door.x - DX[o.door.side] * 30, y: o.door.y - DY[o.door.side] * 30 } : { x: o.x, y: o.y };
+            const price = Math.round((120 + Math.hypot(t.x - p.x, t.y - p.y) / 12) / 10) * 10;
+            return { i, label, x: t.x, y: t.y, price };
+        });
+    }
+
+    taxi(i) {
+        const p = this.player;
+        if (stars(this.wanted) > 0) { this.message('🚕 "Inte med snuten efter dig, bror." Skaka av dem först.'); return false; }
+        if (p.vehicle) { this.message('🚕 Kliv ur bilen först.'); return false; }
+        if (this.pvpT > 0 || p.dead) return false;
+        const d = this.taxiDestinations()[i];
+        if (!d || !this.spend(d.price)) { this.message('🚕 Du har inte råd med taxin.'); return false; }
+        p.x = d.x; p.y = d.y; p.vx = p.vy = 0;
+        this.crew.forEach((c, j) => { const s = spotNear(this.city, d.x, d.y, j); c.x = s.x; c.y = s.y; c.hidden = false; });
+        this.time += 12;
+        this.fade = { t: 0, dur: 1.6, text: '🚕 Taxi...', sub: `${d.label} · ${d.price} kr` };
+        this.sfx('door');
+        return true;
+    }
+
+    doctorPrice() { return 400 + 200 * this.crew.filter(c => c.down > 0).length; }
+
+    callDoctor() {
+        const p = this.player;
+        if (this.time - this.lastHurtT < 5) { this.message('🚑 Doktorn kommer inte mitt i en strid. Ta dig undan först.'); return false; }
+        if (p.hp >= p.maxHp && !this.crew.some(c => c.down > 0 || c.hp < c.maxHp)) { this.message('🚑 Ni är ju helt friska.'); return false; }
+        const price = this.doctorPrice();
+        if (!this.spend(price)) { this.message(`🚑 Doktorn kostar ${price} kr.`); return false; }
+        p.hp = p.maxHp;
+        this.crew.forEach(c => { c.down = 0; c.hp = c.maxHp; });
+        this.sfx('pickup');
+        this.big('LAPPAD!', '#22c55e', `🚑 Full hälsa för dig och crewet · −${price} kr`);
+        return true;
+    }
+
+    buyArmor() {
+        if (stars(this.wanted) > 0) { this.message('🔫 Pang-Pelle: "Inte med snuten efter dig!"'); return false; }
+        if ((this.player.armor || 0) >= ARMOR_CAP) { this.message('🦺 Du har redan full skyddsväst.'); return false; }
+        if (!this.spend(800)) { this.message('🦺 Skyddsvästen kostar 800 kr.'); return false; }
+        this.player.armor = Math.min(ARMOR_CAP, (this.player.armor || 0) + 50);
+        this.profile.armor = this.player.armor;
+        this.sfx('reload');
+        this.message('🦺 +50 skyddsväst. Den tar över hälften av skadan från skott och slag.');
+        return true;
+    }
+
+    // ── Fastigheter som delas mellan spelare (stripklubben): värden avgör ──
+    propertyInfo(prop) {
+        const def = PROPERTIES[prop];
+        const cur = (this.ownersRef ? this.ownersRef() : null)?.[prop] || null;
+        const mine = cur && cur.owner === this.profile.charKey;
+        return { ...def, prop, owner: cur ? cur.owner : null, mine, price: cur && !mine ? Math.round(def.price * def.takeover) : def.price };
+    }
+
+    buyProperty(prop) {
+        if (this.pending.buy) return false;
+        const info = this.propertyInfo(prop);
+        if (info.mine) { this.message('💎 Den är redan din.'); return false; }
+        if ((this.profile.money || 0) < info.price) { this.message(`💎 Det kostar ${info.price.toLocaleString('sv-SE')} kr.`); return false; }
+        if (!this.net) return false;
+        return this.netAsk('buy', 'buyProp', { prop, money: this.profile.money });
+    }
+
+    // ── Inomhus: stripklubben och vapenaffären är riktiga rum att gå omkring i ──
+    enterInterior(id, marker) {
+        const def = INT.INTERIORS?.[id];
+        const p = this.player;
+        if (!def || p.vehicle || this.interior) return false;
+        const door = marker.door || marker;
+        this.interior = {
+            id, def, door: { x: door.x, y: door.y, side: door.side ?? 0 },
+            state: INT.createInteriorState(id, this.rnd),
+            seen: stars(this.wanted) > 0 && this.copSees(), // såg snuten dig gå in väntar de utanför
+            exitArmed: false
+        };
+        p.x = def.spawn.x; p.y = def.spawn.y; p.vx = p.vy = 0; p.angle = -Math.PI / 2;
+        this.bullets = [];
+        this.nearItem = null;
+        this.crew.forEach((c, i) => { if (c.down > 0) return; c.interior = id; c.hidden = false; c.x = def.spawn.x + (i - 1.5) * 22; c.y = def.spawn.y + 18; c.angle = -Math.PI / 2; });
+        this.sfx('door');
+        this.emit({ type: 'interior', id, music: def.music || null });
+        if (id === 'stripclub') {
+            const own = this.propertyInfo('stripclub');
+            this.message(`💎 Välkommen till Club Diamant. Inga vapen, inga bråk. ${own.mine ? 'Klubben är din.' : own.owner ? `Ägare: ${this.nameOf ? this.nameOf(own.owner) : own.owner}.` : 'Till salu — prata med managern.'}`);
+        } else this.message('🔫 Pang-Pelle: "Kom in, kom in. Prata med mig vid disken."');
+        return true;
+    }
+
+    exitInterior() {
+        const I = this.interior;
+        if (!I) return;
+        const p = this.player;
+        const ox = I.door.x - DX[I.door.side] * 26, oy = I.door.y - DY[I.door.side] * 26;
+        p.x = ox; p.y = oy; p.vx = p.vy = 0; p.angle = Math.atan2(-DY[I.door.side], -DX[I.door.side]);
+        this.crew.forEach((c, i) => { c.interior = null; const s = spotNear(this.city, ox, oy, i); c.x = s.x; c.y = s.y; });
+        // Gick du in utan att synas tappar snuten spåret under tiden; såg de dig står de kvar
+        if (I.seen) this.wanted.seenT = 0;
+        this.interior = null;
+        this.inside.add('door-' + (I.id === 'gunshop' ? 'guns' : I.id));
+        this.sfx('door');
+        this.emit({ type: 'interior', id: null, music: null });
+    }
+
+    updateInteriorMode(dt, input) {
+        const I = this.interior, p = this.player, def = I.def;
+        this.punchCd = Math.max(0, this.punchCd - dt);
+        // Gå omkring
+        const speed = input.run ? 165 : 110;
+        const len = Math.hypot(input.mx, input.my);
+        if (len > 0.1) { p.vx = input.mx / len * speed; p.vy = input.my / len * speed; p.angle = Math.atan2(input.my, input.mx); p.walkPhase += dt * speed * 0.12; }
+        else { p.vx *= Math.max(0, 1 - 10 * dt); p.vy *= Math.max(0, 1 - 10 * dt); }
+        p.x += p.vx * dt; p.y += p.vy * dt;
+        INT.collideInterior(def, p, p.r);
+        p.hurtT = Math.max(0, (p.hurtT || 0) - dt);
+        p.protT = Math.max(0, (p.protT || 0) - dt);
+        INT.updateInterior(I.state, dt, this.rnd);
+        // Prata med folk (E) och vapen/bråk är förbjudna här inne
+        this.nearInteraction = INT.interactionAt(def, p.x, p.y);
+        if (input.action && this.nearInteraction) this.emit({ type: 'interact', id: this.nearInteraction.id });
+        if ((input.punch || input.rob) && this.punchCd <= 0) { this.punchCd = 1.5; this.message(I.id === 'stripclub' ? '🕴️ Vakten: "Inga bråk här inne, bror."' : '🔫 Pang-Pelle: "Lugn! Inte i min butik."'); }
+        // Ut genom dörren (först när man gått en bit in, så att man inte studsar ut direkt)
+        const atExit = INT.atInteriorExit ? INT.atInteriorExit(def, p.x, p.y) : Math.hypot(p.x - def.exit.x, p.y - def.exit.y) < def.exit.r;
+        if (!atExit) I.exitArmed = true;
+        else if (I.exitArmed) { this.exitInterior(); return; }
+        // Snuten: såg de dig gå in väntar de utanför, annars svalnar det
+        if (this.state === 'play') updateWanted(this.wanted, dt, false, null);
+        if (I.seen) this.wanted.calm = 0;
+        this.updateParticles(dt);
+        this.updateRemotes(dt);
+        this.hint = this.nearInteraction ? this.nearInteraction.label : atExit ? '🚪 Ut' : '';
+    }
+
+    // ── Club Diamant: baren, scenen, vakten och managern ──
+    clubMine() { return this.propertyInfo('stripclub').mine; }
+
+    clubDrink() {
+        const p = this.player, price = this.clubMine() ? 0 : 150;
+        if (p.hp >= p.maxHp) { this.message('🍸 Bartendern: "Du ser ut att må fint redan."'); return false; }
+        if (price && !this.spend(price)) { this.message('🍸 En drink kostar 150 kr.'); return false; }
+        p.hp = Math.min(p.maxHp, p.hp + 25);
+        this.sfx('coin', 0.6);
+        this.message(`🍸 Skål! +25 hälsa${price ? ` · −${price} kr` : ' · på huset, chefen'}`);
+        return true;
+    }
+
+    clubTip() {
+        if (this.time - (this.tipT ?? -99) < 15) { this.message('💸 Vänta lite — scenen har precis fått.'); return false; }
+        if (!this.spend(300)) { this.message('💸 Dricks kostar 300 kr.'); return false; }
+        this.tipT = this.time;
+        this.profile.rep = (this.profile.rep || 0) + 1;
+        for (let i = 0; i < 10; i++) this.floater(this.player.x + (this.rnd() - 0.5) * 60, this.player.y - 10 - this.rnd() * 30, '💸', '#22c55e');
+        this.sfx('coin');
+        this.message('💸 Sedlar regnar över scenen. Publiken jublar — +1 rykte.');
+        return true;
+    }
+
+    // Vakten går att anställa som livvakt, en gång per runda
+    bouncerOffer() {
+        return { id: `bouncer-${this.round}`, name: 'Stora Sven', role: 'guard', trait: 'Ex-vakt (tuff)', hp: 120, dmg: [18, 24], speed: 160, cost: 3500 };
+    }
+
+    hireBouncer() {
+        const b = this.bouncerOffer();
+        if (this.doneThisRound('bouncer')) { this.message('🕴️ Sven har redan gått med någon den här rundan.'); return false; }
+        const chk = canRecruit(this.profile, b);
+        if (!chk.ok) { this.message(`🕴️ ${chk.reason}`); return false; }
+        if (!this.spend(b.cost)) return false;
+        this.markDone('bouncer');
+        this.profile.crew.push(b);
+        const s = this.interior ? { x: this.player.x + 20, y: this.player.y } : spotNear(this.city, this.player.x, this.player.y, this.crew.length);
+        const m = makeMember(b, this.crew.length, s.x, s.y);
+        m.interior = this.interior ? this.interior.id : null;
+        this.crew.push(m);
+        this.sfx('mission');
+        this.big('NY I CREWET!', '#22c55e', '🛡️ Stora Sven — Livvakt');
+        return true;
+    }
+
+    // Ägaren kan låta crewet vila upp sig i klubben (crew-bas)
+    clubCrewRest() {
+        if (!this.clubMine()) return false;
+        this.crew.forEach(c => { c.down = 0; c.hp = c.maxHp; });
+        this.player.hp = this.player.maxHp;
+        this.sfx('pickup');
+        this.message('🛋️ Crewet vilar i VIP-rummet. Alla är i toppform.');
+        return true;
     }
 
     // ── Ställen att gå in i: fastigheter (företagen), gömställen och banken ──
@@ -1979,6 +2518,7 @@ export class World {
         const gun = !(WEAPONS[this.profile.weapon] || WEAPONS.fists).melee;
         if (v && !v.wrecked) this.hint = v.driver && v.driver !== 'player' ? `E — Sno ${v.spec.name}` : `E — Kör ${v.spec.name}`;
         else if (this.peds.some(pd => pd.attack && !pd.targetPed && Math.hypot(pd.x - p.x, pd.y - p.y) < (gun ? 300 : 120))) this.hint = gun ? 'SPACE — SKJUT!' : 'SPACE — SLÅ!';
+        else if (this.nearItem) this.hint = `E — Plocka upp ${ITEM_TYPES[this.nearItem.type].icon} ${ITEM_TYPES[this.nearItem.type].label}`;
         else if (near(28)) this.hint = near(28).down > 0 ? 'R — Länsa fickorna' : 'R — Råna · SPACE — Slå';
         else if (this.buyer) this.hint = '💸 En kund är på väg...';
         else if ((this.profile.cityGoods || 0) > 0 && this.sellIdle < 1.2) this.hint = '🎒 Stå still så kommer kunderna';

@@ -12,6 +12,9 @@ const MAP = {
     KeyH: 'horn',
     KeyR: 'r',          // radio i bilen, rån till fots
     KeyQ: 'weapon',
+    KeyM: 'map',
+    KeyT: 'phone',
+    Digit1: 'c1', Digit2: 'c2', Digit3: 'c3',
     ShiftLeft: 'run', ShiftRight: 'run',
     KeyP: 'pause',
     Escape: 'exit'
@@ -22,7 +25,13 @@ export class Input {
         this.held = new Set();
         this.edges = new Set();
         this.root = root;
+        // Skriver man i ett textfält (t.ex. SMS) ska spelet inte röra sig
+        const typing = (e) => {
+            const t = e.target;
+            return !!t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable);
+        };
         this.onKeyDown = (e) => {
+            if (typing(e)) return;
             const k = MAP[e.code];
             if (!k) return;
             e.preventDefault();
@@ -30,6 +39,7 @@ export class Input {
             this.held.add(k);
         };
         this.onKeyUp = (e) => {
+            if (typing(e)) return;
             const k = MAP[e.code];
             if (k) { this.held.delete(k); e.preventDefault(); }
         };

@@ -80,7 +80,7 @@ body.city-open .cbd-leaf {
     grid-template-columns: 62px 62px 74px;
     grid-template-rows: 50px 62px 74px;
     grid-template-areas:
-        "rob wpn ."
+        "rob wpn crew"
         "act hb horn"
         ". down gas";
     align-items: end;
@@ -112,6 +112,7 @@ body.city-open .cbd-leaf {
 .ct-right .ct-gas { grid-area: gas; background: rgba(255, 210, 63, 0.35); }
 .ct-right .ct-rob { grid-area: rob; height: 50px; font-size: 18px; }
 .ct-right .ct-wpn { grid-area: wpn; height: 50px; font-size: 18px; }
+.ct-right .ct-crew { grid-area: crew; height: 50px; font-size: 18px; }
 
 /* ── Modaler ── */
 .city-modal {

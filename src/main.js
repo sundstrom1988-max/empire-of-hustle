@@ -39,8 +39,7 @@ const actions = {
     doMarketDeal, payBail,
     playDiceBattle, playGuessNumber, playSlotMachine, playCoinFlip,
     doPhoneDeal, buyCar, buyGarageCar, pimpCar,
-    selectHeistTarget, doHeist, sweepEvidence,
-    goToCity
+    selectHeistTarget, doHeist, sweepEvidence
 };
 const guardedActions = Object.fromEntries(Object.entries(actions).map(([k, fn]) => [k, guarded(fn)]));
 
@@ -52,6 +51,7 @@ function refreshUI() {
 // ── Expose functions to window for onclick handlers ──
 window.game = {
     ...guardedActions,
+    goToCity, // har egna kontroller: online är stan öppen även mellan turerna
     switchTab, sendRoastChat, initMinigames,
     togglePhone, phoneOpenSMS, phoneOpenChat, sendPhoneSMS,
     phoneOpenDeals, phoneOpenCars, phoneOpenWallet, phoneOpenStatus,

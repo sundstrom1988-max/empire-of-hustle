@@ -10,6 +10,13 @@ import { TILE, T, N, E, S, W, DX, DY } from './constants.js';
 import { tileAt, laneDirs } from './map.js';
 import { phoneAccess, gangById } from './missions.js';
 import { SHOPS } from '../data/gameData.js';
+import { VEHICLES } from './vehicles.js';
+import { ITEM_TYPES } from './items.js';
+import * as INT from './interiors.js';
+
+export const CREW_LOOK = { guard: { shirt: '#111827' }, gunner: { shirt: '#7f1d1d' }, scout: { shirt: '#065f46' } };
+// Storlek på figurerna (cirka 25 % större än förut)
+const PED_SCALE = 1.6, PLAYER_SCALE = 1.8;
 
 const CHUNK = 8; // rutor per cache-bit
 const CHUNK_PX = CHUNK * TILE;
@@ -69,12 +76,28 @@ export class Renderer {
 
     // ── Kamera: följer spelaren, tittar framåt, zoomar ut i fart ──
     updateCamera(world, dt) {
+        if (world.interior) {
+            // Inomhus: följ spelaren men håll kameran inom rummet
+            const def = world.interior.def, p = world.player;
+            const z = clamp(Math.min(this.w, this.h) / 760, 0.6, 1.25);
+            const W = def.w * (INT.IN_TILE || 32), H = def.h * (INT.IN_TILE || 32);
+            const hw = this.w / 2 / z, hh = this.h / 2 / z;
+            const cx = W <= hw * 2 ? W / 2 : clamp(p.x, hw, W - hw);
+            const cy = H <= hh * 2 ? H / 2 : clamp(p.y, hh, H - hh);
+            if (!this.cam || this.camIn !== world.interior.id) this.cam = { x: cx, y: cy, zoom: z, sx: 0, sy: 0 };
+            this.camIn = world.interior.id;
+            const k = Math.min(1, dt * 6);
+            this.cam.x += (cx - this.cam.x) * k; this.cam.y += (cy - this.cam.y) * k; this.cam.zoom = z;
+            this.cam.sx = this.cam.sy = 0;
+            return;
+        }
+        if (this.camIn) { this.camIn = null; this.cam = null; }
         const p = world.player, v = p.vehicle;
         const vx = v ? v.vx : 0, vy = v ? v.vy : 0;
         const tx = p.x + vx * 0.4, ty = p.y + vy * 0.4;
         const base = clamp(Math.min(this.w, this.h) / 900, 0.55, 1);
         const speed = Math.hypot(vx, vy);
-        const zTarget = base * (1 - Math.min(0.3, speed / 1700));
+        const zTarget = base * (v ? 1 - Math.min(0.3, speed / 1700) : 1.06);
         if (!this.cam) this.cam = { x: tx, y: ty, zoom: zTarget };
         const k = Math.min(1, dt * 4);
         this.cam.x += (tx - this.cam.x) * k;
@@ -93,6 +116,7 @@ export class Renderer {
     draw(world, dt) {
         if (!this.cam) this.updateCamera(world, 0);
         this.t += dt;
+        if (world.interior) { this.drawInteriorScene(world); return; }
         const ctx = this.ctx, c = this.cam, dpr = this.dpr;
         ctx.setTransform(1, 0, 0, 1, 0, 0);
         ctx.fillStyle = '#101018';
@@ -108,13 +132,17 @@ export class Renderer {
         this.drawMarkers(world, view);
         this.drawPickups(world, view);
         this.drawDrops(world, view);
+        this.drawItems(world, view);
         this.drawPeds(world, view);
+        this.drawCrew(world, view);
+        this.drawRemotes(world, view);
         this.drawPlayerOnFoot(world);
         this.drawVehicles(world, view);
         this.drawBullets(world, view);
         this.drawTrees(world.city, view);
         this.drawBuildings(world, view);
         this.drawDoors(world, view);
+        this.drawTags(world, view);
         this.drawParticles(world, view);
         this.drawTargetMarker(world);
         this.drawSpeech(world, view);
@@ -323,6 +351,13 @@ export class Renderer {
             ctx.beginPath(); ctx.arc(h.x, h.y, 34, 0, Math.PI * 2); ctx.fill();
             this.emoji('🏠', h.x, h.y, 22);
         }
+        const rc = m.recruit;
+        if (rc && vis(rc)) {
+            ctx.fillStyle = `rgba(34,197,94,${0.18 + pulse * 0.2})`;
+            ctx.beginPath(); ctx.arc(rc.x, rc.y, 26, 0, Math.PI * 2); ctx.fill();
+            this.ring(rc.x, rc.y, 26, '#22c55e', 2);
+            this.emoji('👥', rc.x, rc.y, 20);
+        }
         const dl = m.dealer;
         if (dl && vis(dl)) {
             ctx.fillStyle = `rgba(163,230,53,${0.18 + pulse * 0.2})`;
@@ -447,9 +482,14 @@ export class Renderer {
             return;
         }
         ctx.rotate(ped.angle);
+        // Dans: kroppen gungar och vrider sig i takt
+        const pose = extra.pose || 'walk';
+        if (pose === 'dance') ctx.rotate(Math.sin(phase * 2) * 0.45);
         ctx.scale(scale, scale);
-        const swing = extra.scooter ? 0 : Math.sin(phase) * 4;
-        ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.beginPath(); ctx.ellipse(2, 2, 6, 7, 0, 0, Math.PI * 2); ctx.fill();
+        const still = extra.scooter || pose === 'sit' || pose === 'work';
+        const swing = still ? 0 : Math.sin(phase) * 4;
+        const OUT = 'rgba(0,0,0,0.55)';
+        ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.beginPath(); ctx.ellipse(2, 2, 6, 7.5, 0, 0, Math.PI * 2); ctx.fill();
         if (extra.scooter) {
             // Elsparkcykel: bräda + styre
             ctx.fillStyle = '#27272a'; roundRect(ctx, -8, -2.2, 18, 4.4, 2); ctx.fill();
@@ -457,9 +497,21 @@ export class Renderer {
             ctx.strokeStyle = '#a1a1aa'; ctx.lineWidth = 1.5;
             ctx.beginPath(); ctx.moveTo(9, -5); ctx.lineTo(9, 5); ctx.stroke();
         }
-        ctx.fillStyle = extra.metro ? '#e5e7eb' : '#1f2937';
-        ctx.fillRect(swing - 2, -4, 5, 3); ctx.fillRect(-swing - 2, 1, 5, 3);
-        ctx.fillStyle = shirt; ctx.beginPath(); ctx.ellipse(0, 0, 4.2, 7, 0, 0, Math.PI * 2); ctx.fill();
+        // Fötter (sittande: framåt)
+        ctx.fillStyle = extra.metro ? '#e5e7eb' : extra.dress ? '#f5f5f4' : '#1f2937';
+        if (pose === 'sit') { ctx.fillRect(4, -3.5, 4, 2.6); ctx.fillRect(4, 1, 4, 2.6); }
+        else { ctx.fillRect(swing - 2, -4, 5, 3); ctx.fillRect(-swing - 2, 1, 5, 3); }
+        // Kropp med kontur, klänning för den som har en
+        ctx.lineWidth = 0.8; ctx.strokeStyle = OUT;
+        if (extra.dress) {
+            ctx.fillStyle = extra.dress; ctx.beginPath(); ctx.ellipse(-0.5, 0, 5.2, 7.6, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+            if (extra.sparkle) {
+                ctx.fillStyle = 'rgba(255,255,255,0.85)';
+                for (let i = 0; i < 4; i++) { const a = phase * 3 + i * 1.6; ctx.fillRect(Math.cos(a) * 3 - 0.5, Math.sin(a * 1.3) * 5 - 0.5, 1.2, 1.2); }
+            }
+        } else {
+            ctx.fillStyle = shirt; ctx.beginPath(); ctx.ellipse(0, 0, 4.2, 7, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+        }
         if (extra.vest) {
             // Skinnväst med ryggmärke
             ctx.fillStyle = '#111';
@@ -469,22 +521,45 @@ export class Renderer {
             ctx.strokeStyle = extra.patch || '#fff'; ctx.lineWidth = 0.9;
             ctx.beginPath(); ctx.arc(-2.9, 0, 3.3, Math.PI * 0.6, Math.PI * 1.4); ctx.stroke();
         }
+        // Händer: svänger mot fötterna när man går, upp när man jublar, fram när man jobbar
+        const hand = (x, y, r = 1.8) => { ctx.fillStyle = skin; ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill(); ctx.lineWidth = 0.6; ctx.strokeStyle = OUT; ctx.stroke(); };
         if (extra.weapon === 'bat') {
             ctx.fillStyle = '#a16207'; ctx.save(); ctx.translate(6, 4); ctx.rotate(extra.punch ? -0.2 : 0.9); ctx.fillRect(0, -1.2, 12, 2.6); ctx.restore();
+            hand(6, 4); hand(-swing * 0.5, -7);
         } else if (extra.weapon) {
             // Skjutvapen: pistol kort, uzi/hagel längre
             const len = extra.weapon === 'shotgun' ? 11 : extra.weapon === 'uzi' ? 8 : 6;
-            ctx.fillStyle = skin; ctx.beginPath(); ctx.arc(6, 2.5, 2.1, 0, Math.PI * 2); ctx.fill();
             ctx.fillStyle = '#111827'; ctx.fillRect(6, 1.3, len, 2.4);
-        } else if (extra.punch) { ctx.fillStyle = skin; ctx.beginPath(); ctx.arc(9, 3.5, 2.4, 0, Math.PI * 2); ctx.fill(); }
+            hand(6, 2.5, 2.1); hand(-swing * 0.5, -7);
+        } else if (extra.punch) { hand(9, 3.5, 2.4); hand(1, -7); }
+        else if (pose === 'cheer') { const up = Math.abs(Math.sin(phase * 3)) * 2; hand(2 + up, -8.5, 2); hand(2 + up, 8.5, 2); }
+        else if (pose === 'work') { hand(5.5, -3.5); hand(5.5, 3.5); }
+        else if (pose === 'dance') { hand(Math.sin(phase * 2) * 4, -8.5, 2); hand(-Math.sin(phase * 2) * 4, 8.5, 2); }
+        else if (!extra.scooter && pose !== 'sit') { hand(-swing * 0.6, -7.2); hand(swing * 0.6, 7.2); }
+        // Huvud med hår, keps/huva och en liten glans
         ctx.fillStyle = skin; ctx.beginPath(); ctx.arc(0.5, 0, 3.4, 0, Math.PI * 2); ctx.fill();
+        ctx.lineWidth = 0.6; ctx.strokeStyle = OUT; ctx.stroke();
         ctx.fillStyle = extra.hood ? '#111827' : hair; ctx.beginPath(); ctx.arc(-0.6, 0, extra.hood ? 3.9 : 3.2, Math.PI * (extra.hood ? 0.35 : 0.5), Math.PI * (extra.hood ? 1.65 : 1.5)); ctx.fill();
+        if (extra.dress) { ctx.fillStyle = hair; ctx.beginPath(); ctx.ellipse(-2.4, 0, 2.2, 3.8, 0, 0, Math.PI * 2); ctx.fill(); }
+        if (extra.cap) {
+            ctx.fillStyle = extra.cap === true ? '#111827' : extra.cap;
+            ctx.beginPath(); ctx.arc(0, 0, 3.6, Math.PI * 0.5, Math.PI * 1.5); ctx.fill();
+            ctx.fillRect(1.5, -2.6, 2.6, 5.2);
+        }
         if (extra.metro) {
             // Slickat hår och solglasögon
             ctx.fillStyle = hair; ctx.beginPath(); ctx.ellipse(-0.3, 0, 3.6, 3.3, 0, Math.PI * 0.55, Math.PI * 1.45); ctx.fill();
             ctx.fillStyle = '#0a0a0a'; ctx.fillRect(2.3, -2.6, 1.6, 5.2);
         }
+        ctx.fillStyle = 'rgba(255,255,255,0.18)'; ctx.beginPath(); ctx.arc(1.3, -1, 1.2, 0, Math.PI * 2); ctx.fill();
         ctx.restore();
+    }
+
+    // Folk inomhus (interiörernas personal och gäster) ritas med samma figurer
+    drawPerson(ctx, npc) {
+        const look = npc.look || {};
+        this.drawPedShape(ctx, npc, look.shirt || '#444', look.skin || '#e0ac69', look.hair || '#1f1300', npc.phase || 0, PED_SCALE,
+            { dress: look.dress, sparkle: look.sparkle, cap: look.cap, pose: npc.pose });
     }
 
     pedExtra(ped) {
@@ -496,29 +571,29 @@ export class Renderer {
         const ctx = this.ctx;
         for (const ped of world.peds) {
             if (ped.x < view.x0 - 20 || ped.x > view.x1 + 20 || ped.y < view.y0 - 20 || ped.y > view.y1 + 20) continue;
-            this.drawPedShape(ctx, ped, ped.cop ? '#1e3a8a' : ped.shirt, ped.skin, ped.cop ? '#0f172a' : ped.hair, ped.phase, 1.3, this.pedExtra(ped));
+            this.drawPedShape(ctx, ped, ped.cop ? '#1e3a8a' : ped.shirt, ped.skin, ped.cop ? '#0f172a' : ped.hair, ped.phase, PED_SCALE, this.pedExtra(ped));
             if (ped.muzzle > 0) this.muzzle(ped.x, ped.y, ped.angle, 16);
             if (ped.flashT > 0) {
                 // Träffad: vit blixt
                 ctx.globalAlpha = 0.75; ctx.fillStyle = '#fff';
-                ctx.beginPath(); ctx.arc(ped.x, ped.y, 10, 0, Math.PI * 2); ctx.fill();
+                ctx.beginPath(); ctx.arc(ped.x, ped.y, 12, 0, Math.PI * 2); ctx.fill();
                 ctx.globalAlpha = 1;
             }
             if ((ped.attack || ped.cop) && !(ped.down > 0) && ped.hp < ped.maxHp) {
                 // Livsmätare för den du slåss mot
-                ctx.fillStyle = 'rgba(0,0,0,0.7)'; ctx.fillRect(ped.x - 11, ped.y - 29, 22, 5);
+                ctx.fillStyle = 'rgba(0,0,0,0.7)'; ctx.fillRect(ped.x - 13, ped.y - 36, 26, 6);
                 ctx.fillStyle = ped.hp / ped.maxHp < 0.35 ? '#ef4444' : '#facc15';
-                ctx.fillRect(ped.x - 10, ped.y - 28, 20 * Math.max(0, ped.hp / ped.maxHp), 3);
+                ctx.fillRect(ped.x - 12, ped.y - 35, 24 * Math.max(0, ped.hp / ped.maxHp), 4);
             }
             if (ped.dead) continue;
-            if (ped.down > 0 && ped.down > 2) this.emoji('💫', ped.x, ped.y - 14, 12);
+            if (ped.down > 0 && ped.down > 2) this.emoji('💫', ped.x, ped.y - 17, 14);
             else if (ped.attack && ped.down <= 0) {
-                // Opps: röd ring och arg min
+                // Fiender: röd ring och arg min (crew som hjälper dig får sin sköld)
                 ctx.globalAlpha = 0.55 + 0.35 * Math.sin(this.t * 10);
-                this.ring(ped.x, ped.y, 12, ped.targetPed ? (gangById(ped.gang)?.color || '#22c55e') : '#ef4444', 2.5);
+                this.ring(ped.x, ped.y, 15, ped.targetPed ? (gangById(ped.gang)?.color || '#22c55e') : '#ef4444', 2.5);
                 ctx.globalAlpha = 1;
-                this.emoji(ped.targetPed ? '🛡️' : ped.mugger ? '🦹' : ped.gun ? '🔫' : '😠', ped.x, ped.y - 18, 12);
-            } else if (ped.buyer) this.emoji('💸', ped.x, ped.y - 18, 14);
+                this.emoji(ped.targetPed ? '🛡️' : ped.mugger ? '🦹' : ped.cop ? '🚔' : ped.gun ? '🔫' : '😠', ped.x, ped.y - 24, 14);
+            } else if (ped.buyer) this.emoji('💸', ped.x, ped.y - 24, 16);
         }
     }
 
@@ -527,16 +602,21 @@ export class Renderer {
         if (p.vehicle) return;
         const ctx = this.ctx;
         ctx.globalAlpha = 0.5 + 0.3 * Math.sin(this.t * 6);
-        this.ring(p.x, p.y, 17, p.color, 2);
+        this.ring(p.x, p.y, 21, '#ffd23f', 2.5);
         ctx.globalAlpha = 1;
+        // Gul pil vid fötterna: det är DU, och hit tittar du
+        ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.angle);
+        ctx.beginPath(); ctx.moveTo(30, 0); ctx.lineTo(22, -6); ctx.lineTo(22, 6); ctx.closePath();
+        ctx.fillStyle = '#ffd23f'; ctx.fill(); ctx.lineWidth = 1.5; ctx.strokeStyle = '#000'; ctx.stroke();
+        ctx.restore();
         const fake = { x: p.x, y: p.y, angle: p.angle, down: p.dead ? 1 : 0 };
         const g = gangById(world.profile.gang);
         const mc = g && g.kind === 'mc';
         const weapon = world.profile.weapon && world.profile.weapon !== 'fists' ? world.profile.weapon : null;
-        this.drawPedShape(ctx, fake, g && !mc ? g.color : p.color, '#e0ac69', '#1f1300', p.walkPhase, 1.45,
+        this.drawPedShape(ctx, fake, g && !mc ? g.color : p.color, '#e0ac69', '#1f1300', p.walkPhase, PLAYER_SCALE,
             { vest: mc ? g.color : null, patch: g?.patch, punch: p.punchT > 0, weapon });
-        if (p.muzzle > 0) this.muzzle(p.x, p.y, p.angle, weapon === 'shotgun' ? 26 : 22);
-        this.emoji(p.charIcon, p.x, p.y - 25, 15);
+        if (p.muzzle > 0) this.muzzle(p.x, p.y, p.angle, weapon === 'shotgun' ? 32 : 27);
+        this.emoji(p.charIcon, p.x, p.y - 31, 17);
     }
 
     // ── Fordon ──
@@ -547,7 +627,7 @@ export class Renderer {
             const v = world.player.vehicle;
             this.emoji(world.date.mood < 35 ? '😠' : '💕', v.x, v.y - 30 + Math.sin(this.t * 4) * 3, 14);
         }
-        for (const v of world.vehicles) {
+        for (const v of world.vehicles.concat(this.remoteCars(world))) {
             if (v.x < view.x0 - 60 || v.x > view.x1 + 60 || v.y < view.y0 - 60 || v.y > view.y1 + 60) continue;
             ctx.save();
             ctx.translate(v.x, v.y);
@@ -605,6 +685,155 @@ export class Renderer {
                 this.ring(v.x, v.y, v.spec.l * 0.7, '#ffd23f', 3);
                 ctx.globalAlpha = 1;
             }
+        }
+    }
+
+    // Inomhus: rummet, personalen och gästerna, andra spelare där inne, mitt crew och jag
+    drawInteriorScene(world) {
+        const ctx = this.ctx, c = this.cam, dpr = this.dpr, I = world.interior;
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.fillStyle = '#07060b';
+        ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+        const z = c.zoom * dpr;
+        ctx.setTransform(z, 0, 0, z, this.canvas.width / 2 - c.x * z, this.canvas.height / 2 - c.y * z);
+        const hw = this.w / 2 / c.zoom, hh = this.h / 2 / c.zoom;
+        const view = { x0: c.x - hw, y0: c.y - hh, x1: c.x + hw, y1: c.y + hh };
+        const drawPerson = (cx, npc) => this.drawPerson(cx, npc);
+        if (INT.drawInterior) INT.drawInterior(ctx, I.state, view, this.t, drawPerson);
+        else for (const npc of I.state.npcs) drawPerson(ctx, npc);
+        this.drawCrew(world, view);
+        this.drawRemotes(world, view);
+        this.drawPlayerOnFoot(world);
+        if (INT.drawInteriorLights) INT.drawInteriorLights(ctx, I.state, view, this.t);
+        this.drawTags(world, view);
+        // Pratbubblor från personal och gäster
+        ctx.font = '11px "Space Grotesk", sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        for (const npc of I.state.npcs) {
+            if (!npc.say) continue;
+            const w = Math.min(200, ctx.measureText(npc.say.text).width + 14), x = npc.x, y = npc.y - 38;
+            ctx.fillStyle = '#fdf2f8'; ctx.strokeStyle = '#111'; ctx.lineWidth = 1.5;
+            roundRect(ctx, x - w / 2, y - 9, w, 18, 7); ctx.fill(); ctx.stroke();
+            ctx.fillStyle = '#111'; ctx.fillText(npc.say.text, x, y + 0.5, 190);
+        }
+        // Var man kan prata med någon (E)
+        const it = world.nearInteraction;
+        if (it) { ctx.globalAlpha = 0.5 + 0.4 * Math.sin(this.t * 6); this.ring(it.x, it.y, it.r || 26, '#facc15', 2.5); ctx.globalAlpha = 1; }
+        this.drawFloaters(world);
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+    }
+
+    // Mitt crew: vanliga figurer i rollens färg (skölden ritas i drawTags)
+    drawCrew(world, view) {
+        const ctx = this.ctx;
+        const here = world.interior ? world.interior.id : null;
+        for (const c of world.crew) {
+            if (c.hidden || (c.interior || null) !== here) continue;
+            if (c.x < view.x0 - 30 || c.x > view.x1 + 30 || c.y < view.y0 - 30 || c.y > view.y1 + 30) continue;
+            this.drawPedShape(ctx, c, CREW_LOOK[c.role]?.shirt || '#333', '#c68642', '#111', c.phase, PED_SCALE, { punch: c.punchT > 0, weapon: c.role === 'gunner' ? 'pistol' : null });
+            if (c.muzzle > 0) { this.muzzle(c.x, c.y, c.angle, 18); c.muzzle -= 1 / 60; }
+            if (c.flashT > 0) {
+                ctx.globalAlpha = 0.7; ctx.fillStyle = '#fff';
+                ctx.beginPath(); ctx.arc(c.x, c.y, 12, 0, Math.PI * 2); ctx.fill();
+                ctx.globalAlpha = 1;
+            }
+            if (c.down > 0) this.emoji('💤', c.x, c.y - 18, 13);
+        }
+    }
+
+    // Vapen och grejer på marken: lysande ring + ikon, namn när du står nära
+    drawItems(world, view) {
+        const ctx = this.ctx;
+        for (const it of world.groundItems()) {
+            if (it.x < view.x0 - 30 || it.x > view.x1 + 30 || it.y < view.y0 - 30 || it.y > view.y1 + 30) continue;
+            const def = ITEM_TYPES[it.type];
+            const pulse = 0.5 + 0.5 * Math.sin(this.t * 4 + it.x * 0.01);
+            ctx.fillStyle = `rgba(250,204,21,${0.18 + pulse * 0.22})`;
+            ctx.beginPath(); ctx.arc(it.x, it.y, 15, 0, Math.PI * 2); ctx.fill();
+            this.ring(it.x, it.y, 15, '#facc15', 2);
+            this.emoji(def.icon, it.x, it.y + Math.sin(this.t * 3 + it.x) * 1.5, 16);
+            if (world.nearItem === it) {
+                ctx.font = '10px Bungee, Impact, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+                ctx.lineWidth = 3; ctx.strokeStyle = '#000'; ctx.strokeText(def.label.toUpperCase(), it.x, it.y - 24);
+                ctx.fillStyle = '#facc15'; ctx.fillText(def.label.toUpperCase(), it.x, it.y - 24);
+            }
+        }
+    }
+
+    // Andra spelare som kör: en låtsasbil som följer deras position
+    remoteCars(world) {
+        const out = [];
+        if (world.interior) return out;
+        for (const r of world.remotes()) {
+            if (!r.v || r.in || !VEHICLES[r.v]) continue;
+            const c = r._car || (r._car = { hp: 1, maxHp: 1, driver: 'remote', vx: 0, vy: 0 });
+            c.x = r.rx; c.y = r.ry; c.angle = r.ra; c.type = r.v; c.spec = VEHICLES[r.v]; c.color = r.vc || '#888';
+            out.push(c);
+        }
+        return out;
+    }
+
+    // Andra riktiga spelare till fots, och deras crew
+    drawRemotes(world, view) {
+        const ctx = this.ctx;
+        const here = world.interior ? world.interior.id : null;
+        for (const r of world.remotes()) {
+            if ((r.in || null) !== here) continue;
+            for (const c of r.crew || []) {
+                if (c.d || c.x < view.x0 - 30 || c.x > view.x1 + 30 || c.y < view.y0 - 30 || c.y > view.y1 + 30) continue;
+                const fake = { x: c.x, y: c.y, angle: c.a || 0, down: 0 };
+                this.drawPedShape(ctx, fake, CREW_LOOK[c.r]?.shirt || '#444', '#c68642', '#111', (r.phase || 0) * 0.8, PED_SCALE, { vest: r.color });
+            }
+            if (r.v && !here) continue;
+            const x = r.rx, y = r.ry;
+            if (x < view.x0 - 40 || x > view.x1 + 40 || y < view.y0 - 40 || y > view.y1 + 40) continue;
+            const fake = { x, y, angle: r.ra || 0, down: r.dead ? 1 : 0 };
+            ctx.globalAlpha = r.prot ? 0.55 + 0.25 * Math.sin(this.t * 12) : 1;
+            this.drawPedShape(ctx, fake, r.color || '#60a5fa', '#e0ac69', '#1f1300', r.phase || 0, PLAYER_SCALE, { weapon: r.w && r.w !== 'fists' ? r.w : null });
+            ctx.globalAlpha = 1;
+        }
+    }
+
+    // Namn, hälsa och markör ovanför andra spelare och mitt crew — ritas ovanpå taken
+    drawTags(world, view) {
+        const ctx = this.ctx;
+        const here = world.interior ? world.interior.id : null;
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        for (const r of world.remotes()) {
+            if ((r.in || null) !== here) continue;
+            const x = r.rx, y = r.ry - (r.v && !here ? 34 : 40);
+            if (x < view.x0 - 80 || x > view.x1 + 80 || y < view.y0 - 60 || y > view.y1 + 60) continue;
+            // Romb i spelarens färg = en riktig spelare
+            ctx.beginPath(); ctx.moveTo(x, y - 9); ctx.lineTo(x + 7, y - 2); ctx.lineTo(x, y + 5); ctx.lineTo(x - 7, y - 2); ctx.closePath();
+            ctx.fillStyle = r.color || '#60a5fa'; ctx.fill(); ctx.lineWidth = 2; ctx.strokeStyle = '#fff'; ctx.stroke();
+            ctx.font = '11px Bungee, Impact, sans-serif';
+            const label = `${r.icon || ''} ${r.name || r.id}`;
+            ctx.lineWidth = 3; ctx.strokeStyle = '#000'; ctx.strokeText(label, x, y - 18);
+            ctx.fillStyle = '#fff'; ctx.fillText(label, x, y - 18);
+            const f = Math.max(0, Math.min(1, (r.hp || 0) / (r.mhp || 100)));
+            ctx.fillStyle = 'rgba(0,0,0,0.75)'; ctx.fillRect(x - 17, y - 32, 34, 6);
+            ctx.fillStyle = f < 0.35 ? '#ef4444' : '#22c55e'; ctx.fillRect(x - 16, y - 31, 32 * f, 4);
+            if (r.stars > 0) { ctx.font = `10px ${EMOJI_FONT}`; ctx.fillText('👮'.repeat(Math.min(5, r.stars)), x, y - 42); }
+            for (const c of r.crew || []) {
+                if (c.d) continue;
+                this.crewBadge(c.x, c.y - 27, r.color || '#60a5fa', false);
+            }
+        }
+        for (const c of world.crew || []) {
+            if (c.hidden || (c.interior || null) !== here) continue;
+            this.crewBadge(c.x, c.y - 27, '#22c55e', true, c);
+        }
+    }
+
+    // Sköld ovanför ett crew-medlem: grön = mitt, annars ägarens färg
+    crewBadge(x, y, color, mine, c = null) {
+        const ctx = this.ctx;
+        ctx.beginPath();
+        ctx.moveTo(x - 6, y - 6); ctx.lineTo(x + 6, y - 6); ctx.lineTo(x + 6, y + 1); ctx.lineTo(x, y + 7); ctx.lineTo(x - 6, y + 1); ctx.closePath();
+        ctx.fillStyle = color; ctx.fill(); ctx.lineWidth = 1.5; ctx.strokeStyle = mine ? '#052e16' : '#fff'; ctx.stroke();
+        if (c) {
+            const f = Math.max(0, Math.min(1, c.hp / c.maxHp));
+            ctx.fillStyle = 'rgba(0,0,0,0.7)'; ctx.fillRect(x - 11, y - 13, 22, 4);
+            ctx.fillStyle = c.down > 0 ? '#6b7280' : f < 0.35 ? '#ef4444' : '#22c55e'; ctx.fillRect(x - 10, y - 12, 20 * f, 2);
         }
     }
 
@@ -833,7 +1062,7 @@ export class Renderer {
             if (!ped.say || ped.x < view.x0 - 80 || ped.x > view.x1 + 80 || ped.y < view.y0 - 60 || ped.y > view.y1 + 60) continue;
             const text = ped.say.text;
             const w = Math.min(220, ctx.measureText(text).width + 14), h = 18;
-            const x = ped.x, y = ped.y - 30;
+            const x = ped.x, y = ped.y - 38;
             ctx.globalAlpha = Math.min(1, ped.say.life * 2);
             ctx.fillStyle = ped.attack ? '#fee2e2' : ped.type === 'metro' ? '#fdf2f8' : '#ffffff';
             ctx.strokeStyle = '#111'; ctx.lineWidth = 1.5;

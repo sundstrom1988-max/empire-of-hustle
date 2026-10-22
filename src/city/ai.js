@@ -215,7 +215,7 @@ export function createPed(x, y, rnd = Math.random, opts = {}) {
     const reflex = 0.15 + ((phase * 7.31) % 1) * 0.5;
     const hp = opts.hp || (type === 'gang' ? (opts.vest ? 40 : 30) : metro ? 12 : tough ? 34 : 15);
     return {
-        ent: 'ped', type, x, y, vx: 0, vy: 0, r: 6.5, angle,
+        ent: 'ped', type, x, y, vx: 0, vy: 0, r: 8, angle,
         dir, t, mode: 'walk', tough, reflex, alarm: 0,
         speed, down: 0, phase,
         shirt: opts.shirt || (metro ? METRO_SHIRTS[Math.floor(rnd() * METRO_SHIRTS.length)] : SHIRTS[Math.floor(rnd() * SHIRTS.length)]),
@@ -232,7 +232,7 @@ export function createPed(x, y, rnd = Math.random, opts = {}) {
 const PED_OK = new Set([T.SIDEWALK, T.PLAZA, T.GRASS, T.LOT]);
 
 // Gå mot en punkt: rakt om det är fri sikt, annars via flödesfältet (om det leder dit)
-function seek(ped, world, tx, ty, useFlow) {
+export function seek(ped, world, tx, ty, useFlow) {
     const dx = tx - ped.x, dy = ty - ped.y;
     const d = Math.hypot(dx, dy) || 1;
     if (!useFlow || d < 90 || lineClear(world.city, ped.x, ped.y, tx, ty)) return { mx: dx / d, my: dy / d };
@@ -253,7 +253,7 @@ export function pedControl(ped, world, dt) {
         if (t && t.down <= 0 && world.peds.includes(t)) {
             const m = seek(ped, world, t.x, t.y, false);
             ped.angle = Math.atan2(m.my, m.mx);
-            return Math.hypot(t.x - ped.x, t.y - ped.y) < 15 ? { mx: 0, my: 0, speed: 0 } : { ...m, speed: 150 };
+            return Math.hypot(t.x - ped.x, t.y - ped.y) < 19 ? { mx: 0, my: 0, speed: 0 } : { ...m, speed: 150 };
         }
         ped.targetPed = null;
         if (!p.dead) {
@@ -262,7 +262,7 @@ export function pedControl(ped, world, dt) {
             // Beväpnade stannar på skjutavstånd
             if (ped.gun && dist < 210 && lineClear(world.city, ped.x, ped.y, p.x, p.y)) return { mx: 0, my: 0, speed: 0 };
             const m = seek(ped, world, p.x, p.y, true);
-            const reach = p.vehicle ? p.vehicle.spec.l / 2 + 6 : 14;
+            const reach = p.vehicle ? p.vehicle.spec.l / 2 + 6 : 18;
             return dist < reach ? { mx: 0, my: 0, speed: 0 } : { ...m, speed: ped.vest ? 140 : 150 };
         }
     }

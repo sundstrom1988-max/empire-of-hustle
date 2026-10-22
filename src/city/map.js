@@ -303,6 +303,16 @@ export function generateCity(seed = 1337) {
     }
     const dealer = mk(dealerTile || [spawnTile[0], spawnTile[1] - 2], { kind: 'dealer', label: 'LANGAREN', icon: '🎒' });
     used.push([dealer.tx, dealer.ty]);
+    // Rekryteraren står på andra sidan HQ-parkeringen
+    let recruitTile = null;
+    for (let r = 3; r <= 7 && !recruitTile; r++) {
+        for (const [dx, dy] of [[r, 0], [-r, 0], [r, -1], [-r, -1], [0, -r]]) {
+            const tx = spawnTile[0] + dx, ty = spawnTile[1] + dy;
+            if (WALKABLE.has(tileAt({ tiles }, tx, ty)) && Math.abs(tx - dealer.tx) + Math.abs(ty - dealer.ty) > 3) { recruitTile = [tx, ty]; break; }
+        }
+    }
+    const recruit = recruitTile ? mk(recruitTile, { kind: 'recruit', label: 'REKRYTERING', icon: '👥' }) : null;
+    if (recruit) used.push([recruit.tx, recruit.ty]);
     homeParking.sort((a, b) => Math.hypot(a.x - spawn.x, a.y - spawn.y) - Math.hypot(b.x - spawn.x, b.y - spawn.y));
     const nearSpots = homeParking.filter(p => Math.hypot(p.x - spawn.x, p.y - spawn.y) > TILE * 0.5).slice(0, 10);
     homeParking.length = 0;
@@ -376,6 +386,9 @@ export function generateCity(seed = 1337) {
         return withDoor(mk(t, { kind: 'house', id: 'house-' + district, district, name, price }));
     }).filter(Boolean);
     const bank = withDoor(mk(nearestCurb(30, 18, (x, y) => districtOfTile(x, y) === 'centrum' && nextToBuilding(x, y), 5), { kind: 'bank', id: 'bank', name: 'Stadsbanken' }));
+    // Stripklubben i Hamnen och en riktig dörr in till Pang-Pelle
+    const stripclub = withDoor(mk(nearestCurb(50, 44, (x, y) => districtOfTile(x, y) === 'hamnen' && nextToBuilding(x, y), 5), { kind: 'stripclub', id: 'stripclub', name: 'Club Diamant' }));
+    withDoor(guns);
 
     // Pickup-platser och gatlampor
     const pickupSpots = [];
@@ -409,6 +422,6 @@ export function generateCity(seed = 1337) {
     return {
         seed, w: W_, h: H_, tiles, lanes, bld, buildings, xs, ys,
         spawn, homeParking, lotSpots, pickupSpots, lights, laneTiles, sidewalkTiles,
-        markers: { home, dealer, phones, sprays, fence, club, guns, businesses, places, houses, bank }
+        markers: { home, dealer, recruit, phones, sprays, fence, club, guns, businesses, places, houses, bank, stripclub }
     };
 }

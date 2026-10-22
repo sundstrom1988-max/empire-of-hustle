@@ -6,6 +6,7 @@ import { GANGS, DISTRICTS, TILE } from './constants.js';
 import { stars } from './wanted.js';
 import { phoneAccess, gangById } from './missions.js';
 import { WEAPONS } from './weapons.js';
+import { buildMinimapBase, drawMap, MAP_LEGEND } from './minimap.js';
 
 const BIG_FONT = 'Bungee, Impact, "Arial Black", sans-serif';
 const PAGER_FONT = 'VT323, "Courier New", monospace';
@@ -45,6 +46,18 @@ export class Hud {
         this.radio = null;
         this.wantedFlash = 0;
         this.t = 0;
+        this.mapBase = null;
+        this.mapRect = null;
+    }
+
+    // Minikartan: nere till vänster på datorn, uppe till höger på mobilen
+    minimapRect(W, H, touch, narrow) {
+        if (touch || narrow) {
+            const size = Math.round(Math.min(124, W * 0.32));
+            return { x: W - size - 12, y: narrow ? 128 : 118, size };
+        }
+        const size = Math.round(Math.max(130, Math.min(190, Math.min(W, H) * 0.24)));
+        return { x: 16, y: H - size - 30, size };
     }
 
     onEvent(e) {
@@ -152,6 +165,7 @@ export class Hud {
             ctx.fillStyle = color; ctx.fillRect(32, y - 4, bw * Math.max(0, Math.min(1, frac)), 9);
         };
         bar(hy, p.hp / p.maxHp, p.hp < 35 ? '#ef4444' : '#22c55e', '❤️');
+        if (p.armor > 0) { ctx.fillStyle = '#60a5fa'; ctx.fillRect(32, hy + 3, bw * Math.min(1, p.armor / 100), 3); }
         if (v) {
             bar(hy + 22, v.hp / v.maxHp, v.hp < v.maxHp * 0.3 ? '#f97316' : '#60a5fa', v.spec.kind === 'bike' ? '🛵' : '🚗');
             outlined(ctx, v.spec.name.toUpperCase(), 12, hy + 44, 11, '#e5e7eb', 'left', BIG_FONT, 3);
@@ -161,6 +175,26 @@ export class Hud {
             const w = WEAPONS[profile.weapon] || WEAPONS.fists;
             const ammo = w.melee ? '' : `  ${profile.ammo?.[w.id] || 0}`;
             outlined(ctx, `${w.icon} ${w.name.toUpperCase()}${ammo}`, 12, hy + 22, narrow ? 12 : 14, !w.melee && !(profile.ammo?.[w.id] > 0) ? '#f87171' : '#e5e7eb', 'left', BIG_FONT, 3);
+        }
+        // Crew: namn, hälsa och order (kompakt på mobil)
+        const crew = world.crew || [];
+        if (crew.length) {
+            const orderTxt = { follow: 'FÖLJ', hold: 'STANNA', attack: 'ANFALL' };
+            const cy0 = hy + (v ? 72 : 42) + (world.date ? 40 : 0);
+            if (narrow) {
+                const up = crew.filter(c => !(c.down > 0)).length;
+                outlined(ctx, `👥 ${up}/${crew.length} · ${orderTxt[crew[0].order] || ''}`, 12, cy0, 11, '#86efac', 'left', BIG_FONT, 3);
+            } else {
+                crew.forEach((c, i) => {
+                    const y = cy0 + i * 17;
+                    const icon = { guard: '🛡️', gunner: '🎯', scout: '👀' }[c.role] || '👤';
+                    outlined(ctx, `${icon} ${c.name}`, 12, y, 11, c.down > 0 ? '#9ca3af' : '#e5e7eb', 'left', BIG_FONT, 3);
+                    ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(98, y - 3, 46, 6);
+                    ctx.fillStyle = c.down > 0 ? '#6b7280' : c.hp / c.maxHp < 0.35 ? '#ef4444' : '#22c55e';
+                    ctx.fillRect(99, y - 2, 44 * Math.max(0, c.hp / c.maxHp), 4);
+                    outlined(ctx, c.down > 0 ? `NERE ${Math.ceil(c.down)}` : orderTxt[c.order] || '', 150, y, 9, c.down > 0 ? '#f87171' : '#86efac', 'left', BIG_FONT, 3);
+                });
+            }
         }
         // Dejt: humör och vart hon bor
         const date = world.date;
@@ -188,7 +222,9 @@ export class Hud {
 
         // ── Personsökare (uppdrag + meddelanden) ──
         const m = world.mission;
-        const pagerW = Math.min(440, W - 24);
+        // Personsökaren får inte hamna under minikartan på smala datorskärmar
+        const mmR = this.mapRect && !opts.touch && !narrow && !world.showMap ? this.mapRect.x + this.mapRect.size + 14 : 0;
+        const pagerW = Math.min(440, W - 24, mmR ? W - mmR - 14 : W);
         const bottomPad = opts.touch ? 236 : 22; // ovanför touchknapparna
         const lines = [];
         ctx.font = `${narrow ? 18 : 20}px ${PAGER_FONT}`;
@@ -202,7 +238,7 @@ export class Hud {
         const ph = lines.length ? lines.length * lh + 18 : 0;
         const py = H - ph - bottomPad;
         if (lines.length) {
-            const px = (W - pagerW) / 2;
+            const px = Math.max((W - pagerW) / 2, mmR);
             ctx.fillStyle = 'rgba(12,26,8,0.88)'; ctx.fillRect(px, py, pagerW, ph);
             ctx.strokeStyle = '#4d7c0f'; ctx.lineWidth = 2; ctx.strokeRect(px + 1, py + 1, pagerW - 2, ph - 2);
             ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
@@ -237,6 +273,33 @@ export class Hud {
         if (hint && opts.touch) hint = hint.replace('ESC —', '🏠 HEM —').replaceAll('SPACE —', '⤵ —').replace(/^R —/, '💰 —');
         if (hint) outlined(ctx, hint, W / 2, py - (lines.length ? 22 : 8), narrow ? 13 : 16, '#fff', 'center', BIG_FONT, 4);
 
+        // ── Minikarta över hela stan ──
+        if (!this.mapBase) this.mapBase = buildMinimapBase(world.city);
+        const remotes = world.remotes();
+        const scout = (world.crew || []).some(c => c.role === 'scout' && !(c.down > 0));
+        const mm = this.minimapRect(W, H, opts.touch, narrow);
+        this.mapRect = mm;
+        if (!world.showMap) drawMap(ctx, world, this.mapBase, mm, { remotes, showCops: scout, t: this.t });
+
+        // ── Händelser: vem som kom, gick och sänkte vem ──
+        world.feed.forEach((f, i) => {
+            ctx.globalAlpha = Math.min(1, f.life);
+            outlined(ctx, f.text, W / 2, (narrow ? 236 : 62) + i * 18, narrow ? 11 : 13, f.color, 'center', BIG_FONT, 3);
+        });
+        ctx.globalAlpha = 1;
+
+        // ── Stor karta (M) ──
+        if (world.showMap) {
+            ctx.fillStyle = 'rgba(0,0,0,0.78)'; ctx.fillRect(0, 0, W, H);
+            const size = Math.min(W - 40, H - 110);
+            const box = { x: (W - size) / 2, y: 70, size };
+            drawMap(ctx, world, this.mapBase, box, { remotes, showCops: scout, full: true, t: this.t });
+            outlined(ctx, 'HUSTLE CITY', box.x, box.y - 16, narrow ? 16 : 20, '#ffd23f', 'left', BIG_FONT, 5);
+            const legend = MAP_LEGEND.map(([sym, , label]) => `${sym} ${label}`).join('   ');
+            outlined(ctx, `${legend}   ·   M / tryck = stäng`, W / 2, box.y + size + 22, narrow ? 10 : 12, '#e5e7eb', 'center', BIG_FONT, 3);
+            this.mapRect = { x: 0, y: 0, size: Math.max(W, H) };
+        }
+
         // ── Stor text ──
         if (this.big) {
             const b = this.big;
@@ -258,6 +321,13 @@ export class Hud {
             g.addColorStop(0, 'rgba(200,0,0,0)');
             g.addColorStop(1, `rgba(200,0,0,${p.hurtT * 1.5})`);
             ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+        }
+        // Sänkt i PvP / skyddad efter comeback
+        if (world.pvpT > 0) {
+            ctx.fillStyle = 'rgba(80,0,0,0.45)'; ctx.fillRect(0, 0, W, H);
+            outlined(ctx, `TILLBAKA VID HQ OM ${Math.ceil(world.pvpT)}`, W / 2, H * 0.6, narrow ? 14 : 18, '#fff', 'center', BIG_FONT, 4);
+        } else if (p.protT > 0) {
+            outlined(ctx, `🛡️ SKYDDAD ${Math.ceil(p.protT)}`, W / 2, H * 0.5 + 46, narrow ? 12 : 14, '#93c5fd', 'center', BIG_FONT, 3);
         }
         // "Några timmar senare..."
         if (world.fade) {

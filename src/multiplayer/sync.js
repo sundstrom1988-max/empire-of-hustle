@@ -7,7 +7,7 @@
 
 import Peer from 'peerjs';
 import { CHARACTERS } from '../data/gameData.js';
-import { gameState, LOCAL_KEYS, mergeRemoteState, normalizePlayer, isMyTurn } from '../game/state.js';
+import { gameState, LOCAL_KEYS, mergeRemoteState, normalizePlayer, isMyTurn, myPlayer, applyPlayerDelta } from '../game/state.js';
 
 const PEER_CONFIG = {
     config: {
@@ -23,7 +23,10 @@ let peer = null;
 let connections = [];
 let isHost = false;
 let pendingJoin = null;
-const callbacks = { playerJoined: null, chat: null, stateApplied: null, peerLeft: null, hostLost: null };
+const callbacks = { playerJoined: null, chat: null, stateApplied: null, peerLeft: null, hostLost: null, effect: null };
+// Andra moduler (staden, SMS) registrerar egna meddelandetyper: fn(data, fromId, conn)
+const handlers = new Map();
+const closeHooks = new Set();
 
 // ── Generate room code ──
 function genRoomCode() {
@@ -165,7 +168,7 @@ function setupConnection(conn) {
                 if (!isHost && pendingJoin) {
                     gameState.roomId = gameState.pendingRoomId;
                     gameState.isOnline = true;
-                    mergeRemoteState(data.gameState);
+                    mergeRemoteState(data.gameState, { protect: false });
                     pendingJoin({ ok: true });
                 }
                 break;
@@ -174,10 +177,25 @@ function setupConnection(conn) {
                 break;
             case 'state':
                 if (data.gameState && data.gameState._lastUpdate !== gameState._lastUpdate) {
-                    mergeRemoteState(data.gameState);
+                    // Värden tar bara turläget och avsändarens egen spelare från en gäst
+                    if (isHost) mergeRemoteState(data.gameState, { onlyPlayer: conn.charKey, fromHost: false });
+                    else mergeRemoteState(data.gameState);
                     if (isHost) broadcast({ type: 'state', gameState: snapshot() }, conn);
                     if (callbacks.stateApplied) callbacks.stateApplied();
                 }
+                break;
+            case 'me':
+                // En gäst skickar sin egen spelare (t.ex. efter stan, mellan turerna)
+                if (isHost && data.player && data.player.charKey === conn.charKey) {
+                    mergeRemoteState({ players: [data.player] }, { onlyPlayer: conn.charKey, fromHost: false });
+                    gameState._lastUpdate = Date.now();
+                    broadcast({ type: 'state', gameState: snapshot() }, conn);
+                    if (callbacks.stateApplied) callbacks.stateApplied();
+                }
+                break;
+            case 'effect':
+                if (isHost) routeEffect(data.target, data.delta, conn.charKey);
+                else if (data.target === gameState.myCharKey) applyEffectToMe(data.delta);
                 break;
             case 'join':
                 if (isHost) handleJoin(conn, data.player);
@@ -188,6 +206,11 @@ function setupConnection(conn) {
                     if (callbacks.chat) callbacks.chat(data.msg);
                 }
                 break;
+            default: {
+                // Avsändaren är den anslutningen värden kopplat till en karaktär — aldrig vad meddelandet påstår
+                const h = handlers.get(data.type);
+                if (h) h(data, isHost ? conn.charKey : null, conn);
+            }
         }
     });
     conn.lastSeen = Date.now();
@@ -201,6 +224,7 @@ function handleConnClosed(conn) {
     conn._closedHandled = true;
     connections = connections.filter(c => c !== conn);
     try { conn.close(); } catch (e) { /* redan stängd */ }
+    closeHooks.forEach(fn => { try { fn(conn.charKey); } catch (e) { console.warn(e); } });
     if (isHost) {
         const p = gameState.players.find(pl => pl.charKey === conn.charKey);
         if (p) {
@@ -253,6 +277,62 @@ export function syncState(force = false) {
     gameState._lastUpdate = Date.now();
     broadcast({ type: 'state', gameState: snapshot() });
 }
+
+// Min egen spelare ändrades mellan turerna (t.ex. i stan): skicka bara den
+export function syncMe() {
+    if (!peer || !gameState.isOnline) return;
+    if (isHost) { syncState(true); return; }
+    const me = myPlayer();
+    if (!me) return;
+    sendToHost({ type: 'me', player: JSON.parse(JSON.stringify(me)) });
+}
+
+// Något jag gjorde mot en annan spelare: den som äger spelaren lägger på ändringen
+export function sendEffect(target, delta) {
+    if (!gameState.isOnline || !peer) return false;
+    if (isHost) routeEffect(target, delta, gameState.myCharKey);
+    else sendToHost({ type: 'effect', target, delta });
+    return true;
+}
+
+function applyEffectToMe(delta) {
+    const me = myPlayer();
+    if (!me) return;
+    applyPlayerDelta(me, delta);
+    if (callbacks.effect) callbacks.effect(delta);
+    syncMe();
+}
+
+function routeEffect(target, delta, from) {
+    const p = gameState.players.find(pl => pl.charKey === target);
+    if (!p || !delta || typeof delta !== 'object') return;
+    if (target === gameState.myCharKey) { applyEffectToMe(delta); return; }
+    const conn = connections.find(c => c.charKey === target && c.open);
+    if (conn && !p.isAI) { try { conn.send({ type: 'effect', target, delta, from }); } catch (e) { /* ignore */ } return; }
+    // AI eller frånkopplad spelare: värden äger dem
+    applyPlayerDelta(p, delta);
+    syncState(true);
+}
+
+// ── Kanaler för andra moduler ──
+export function onMessage(type, fn) { handlers.set(type, fn); }
+export function onConnectionClosed(fn) { closeHooks.add(fn); return () => closeHooks.delete(fn); }
+export function sendToHost(msg) {
+    const conn = connections[0];
+    if (isHost || !conn || !conn.open) return false;
+    try { conn.send(msg); return true; } catch (e) { return false; }
+}
+export function sendToPlayer(charKey, msg) {
+    const conn = connections.find(c => c.charKey === charKey && c.open);
+    if (!conn) return false;
+    try { conn.send(msg); return true; } catch (e) { return false; }
+}
+export function broadcastAll(msg) { broadcast(msg); }
+export function connectedIds() {
+    // Värden vet vilka gäster som är anslutna just nu
+    return connections.filter(c => c.open && c.charKey).map(c => c.charKey);
+}
+export function onEffect(cb) { callbacks.effect = cb; }
 
 // ── Send chat message to all peers ──
 export function sendChatOnline(msg) {

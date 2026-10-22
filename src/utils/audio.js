@@ -240,6 +240,22 @@ function makeStations() {
                 if (s === 0) ch.forEach(n => osc('sawtooth', midi(n + 12), t, sd * 15, 0.035, d, { attack: 0.4, lp: 1400, detune: 8 }));
                 if (s % 3 === 0) osc('square', midi(ch[(s / 3) % 3] + 24), t, 0.12, 0.03, d, { lp: 3000 });
             }
+        },
+        {
+            id: 'diamant', name: 'CLUB DIAMANT', tag: 'Neon, bas och dyra flaskor', bpm: 122, bars: 4,
+            setup() {
+                this.chords = [[57, 60, 64], [53, 57, 60], [55, 59, 62], [52, 55, 59]]; // Am F G Em
+            },
+            step(i, t, d, sd) {
+                const s = i % 16, bar = Math.floor(i / 16) % this.bars;
+                const ch = this.chords[bar];
+                if (s % 4 === 0) drumKick(t, d, 1);
+                if (s % 4 === 2) drumHat(t, d, true, 0.5);
+                if (s === 4 || s === 12) drumClap(t, d);
+                if (s % 2 === 1) drumHat(t, d, false, 0.4);
+                if (s % 4 === 2) osc('sawtooth', midi(ch[0] - 24), t, sd * 1.6, 0.13, d, { lp: 420 });
+                if (s === 2 || s === 10) ch.forEach(n => osc('sawtooth', midi(n), t, sd * 2.5, 0.04, d, { lp: 1800, detune: 9 }));
+            }
         }
     ];
 }

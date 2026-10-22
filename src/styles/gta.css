@@ -242,8 +242,8 @@ body {
     border-bottom: 3px solid #000;
 }
 
-#screen-game.locked .panel:not(#panel-roast):not(#panel-dashboard),
-#screen-game.locked .hud-controls .hud-city {
+#screen-game.locked .panel:not(#panel-roast):not(#panel-dashboard):not(#panel-stan),
+#screen-game.locked:not(.shared-city) .hud-controls .hud-city {
     opacity: 0.55;
     pointer-events: none;
 }

@@ -13,8 +13,12 @@ import { stars } from './wanted.js';
 import { gangById } from './missions.js';
 import { JOIN_RESPECT } from './constants.js';
 import { WEAPONS, WEAPON_ORDER, ownsWeapon } from './weapons.js';
+import { ROLES, CREW_MAX } from './crew.js';
 import { sfx, playStation, stopRadio, STATIONS, engineStart, engineSet, engineStop, sirenSet, sirenStop, unlockAudio } from '../utils/audio.js';
 import { escapeHtml } from '../utils/html.js';
+import { cityEnter, cityExit, cityPublish, cityRemotes, cityTaken, cityRequest, onCityNet, cityNetActive } from '../multiplayer/citynet.js';
+import { syncMe, syncState } from '../multiplayer/sync.js';
+import { gameState, isMyTurn } from '../game/state.js';
 
 const STEP = 1 / 60;
 const CITY_SEED = 1337;
@@ -32,6 +36,7 @@ function buildOverlay(touch) {
     el.innerHTML = `
         <canvas class="city-canvas"></canvas>
         <div class="city-topbar">
+            <button class="city-btn" data-cmd="phone" title="Telefon: SMS, taxi, doktor, crew (T)">📱</button>
             <button class="city-btn" data-cmd="radio" title="Byt radiokanal (R)">📻</button>
             <button class="city-btn" data-cmd="pause" title="Paus (P)">⏸</button>
             <button class="city-btn city-home" data-cmd="home" title="Åk hem (Esc)">🏠 HEM</button>
@@ -44,6 +49,7 @@ function buildOverlay(touch) {
             </div>
             <div class="ct-pad ct-right">
                 <button data-key="r" class="ct-rob" aria-label="Råna">💰</button>
+                <button data-key="crew" class="ct-crew" aria-label="Crew-order">👥</button>
                 <button data-key="weapon" class="ct-wpn" aria-label="Byt vapen">🔫</button>
                 <button data-key="act" class="ct-act" aria-label="In/ur bil">E</button>
                 <button data-key="hb" class="ct-hb" aria-label="Handbroms">⤵</button>
@@ -59,7 +65,7 @@ function buildOverlay(touch) {
 function controlsHelp(touch) {
     return touch
         ? `<div class="city-help"><b>▲▼◀▶</b> kör / gå · <b>E</b> in/ur bil · <b>⤵</b> handbroms / slå / skjut · <b>💰</b> råna · <b>🔫</b> byt vapen · <b>📯</b> tuta · <b>📻</b> radio</div>`
-        : `<div class="city-help"><b>WASD/Pilar</b> kör/gå · <b>Shift</b> spring · <b>E</b> in/ur bil (sno bilar!) · <b>Space</b> handbroms / slå / skjut · <b>R</b> råna (till fots) / radio (i bil) · <b>Q</b> byt vapen · <b>H</b> tuta · <b>P</b> paus · <b>Esc</b> hem</div>`;
+        : `<div class="city-help"><b>WASD/Pilar</b> kör/gå · <b>Shift</b> spring · <b>E</b> in/ur bil, plocka upp · <b>Space</b> handbroms / slå / skjut · <b>R</b> råna (till fots) / radio (i bil) · <b>Q</b> byt vapen · <b>M</b> karta · <b>T</b> telefon · <b>1 2 3</b> crew: följ / stanna / anfall · <b>H</b> tuta · <b>P</b> paus · <b>Esc</b> hem</div>`;
 }
 
 export function openCity(profile, opts = {}) {
@@ -71,7 +77,12 @@ export function openCity(profile, opts = {}) {
     document.body.classList.add('city-open');
 
     const canvas = overlay.querySelector('.city-canvas');
-    const world = new World(cityCache, profile, { round: opts.round, maxMissions: opts.maxMissions, maxFence: opts.maxFence, maxGoods: opts.maxGoods });
+    // Den delade staden: andra spelares positioner och värdens beslut kommer via nätet
+    const net = { online: cityNetActive(), remotes: cityRemotes, taken: cityTaken, request: cityRequest };
+    const world = new World(cityCache, profile, { round: opts.round, maxMissions: opts.maxMissions, maxFence: opts.maxFence, maxGoods: opts.maxGoods, net });
+    world.ownersRef = () => gameState.cityOwners;
+    world.nameOf = id => gameState.players.find(pl => pl.charKey === id)?.char?.name || id;
+    cityEnter(profile.charKey);
     const renderer = new Renderer(canvas);
     const hud = new Hud();
     const input = new Input(overlay);
@@ -87,14 +98,33 @@ export function openCity(profile, opts = {}) {
     const onVis = () => { if (document.hidden && session && !session.paused) showPause(); };
     window.addEventListener('resize', onResize);
     document.addEventListener('visibilitychange', onVis);
+    const netOff = onCityNet(e => {
+        try { world.onNet(e); } catch (err) { console.error('Stad-nät:', err); }
+        // Svaret från värden om klubben: visa managern igen med det nya läget
+        if ((e.type === 'buyRes' || e.type === 'owners') && session?.modalType === 'manager') setTimeout(() => session?.modalType === 'manager' && showInteraction('manager'), 0);
+    });
+    // Tryck på minikartan öppnar den stora kartan (och tryck var som helst stänger den)
+    const onMapTap = (e) => {
+        const r = session?.hud.mapRect;
+        if (!r || session.modalType) return;
+        const b = canvas.getBoundingClientRect();
+        const x = e.clientX - b.left, y = e.clientY - b.top;
+        if (world.showMap || (x >= r.x && x <= r.x + r.size && y >= r.y && y <= r.y + r.size)) world.showMap = !world.showMap;
+    };
+    canvas.addEventListener('pointerdown', onMapTap);
+    session.syncT = 0;
     session.cleanup = () => {
         window.removeEventListener('resize', onResize);
         document.removeEventListener('visibilitychange', onVis);
+        canvas.removeEventListener('pointerdown', onMapTap);
+        netOff();
+        cityExit();
     };
 
     overlay.querySelector('.city-topbar').addEventListener('click', (e) => {
         const cmd = e.target.closest('[data-cmd]')?.dataset.cmd;
         if (cmd === 'radio') cycleRadio();
+        else if (cmd === 'phone') { if (!session.modalType) showCityPhone(); }
         else if (cmd === 'pause') session.paused ? resume() : showPause();
         else if (cmd === 'home') tryGoHome();
     });
@@ -213,7 +243,9 @@ function showGuns() {
         <div class="city-card phone" style="--gang:#f97316">
             <div class="phone-head">🔫 Pang-Pelle · <span>bakdörren i Industrin</span></div>
             <p class="phone-brief">"Psst. Allt är kallt, inga frågor. Bär du skjutvapen kommer opps också beväpnade — tänk på det."</p>
-            <div class="gun-list">${rows}</div>
+            <div class="gun-list">${rows}
+                <div class="gun-row"><div class="gun-icon">🦺</div><div class="gun-name">Skyddsväst<small>+50 skydd · tar hälften av skadan · du har ${Math.round(session.world.player.armor || 0)}/100</small></div><button class="city-go" data-act="armor" ${prof.money < 800 || (session.world.player.armor || 0) >= 100 ? 'disabled' : ''}>+50 · 800 kr</button></div>
+            </div>
             <div class="phone-member">💰 Du har ${(prof.money || 0).toLocaleString('sv-SE')} kr · SPACE slår/skjuter · Q byter vapen</div>
             <div class="city-row"><button class="city-go alt" data-act="decline-guns">Klar <small>(Esc)</small></button></div>
         </div>`);
@@ -233,6 +265,92 @@ function showPlace() {
             <div class="place-actions">${rows}</div>
             <div class="phone-member">💰 ${(p.money || 0).toLocaleString('sv-SE')} kr · ❤️ ${Math.ceil(w.player.hp)}/${w.player.maxHp}${stars(w.wanted) ? ` · 👮 ${stars(w.wanted)}` : ''}</div>
         </div>`);
+}
+
+// Rekryteraren vid HQ: se vilka som finns, roll, egenskaper och pris innan du anställer
+function showRecruit() {
+    const w = session.world;
+    const offers = w.recruitOffers();
+    const crew = w.profile.crew || [];
+    const rows = offers.map(o => {
+        const R = ROLES[o.role];
+        const hired = crew.some(m => m.id === o.id);
+        return `<div class="gun-row"><div class="gun-icon">${R.icon}</div><div class="gun-name">${escapeHtml(o.name)} · ${R.name}<small>${escapeHtml(R.desc)} · ${escapeHtml(o.trait)} · ❤️ ${o.hp} · 👊 ${o.dmg[0]}–${o.dmg[1]} · 🏃 ${o.speed}</small></div>
+            <button class="city-go" data-act="hire:${o.id}" ${o.ok ? '' : 'disabled'}>${hired ? '✔ Anställd' : o.ok ? `Anställ · ${o.cost.toLocaleString('sv-SE')} kr` : escapeHtml(o.reason)}</button></div>`;
+    }).join('');
+    const mine = crew.map(m => `<div class="gun-row"><div class="gun-icon">${ROLES[m.role].icon}</div><div class="gun-name">${escapeHtml(m.name)} · ${ROLES[m.role].name}<small>${escapeHtml(m.trait || '')}</small></div><button class="city-go alt" data-act="fire:${m.id}">Säg upp</button></div>`).join('');
+    showModal('recruit', `
+        <div class="city-card phone" style="--gang:#22c55e">
+            <div class="phone-head">👥 Rekryteraren · <span>${crew.length}/${CREW_MAX} i ditt crew</span></div>
+            <p class="phone-brief">"Behöver du folk? Du betalar en gång — inga löner. Slås de ner reser de sig efter en stund." Order: 1 följ · 2 stanna · 3 anfall (👥 på mobilen)</p>
+            <div class="gun-list">${rows}</div>
+            ${mine ? `<div class="phone-member">Ditt crew</div><div class="gun-list">${mine}</div>` : ''}
+            <div class="phone-member">💰 Du har ${(w.profile.money || 0).toLocaleString('sv-SE')} kr</div>
+            <div class="city-row"><button class="city-go alt" data-act="close-modal">Klar <small>(Esc)</small></button></div>
+        </div>`);
+}
+
+// Telefonen i stan: tjänster och crew-order (SMS kopplas in när man spelar online)
+function showCityPhone() {
+    const w = session.world;
+    const money = w.profile.money || 0;
+    const taxi = w.taxiDestinations().map(d => `<button class="city-go place-act" data-act="taxi:${d.i}" ${money >= d.price ? '' : 'disabled'}>🚕 ${escapeHtml(d.label)} · ${d.price.toLocaleString('sv-SE')} kr</button>`).join('');
+    const doc = w.doctorPrice();
+    const sms = session.opts.sms;
+    showModal('cityphone', `
+        <div class="city-card phone" style="--gang:#38bdf8">
+            <div class="phone-head">📱 Telefonen · <span>${money.toLocaleString('sv-SE')} kr</span></div>
+            ${sms && cityNetActive() ? `<button class="city-go place-act" data-act="sms">💬 SMS till andra spelare${sms.unread() ? ` (${sms.unread()} olästa)` : ''}</button>` : '<p class="phone-brief">💬 SMS till andra spelare fungerar när du spelar online.</p>'}
+            <div class="phone-member">🚑 Doktorn</div>
+            <button class="city-go place-act" data-act="doctor" ${money >= doc ? '' : 'disabled'}>🚑 Ring doktorn · ${doc.toLocaleString('sv-SE')} kr<small>Full hälsa för dig och crewet · kommer inte mitt i en strid</small></button>
+            <div class="phone-member">🚕 Taxi · inte med snuten efter dig</div>
+            <div class="place-actions">${taxi}</div>
+            <div class="phone-member">👥 Crew (${(w.crew || []).length}/${CREW_MAX})</div>
+            <div class="city-row">
+                <button class="city-go" data-act="crew:follow">1 Följ</button>
+                <button class="city-go" data-act="crew:hold">2 Stanna</button>
+                <button class="city-go" data-act="crew:attack">3 Anfall</button>
+            </div>
+            <div class="city-row" style="margin-top:12px"><button class="city-go alt" data-act="close-modal">Stäng <small>(Esc)</small></button></div>
+        </div>`);
+}
+
+// Inne i en lokal: prata med personalen
+function showInteraction(id) {
+    const w = session.world;
+    if (id === 'seller') { showGuns(); return; }
+    const money = w.profile.money || 0;
+    const card = (color, head, brief, rows) => `
+        <div class="city-card phone" style="--gang:${color}">
+            <div class="phone-head">${head}</div>
+            <p class="phone-brief">${brief}</p>
+            <div class="place-actions">${rows}</div>
+            <div class="phone-member">💰 ${money.toLocaleString('sv-SE')} kr · ❤️ ${Math.ceil(w.player.hp)}/${w.player.maxHp}</div>
+            <div class="city-row"><button class="city-go alt" data-act="close-modal">Gå därifrån <small>(Esc)</small></button></div>
+        </div>`;
+    if (id === 'bartender') {
+        const free = w.clubMine();
+        showModal('club', card('#f472b6', '🍸 Bartendern', free ? '"Chefen! Allt är på huset ikväll."' : '"Vad får det lov att vara?"', `
+            <button class="city-go place-act" data-act="club:drink" ${free || money >= 150 ? '' : 'disabled'}>🍸 En drink · ${free ? 'gratis' : '150 kr'}<small>+25 hälsa</small></button>
+            ${free ? '<button class="city-go place-act" data-act="club:rest">🛋️ Låt crewet vila i VIP-rummet<small>Full hälsa för dig och crewet — klubben är er bas</small></button>' : ''}`));
+    } else if (id === 'bouncer') {
+        const b = w.bouncerOffer();
+        const taken = w.doneThisRound('bouncer');
+        showModal('club', card('#f472b6', '🕴️ Vakten', '"Inga vapen, inga bråk. Behöver du en livvakt? Jag slutar här ikväll om priset är rätt."', `
+            <button class="city-go place-act" data-act="club:hire" ${taken || money < b.cost ? 'disabled' : ''}>🛡️ Anställ ${b.name} · ${b.cost.toLocaleString('sv-SE')} kr<small>Livvakt · ❤️ ${b.hp} · 👊 ${b.dmg[0]}–${b.dmg[1]}${taken ? ' · redan anställd den här rundan' : ''}</small></button>`));
+    } else if (id === 'manager') {
+        const info = w.propertyInfo('stripclub');
+        const owner = info.owner ? w.nameOf(info.owner) : null;
+        const waiting = !!w.pending.buy;
+        const brief = info.mine ? `"Klubben är din. ${info.income.toLocaleString('sv-SE')} kr per runda går till dig, och crewet kan vila här."`
+            : owner ? `"${escapeHtml(owner)} äger stället. Vill du ta över får du betala dubbelt — ${escapeHtml(owner)} får ${Math.round(info.price * 0.75).toLocaleString('sv-SE')} kr i ersättning."`
+                : `"Klubben är till salu. Den ger ${info.income.toLocaleString('sv-SE')} kr per runda och blir en bas för ditt crew."`;
+        showModal('manager', card('#f472b6', '💼 Managern · Club Diamant', brief, info.mine ? '' : `
+            <button class="city-go place-act" data-act="club:buy" ${waiting || money < info.price ? 'disabled' : ''}>${waiting ? '⏳ Väntar på värden...' : `💎 ${owner ? 'Ta över' : 'Köp'} klubben · ${info.price.toLocaleString('sv-SE')} kr`}<small>Ägare: ${owner ? escapeHtml(owner) : 'ingen'} · intäkt ${info.income.toLocaleString('sv-SE')} kr/runda · alla spelare ser ägandet</small></button>`));
+    } else if (id === 'stage') {
+        showModal('club', card('#f472b6', '💃 Scenen', 'Musiken dunkar och publiken jublar.', `
+            <button class="city-go place-act" data-act="club:tip" ${money >= 300 ? '' : 'disabled'}>💸 Regna sedlar över scenen · 300 kr<small>+1 rykte</small></button>`));
+    }
 }
 
 function onModalAction(act) {
@@ -277,6 +395,24 @@ function onModalAction(act) {
                 handleEvents();
                 if (r.close) { s.world.leavePlace(); resume(); } else showPlace();
             }
+            else if (act === 'close-modal') resume();
+            else if (act.startsWith('club:')) {
+                const what = act.slice(5);
+                if (what === 'drink') s.world.clubDrink();
+                else if (what === 'rest') s.world.clubCrewRest();
+                else if (what === 'hire') s.world.hireBouncer();
+                else if (what === 'tip') s.world.clubTip();
+                else if (what === 'buy') { s.world.buyProperty('stripclub'); handleEvents(); showInteraction('manager'); return; }
+                handleEvents();
+                resume();
+            }
+            else if (act.startsWith('hire:')) { s.world.recruit(act.slice(5)); handleEvents(); showRecruit(); }
+            else if (act.startsWith('fire:')) { s.world.dismiss(act.slice(5)); handleEvents(); showRecruit(); }
+            else if (act.startsWith('taxi:')) { const ok = s.world.taxi(Number(act.slice(5))); handleEvents(); if (ok) resume(); else showCityPhone(); }
+            else if (act === 'doctor') { const ok = s.world.callDoctor(); handleEvents(); if (ok) resume(); else showCityPhone(); }
+            else if (act.startsWith('crew:')) { s.world.orderCrew(act.slice(5)); resume(); }
+            else if (act === 'sms') { resume(); s.opts.sms?.open(); }
+            else if (act === 'armor') { s.world.buyArmor(); handleEvents(); showGuns(); }
             else if (act.startsWith('gun:') || act.startsWith('ammo:')) {
                 const [kind, id] = act.split(':');
                 if (kind === 'gun') s.world.buyWeapon(id); else s.world.buyAmmo(id);
@@ -335,6 +471,14 @@ function handleEvents() {
             case 'phone': showPhone(e); break;
             case 'shop': showShop(e); break;
             case 'guns': showGuns(); break;
+            case 'recruit': showRecruit(); break;
+            case 'interact': showInteraction(e.id); break;
+            case 'interior':
+                // Musik inne i klubben, tyst i vapenaffären
+                stopRadio();
+                if (e.music === 'club' && !s.musicMuted) playStation(STATIONS.findIndex(st => st.id === 'diamant'));
+                else if (!e.id) syncVehicleAudio();
+                break;
             case 'place': showPlace(); break;
             case 'enterCar': {
                 const v = e.vehicle;
@@ -365,14 +509,22 @@ function frame(ts) {
                 const act = s.modalType === 'phone' ? (s.pendingMission ? 'accept' : ph?.canJoin ? 'join' : 'decline')
                     : s.modalType === 'shop' ? `buy:${Math.min(5, s.pendingShop?.left || 0)}`
                         : s.modalType === 'guns' ? 'decline-guns'
+                            : ['recruit', 'cityphone', 'club', 'manager'].includes(s.modalType) ? 'close-modal'
                             : s.modalType === 'place' ? 'place:leave'
                             : s.modalType === 'intro' ? 'start' : 'resume';
                 onModalAction(act);
-            } else if (inp.pressed('exit')) onModalAction({ phone: 'decline', shop: 'decline-shop', guns: 'decline-guns', place: 'place:leave', pause: 'resume' }[s.modalType] || 'start');
+            } else if (inp.pressed('exit')) onModalAction({ phone: 'decline', shop: 'decline-shop', guns: 'decline-guns', place: 'place:leave', pause: 'resume', recruit: 'close-modal', cityphone: 'close-modal', club: 'close-modal', manager: 'close-modal' }[s.modalType] || 'start');
             else if (inp.pressed('pause') && s.modalType === 'pause') onModalAction('resume');
         } else if (!s.paused) {
             if (inp.pressed('pause')) showPause();
-            else if (inp.pressed('exit')) tryGoHome();
+            else if (inp.pressed('exit')) { if (s.world.showMap) s.world.showMap = false; else tryGoHome(); }
+            if (inp.pressed('map')) s.world.showMap = !s.world.showMap;
+            // Crew-order: 1 följ, 2 stanna, 3 anfall (👥 på mobilen växlar)
+            if (inp.pressed('c1')) s.world.orderCrew('follow');
+            if (inp.pressed('c2')) s.world.orderCrew('hold');
+            if (inp.pressed('c3')) s.world.orderCrew('attack');
+            if (inp.pressed('crew')) { const cur = s.world.crew[0]?.order; s.world.orderCrew(cur === 'follow' ? 'attack' : cur === 'attack' ? 'hold' : 'follow'); }
+            if (inp.pressed('phone')) showCityPhone();
             if (s.world.player.vehicle && inp.pressed('r')) cycleRadio(); // till fots betyder R rån
         }
         if (s.closing) return;
@@ -392,6 +544,14 @@ function frame(ts) {
             if (v && !v.wrecked) engineSet(Math.hypot(v.vx, v.vy) / v.spec.maxSpeed, Math.max(0, state.throttle), v.spec.engine);
             sirenSet(s.world.sirenIntensity());
             if (s.world.finished) { close(s.world.finished); return; }
+        }
+        // Berätta för de andra var jag är (~10 ggr/s), även när jag pausat
+        cityPublish(s.world.netSnapshot(s.paused));
+        if (gameState.isOnline && (s.syncT += dt) > 4) {
+            // Mina pengar och grejer till värden då och då (den som har turen skickar hela läget)
+            s.syncT = 0;
+            const j = JSON.stringify(s.world.profile);
+            if (j !== s.lastSynced) { s.lastSynced = j; if (isMyTurn()) syncState(); else syncMe(); }
         }
         s.renderer.updateCamera(s.world, s.paused ? 0 : dt);
         s.renderer.draw(s.world, s.paused ? 0 : dt);

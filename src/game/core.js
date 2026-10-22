@@ -1,4 +1,5 @@
 import { SHOPS, EVENTS, PITCH_SUCCESS, PITCH_FAIL, CARS } from '../data/gameData.js';
+import { PROPERTIES } from '../multiplayer/authority.js';
 import { gameState, currentPlayer, formatNum, saveGame, jailPlayer, isMyTurn } from '../game/state.js';
 import { playSound, spawnParticles, showToast } from '../utils/effects.js';
 import { syncState, isRoomHost } from '../multiplayer/sync.js';
@@ -30,6 +31,8 @@ export function updateTurnLock() {
     else if (gameState.aiThinking && p) msg = `🤖 ${p.char.name} gör sitt drag...`;
     else if (!isMyTurn() && p) msg = `⏳ Väntar på ${p.char.icon} ${p.char.name}...`;
     screen.classList.toggle('locked', !!msg);
+    // Online är stan gemensam: man kan åka dit även när det är någon annans tur
+    screen.classList.toggle('shared-city', !!gameState.isOnline && !gameState.gameOver);
     banner.textContent = msg;
     banner.style.display = msg ? 'block' : 'none';
 }
@@ -366,6 +369,10 @@ export function endTurn(fromAI = false) {
         const biz = SHOPS.find(s => s.id === id);
         totalIncome += calcIncome(biz, p.levels[id] || 1, p);
     });
+    // Delade fastigheter i stan (ägaren bestäms av värden)
+    for (const [prop, own] of Object.entries(gameState.cityOwners || {})) {
+        if (own && own.owner === p.charKey && PROPERTIES[prop]) totalIncome += PROPERTIES[prop].income;
+    }
     p.money += totalIncome;
     p.totalEarned = (p.totalEarned || 0) + totalIncome;
     if (totalIncome > 0) showToast(`💰 Inkomst: +${formatNum(totalIncome)}`);
@@ -394,6 +401,7 @@ export function endTurn(fromAI = false) {
         return;
     }
     // Next player
+    gameState.turnSeq = (gameState.turnSeq || 0) + 1;
     gameState.currentPlayerIdx = (gameState.currentPlayerIdx + 1) % gameState.players.length;
     if (gameState.currentPlayerIdx === 0) gameState.round++;
     const next = currentPlayer();
