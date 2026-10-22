@@ -2612,7 +2612,7 @@ export class World {
         if (p.vehicle) {
             if (p.vehicle.wrecked) this.hint = 'E — HOPPA UT!';
             else if (this.date) this.hint = `💃 Kör ${this.date.name} hem — följ den rosa pilen`;
-            else if (door) this.hint = door.name === 'Nattklubben' ? '🍾 Kör fram till entrén = dejt · E = kliv ur och gå in' : `${door.icon} ${door.name} — E kliv ur och gå in`;
+            else if (door) this.hint = door.name === 'Nattklubben' ? '🍾 Kör fram = dejt · E = gå in' : `${door.icon} ${door.name} — E kliv ur och gå in`;
             return;
         }
         const v = this.nearestVehicle(p.x, p.y, 38);

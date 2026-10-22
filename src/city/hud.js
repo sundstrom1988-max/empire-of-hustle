@@ -210,7 +210,7 @@ export class Hud {
         if (this.banner && !world.interior) {
             const b = this.banner;
             const a = Math.min(1, b.life, (b.max - b.life) * 4);
-            const by = narrow ? H * 0.3 : H * 0.2;
+            const by = narrow ? Math.max(H * 0.36, 300) : H * 0.2; // under knappraden och minikartan på mobilen
             ctx.globalAlpha = a;
             outlined(ctx, b.text, W / 2, by, narrow ? 34 : 52, b.color, 'center', BIG_FONT, 7);
             outlined(ctx, b.sub, W / 2, by + (narrow ? 30 : 42), narrow ? 13 : 16, b.subColor || '#fff', 'center', BIG_FONT, 4);
