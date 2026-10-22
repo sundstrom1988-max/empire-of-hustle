@@ -397,7 +397,13 @@ export class World {
             const w = WEAPONS[this.profile.weapon] || WEAPONS.fists;
             if (input.punch || (w.auto && input.attack)) this.playerAttack();
             if (input.rob) this.tryRob();
-            if (input.action) { if (this.nearItem) this.tryPickup(this.nearItem); else this.tryEnterVehicle(); }
+            if (input.action) {
+                // E: plocka upp, gå in genom dörren man står vid, eller ta bilen (det som är närmast)
+                const car = this.nearestVehicle(p.x, p.y, 38), door = this.doorInReach(46);
+                if (this.nearItem) this.tryPickup(this.nearItem);
+                else if (door && (!car || door.d - door.extra < distToVehicle(car, p.x, p.y))) door.enter();
+                else this.tryEnterVehicle();
+            }
         }
     }
 
@@ -880,11 +886,15 @@ export class World {
         if (!ownsWeapon(prof, prof.weapon)) prof.weapon = 'fists';
         const id = prof.weapon || 'fists', w = WEAPONS[id] || WEAPONS.fists;
         if (!w.melee && !((prof.ammo[id] || 0) > 0)) {
-            this.punchCd = 0.25;
+            // Slut på skott: man slåss med det man har i stället för att stå och klicka
+            const fallback = ownsWeapon(prof, 'bat') ? 'bat' : 'fists';
+            prof.weapon = fallback;
             this.sfx('click', 0.7);
-            if (this.noAmmoT <= 0) { this.noAmmoT = 3; this.message(`${w.icon} Slut på ammo! Q byter vapen — mer ammo hos Pang-Pelle 🔫`); }
+            if (this.noAmmoT <= 0) { this.noAmmoT = 3; this.message(`${w.icon} Slut på ammo — du slåss med ${WEAPONS[fallback].name.toLowerCase()}. Mer ammo hos Pang-Pelle 🔫`); }
+            this.playerAttack();
             return;
         }
+        p.protT = 0; // den som slåss är inte skyddad längre
         this.punchCd = w.cd;
         p.punchT = 0.18;
         if (w.melee) this.melee(w);
@@ -904,9 +914,15 @@ export class World {
             const score = dd + (facing > 1.3 ? 14 : 0) - (ped.attack ? 10 : 0);
             if (score < bd) { bd = score; best = ped; }
         }
-        // En annan spelare (eller deras crew) inom räckhåll?
-        const rem = this.remoteInReach(p.x, p.y, range);
+        // En annan spelare (eller deras crew) inom räckhåll? Lite extra marginal: de syns en bit efter på nätet.
+        const rem = this.remoteInReach(p.x, p.y, range + 10);
         if (rem && (!best || rem.d < bd)) {
+            if (rem.prot) {
+                // Nyss tillbaka vid HQ (eller sitter i en meny): slaget biter inte — säg det
+                this.sfx('swing', 0.5);
+                if (this.time - (this.protMsgT ?? -9) > 1.2) { this.protMsgT = this.time; this.floater(rem.x, rem.y - 26, '🛡️ SKYDDAD', '#93c5fd'); }
+                return;
+            }
             this.sfx(w.id === 'bat' ? 'bat' : 'punch');
             p.angle = Math.atan2(rem.y - p.y, rem.x - p.x);
             this.net.request('hit', { target: rem.id, crew: rem.crew, kind: 'melee', dmg: w.dmg[0] + this.rnd() * (w.dmg[1] - w.dmg[0]) + (this.profile.strength || 0) * 3, src: -1 });
@@ -1706,6 +1722,7 @@ export class World {
         if (!v && m.guns?.door && this.enterZone('door-guns', m.guns.door.x, m.guns.door.y, 20)) this.enterInterior('gunshop', m.guns);
         if (!v && m.stripclub?.door && this.enterZone('door-stripclub', m.stripclub.door.x, m.stripclub.door.y, 20)) this.enterInterior('stripclub', m.stripclub);
         if (v && m.club && this.enterZone('club', m.club.x, m.club.y, 70) && speed < 220) this.visitClub();
+        if (!v && m.club && this.enterZone('club-foot', m.club.x, m.club.y, 26)) this.enterPlace(this.nightclubPlace());
         // Gå in genom dörren (mot husväggen). Ditt eget gömställe har garage du kan köra in i.
         for (const d of this.doors()) {
             const door = d.door || d;
@@ -1928,12 +1945,13 @@ export class World {
         let best = null;
         for (const r of this.net.remotes().values()) {
             if (r.in || r.dead || r.v) continue;
+            const prot = !!r.prot; // värden nekar träffar på skyddade spelare och deras crew
             const d = Math.hypot(r.rx - x, r.ry - y);
-            if (d <= range && (!best || d < best.d)) best = { id: r.id, crew: -1, x: r.rx, y: r.ry, d };
+            if (d <= range && (!best || d < best.d)) best = { id: r.id, crew: -1, x: r.rx, y: r.ry, d, prot };
             (r.crew || []).forEach((c, idx) => {
                 if (c.d) return;
                 const dc = Math.hypot(c.x - x, c.y - y);
-                if (dc <= range && (!best || dc < best.d)) best = { id: r.id, crew: idx, x: c.x, y: c.y, d: dc };
+                if (dc <= range && (!best || dc < best.d)) best = { id: r.id, crew: idx, x: c.x, y: c.y, d: dc, prot };
             });
         }
         return best;
@@ -1945,6 +1963,11 @@ export class World {
             if (r.in || r.dead) continue;
             const rad = r.v ? 22 : 11;
             if (Math.abs(r.rx - b.x) < rad && Math.abs(r.ry - b.y) < rad && Math.hypot(r.rx - b.x, r.ry - b.y) < rad) {
+                if (r.prot) {
+                    if (b.from === 'player' && this.time - (this.protMsgT ?? -9) > 1.2) { this.protMsgT = this.time; this.floater(r.rx, r.ry - 26, '🛡️ SKYDDAD', '#93c5fd'); }
+                    this.spawnParticle('spark', b.x, b.y);
+                    return true;
+                }
                 this.net.request('hit', { target: r.id, crew: -1, kind: 'bullet', dmg: b.dmg, src: b.src ?? -1, veh: !!r.v });
                 this.spawnParticle('spark', b.x, b.y);
                 return true;
@@ -2199,6 +2222,43 @@ export class World {
         return true;
     }
 
+    // Rummen man går omkring i (inte menyer): Club Diamant och Pang-Pelle
+    specialDoors() {
+        const m = this.city.markers, out = [];
+        if (m.stripclub?.door) {
+            const info = this.propertyInfo('stripclub');
+            const sub = info.mine ? 'DIN KLUBB' : info.owner ? `ÄGS AV ${this.nameOf ? this.nameOf(info.owner) : info.owner}`.toUpperCase() : `TILL SALU · ${info.price.toLocaleString('sv-SE')} KR`;
+            out.push({ id: 'stripclub', door: m.stripclub.door, icon: '💎', name: 'Club Diamant', title: 'CLUB DIAMANT', sub, color: '#f472b6', neon: '#fbcfe8' });
+        }
+        if (m.guns?.door) out.push({ id: 'gunshop', door: m.guns.door, icon: '🔫', name: 'Pang-Pelle', title: 'PANG-PELLE', sub: 'VAPEN · AMMO · VÄST', color: '#f97316', neon: '#fed7aa' });
+        return out;
+    }
+
+    nightclubPlace() {
+        const c = this.city.markers.club;
+        return c ? { kind: 'nightclub', id: 'nightclub', name: 'Nattklubben', x: c.x, y: c.y } : null;
+    }
+
+    // Närmaste ställe man kan gå in på härifrån: { d, icon, name, enter() }
+    doorInReach(maxD = 46) {
+        const p = this.player, m = this.city.markers;
+        let best = null;
+        // extra: nattklubbens entré är en hel trappa, inte en smal dörr
+        const consider = (x, y, icon, name, enter, extra = 0) => {
+            const d = Math.hypot(x - p.x, y - p.y);
+            if (d <= maxD + extra && (!best || d - extra < best.d - best.extra)) best = { d, extra, icon, name, enter };
+        };
+        for (const pl of this.doors()) {
+            const o = pl.door || pl;
+            const icon = pl.kind === 'business' ? SHOPS[pl.slot].icon : pl.kind === 'house' ? (this.ownsHouse(pl) ? '🏡' : '🔑') : '🏦';
+            consider(o.x, o.y, icon, this.placeName(pl), () => this.enterPlace(pl, false));
+        }
+        for (const sd of this.specialDoors()) consider(sd.door.x, sd.door.y, sd.icon, sd.name, () => this.enterInterior(sd.id, sd.id === 'stripclub' ? m.stripclub : m.guns));
+        const nc = this.nightclubPlace();
+        if (nc) consider(nc.x, nc.y, '🍾', nc.name, () => this.enterPlace(nc), 14);
+        return best;
+    }
+
     // ── Ställen att gå in i: fastigheter (företagen), gömställen och banken ──
     doors() {
         const m = this.city.markers;
@@ -2260,6 +2320,18 @@ export class World {
             }
             add('leave', byCar ? '🚗 Kör ut' : '🚪 Gå ut');
             return { icon: owned ? '🏡' : '🔑', title: pl.name, color: owned ? '#22c55e' : '#38bdf8', desc: owned ? 'Ditt gömställe' : `TILL SALU · ${kr(pl.price)}`, actions };
+        }
+        if (pl.kind === 'nightclub') {
+            if (!this.isClubOpen()) {
+                add('leave', '🚪 Gå ut');
+                return { icon: '🍾', title: 'Nattklubben', color: '#9ca3af', desc: 'Stängt. Dörrarna öppnar 20:00 — kom tillbaka då.', actions };
+            }
+            add('dance', '💃 Dansa · 100 kr', { disabled: money < 100, note: '+15 ❤️' });
+            const vipDone = this.doneThisRound('nightvip');
+            add('nightvip', `🍾 VIP-bord · ${kr(1000)}`, { disabled: vipDone || money < 1000, note: vipDone ? 'Redan gjort den här rundan' : '+40 ❤️ och +2 rykte' });
+            add('date', '💘 Hitta en dejt', { disabled: true, note: prof.dateThisRound ? 'Du har redan haft en dejt den här rundan' : 'Kör fram till entrén i en fet bil — hon vill bli skjutsad hem' });
+            add('leave', '🚪 Gå ut');
+            return { icon: '🍾', title: 'Nattklubben', color: '#f472b6', desc: 'Basen pumpar och ljusen blinkar.', actions };
         }
         const done = this.doneThisRound('bank');
         add('robbank', '💰 Råna banken', { disabled: done || !this.armed(), note: done ? 'Redan rånad den här rundan' : this.armed() ? 'Kameror överallt — snuten kommer direkt (3 stjärnor)' : 'Du behöver ett laddat skjutvapen i handen (Pang-Pelle 🔫)' });
@@ -2334,6 +2406,20 @@ export class World {
                 this.big('NYTT GÖMSTÄLLE!', '#22c55e', `🏡 ${pl.name}`);
                 break;
             }
+            case 'dance':
+                if (!this.spend(100)) break;
+                p.hp = Math.min(p.maxHp, p.hp + 15);
+                this.sfx('coin', 0.6);
+                this.message('💃 Du dansade loss på golvet. +15 hälsa.');
+                break;
+            case 'nightvip':
+                if (!this.spend(1000)) break;
+                this.markDone('nightvip');
+                p.hp = Math.min(p.maxHp, p.hp + 40);
+                prof.rep = (prof.rep || 0) + 2;
+                this.sfx('coin');
+                this.message('🍾 Champagne och vibes. +40 hälsa, +2 rykte.');
+                break;
             case 'rest': p.hp = p.maxHp; this.time += 24; this.message('🛏️ Du sov en timme. Full hälsa.'); break;
             case 'repair': p.vehicle.hp = p.vehicle.maxHp; this.sfx('spray'); this.message('🔧 Bilen är lagad.'); break;
             case 'hide':
@@ -2522,24 +2608,26 @@ export class World {
         const p = this.player;
         this.hint = '';
         if (this.state !== 'play') return;
+        const door = this.doorInReach(p.vehicle ? 110 : 80);
         if (p.vehicle) {
             if (p.vehicle.wrecked) this.hint = 'E — HOPPA UT!';
             else if (this.date) this.hint = `💃 Kör ${this.date.name} hem — följ den rosa pilen`;
+            else if (door) this.hint = door.name === 'Nattklubben' ? '🍾 Kör fram till entrén = dejt · E = kliv ur och gå in' : `${door.icon} ${door.name} — E kliv ur och gå in`;
             return;
         }
         const v = this.nearestVehicle(p.x, p.y, 38);
         const near = r => this.peds.find(pd => Math.hypot(pd.x - p.x, pd.y - p.y) < r && !pd.robbed && !pd.attack);
         const gun = !(WEAPONS[this.profile.weapon] || WEAPONS.fists).melee;
-        if (v && !v.wrecked) this.hint = v.driver && v.driver !== 'player' ? `E — Sno ${v.spec.name}` : `E — Kör ${v.spec.name}`;
+        // Samma ordning som E-knappen: föremål, dörr, bil
+        const atDoor = door && door.d <= 46 + door.extra && (!v || door.d - door.extra < distToVehicle(v, p.x, p.y));
+        if (this.nearItem) this.hint = `E — Plocka upp ${ITEM_TYPES[this.nearItem.type].icon} ${ITEM_TYPES[this.nearItem.type].label}`;
+        else if (atDoor) this.hint = `E — Gå in: ${door.icon} ${door.name}`;
+        else if (v && !v.wrecked) this.hint = v.driver && v.driver !== 'player' ? `E — Sno ${v.spec.name}` : `E — Kör ${v.spec.name}`;
         else if (this.peds.some(pd => pd.attack && !pd.targetPed && Math.hypot(pd.x - p.x, pd.y - p.y) < (gun ? 300 : 120))) this.hint = gun ? 'SPACE — SKJUT!' : 'SPACE — SLÅ!';
-        else if (this.nearItem) this.hint = `E — Plocka upp ${ITEM_TYPES[this.nearItem.type].icon} ${ITEM_TYPES[this.nearItem.type].label}`;
         else if (near(28)) this.hint = near(28).down > 0 ? 'R — Länsa fickorna' : 'R — Råna · SPACE — Slå';
         else if (this.buyer) this.hint = '💸 En kund är på väg...';
         else if ((this.profile.cityGoods || 0) > 0 && this.sellIdle < 1.2) this.hint = '🎒 Stå still så kommer kunderna';
         else if (Math.hypot(p.x - this.city.markers.home.x, p.y - this.city.markers.home.y) < 90 && this.canGoHome()) this.hint = 'ESC — Åk hem till imperiet';
-        else {
-            const d = this.doors().find(o => Math.hypot((o.door || o).x - p.x, (o.door || o).y - p.y) < 70);
-            if (d) this.hint = `🚪 ${this.placeName(d)} — gå mot dörren`;
-        }
+        else if (door) this.hint = `${door.icon} ${door.name} — gå fram till dörren`;
     }
 }

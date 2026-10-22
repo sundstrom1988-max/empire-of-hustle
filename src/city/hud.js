@@ -274,7 +274,8 @@ export class Hud {
 
         // ── Tips ── (på touch heter knapparna annat än tangenterna)
         let hint = world.hint;
-        if (hint && opts.touch) hint = hint.replace('ESC —', '🏠 HEM —').replaceAll('SPACE —', '⤵ —').replace(/^R —/, '💰 —');
+        const fightIcon = p.vehicle ? '⤵' : (WEAPONS[profile.weapon] || WEAPONS.fists).icon;
+        if (hint && opts.touch) hint = hint.replace('ESC —', '🏠 HEM —').replaceAll('SPACE —', `${fightIcon} —`).replace(/^R —/, '💰 —');
         if (hint) outlined(ctx, hint, W / 2, py - (lines.length ? 22 : 8), narrow ? 13 : 16, '#fff', 'center', BIG_FONT, 4);
 
         // ── Minikarta över hela stan ──

@@ -680,6 +680,121 @@ describe('Slagsmål', () => {
         for (let i = 0; i < 10; i++) w.update(DT, IDLE);
         expect(g.x).toBeGreaterThan(x0);
     });
+
+    it('slut på skott: SPACE slår med nävarna i stället för att bara klicka', () => {
+        const profile = createPlayerState('kimit');
+        profile.weapons = ['pistol']; profile.ammo = { pistol: 0 }; profile.weapon = 'pistol';
+        const w = makeWorld(73, profile);
+        w.player.x = 8 * TILE + 32; w.player.y = 3 * TILE + 32; w.player.angle = 0;
+        w.manageSpawns = () => { };
+        const g = createPed(w.player.x + 16, w.player.y, w.rnd, { type: 'gang', gang: 'dods', attack: true, attackT: 60 });
+        w.peds = [g];
+        const hp0 = g.hp;
+        w.update(DT, { ...IDLE, punch: true });
+        expect(g.hp).toBeLessThan(hp0);
+        expect(profile.weapon).toBe('fists');
+        // Med ett basebollträ tar man trät
+        profile.weapons = ['pistol', 'bat']; profile.weapon = 'pistol'; w.punchCd = 0;
+        w.update(DT, { ...IDLE, punch: true });
+        expect(profile.weapon).toBe('bat');
+    });
+});
+
+describe('Slagsmål mot andra spelare', () => {
+    // Ett låtsasnät: en annan spelare står bredvid, värdens beslut kommer inte (vi tittar bara på förfrågan)
+    const withRemote = (prot, dist = 30) => {
+        const w = makeWorld(74);
+        w.player.x = 8 * TILE + 32; w.player.y = 3 * TILE + 32; w.player.angle = 0;
+        w.manageSpawns = () => { }; w.peds = [];
+        const sent = [];
+        const r = { id: 'mehmet', name: 'Mehmet', rx: w.player.x + dist, ry: w.player.y, x: w.player.x + dist, y: w.player.y, prot, crew: [] };
+        w.net = { online: true, remotes: () => new Map([[r.id, r]]), taken: () => new Set(), request: (type, data) => { sent.push({ type, ...data }); return true; } };
+        return { w, sent };
+    };
+
+    it('slaget når en spelare som står en bit bort (marginal för nätet)', () => {
+        const { w, sent } = withRemote(false, 40);
+        w.update(DT, { ...IDLE, punch: true });
+        expect(sent.filter(m => m.type === 'hit')).toHaveLength(1);
+    });
+
+    it('en skyddad spelare: inget slag skickas och man ser varför', () => {
+        const { w, sent } = withRemote(true);
+        w.update(DT, { ...IDLE, punch: true });
+        expect(sent.filter(m => m.type === 'hit')).toHaveLength(0);
+        expect(w.floaters.some(f => f.text.includes('SKYDDAD'))).toBe(true);
+    });
+
+    it('den som slåss tappar sitt eget skydd', () => {
+        const { w } = withRemote(false);
+        w.player.protT = 6;
+        expect(w.netSnapshot().prot).toBe(true);
+        w.update(DT, { ...IDLE, punch: true });
+        expect(w.player.protT).toBe(0);
+        expect(w.netSnapshot().prot).toBe(false);
+    });
+});
+
+describe('Gå in med E', () => {
+    const DXS = [0, 1, 0, -1], DYS = [-1, 0, 1, 0];
+    const infront = (w, o, dist) => { w.player.x = o.x - DXS[o.side] * dist; w.player.y = o.y - DYS[o.side] * dist; w.peds = []; w.manageSpawns = () => { }; w.vehicles = []; };
+
+    it('E vid en butiksdörr öppnar butiken, och tipset säger det', () => {
+        const w = makeWorld(90);
+        const shop = city.markers.businesses[0];
+        infront(w, shop.door, 36);
+        w.update(DT, IDLE);
+        expect(w.place).toBe(null); // inte ända fram — ingen automatisk dörr
+        expect(w.hint).toContain('E — Gå in');
+        w.update(DT, { ...IDLE, action: true });
+        expect(w.place?.pl).toBe(shop);
+    });
+
+    it('E vid Club Diamant går in i klubben, i bil säger tipset kliv ur', () => {
+        const w = makeWorld(91);
+        const o = city.markers.stripclub.door;
+        infront(w, o, 36);
+        w.update(DT, { ...IDLE, action: true });
+        expect(w.interior?.id).toBe('stripclub');
+        w.exitInterior();
+        const car = createVehicle('sedan', o.x - DXS[o.side] * 70, o.y - DYS[o.side] * 70, 0);
+        w.vehicles.push(car); car.driver = 'player'; w.player.vehicle = car;
+        w.player.x = car.x; w.player.y = car.y;
+        w.update(DT, IDLE);
+        expect(w.hint).toContain('kliv ur');
+    });
+
+    it('nattklubben går att gå in på till fots — dansa och VIP, dejten kräver bil', () => {
+        const w = makeWorld(92);
+        const c = city.markers.club;
+        w.peds = []; w.manageSpawns = () => { };
+        w.time = (21 - 19.5) * 24; // 21:00, öppet
+        w.player.x = c.x; w.player.y = c.y;
+        w.update(DT, IDLE);
+        expect(w.place?.pl.kind).toBe('nightclub');
+        const info = w.placeInfo();
+        expect(info.actions.map(a => a.id)).toEqual(['dance', 'nightvip', 'date', 'leave']);
+        expect(info.actions.find(a => a.id === 'date').disabled).toBe(true);
+        w.profile.money = 2000; w.player.hp = 50;
+        w.placeAction('dance');
+        expect(w.profile.money).toBe(1900);
+        expect(w.player.hp).toBe(65);
+        w.placeAction('nightvip');
+        expect(w.profile.money).toBe(900);
+        expect(w.placeInfo().actions.find(a => a.id === 'nightvip').disabled).toBe(true);
+    });
+
+    it('nattklubben är stängd före 20:00', () => {
+        const w = makeWorld(93);
+        const c = city.markers.club;
+        w.peds = []; w.manageSpawns = () => { };
+        w.time = 0; // 19:30
+        w.enterPlace(w.nightclubPlace());
+        const info = w.placeInfo();
+        expect(info.desc).toContain('20:00');
+        expect(info.actions.map(a => a.id)).toEqual(['leave']);
+        expect(c).toBeTruthy();
+    });
 });
 
 describe('Ställen att gå in i', () => {

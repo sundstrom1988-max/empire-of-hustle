@@ -52,7 +52,7 @@ function buildOverlay(touch) {
                 <button data-key="crew" class="ct-crew" aria-label="Crew-order">👥</button>
                 <button data-key="weapon" class="ct-wpn" aria-label="Byt vapen">🔫</button>
                 <button data-key="act" class="ct-act" aria-label="In/ur bil">E</button>
-                <button data-key="hb" class="ct-hb" aria-label="Handbroms">⤵</button>
+                <button data-key="hb" class="ct-hb ct-fight" aria-label="Slå">👊</button>
                 <button data-key="horn" class="ct-horn" aria-label="Tuta">📯</button>
                 <button data-key="down" aria-label="Broms/back">▼</button>
                 <button data-key="up" class="ct-gas" aria-label="Gas">▲</button>
@@ -64,7 +64,7 @@ function buildOverlay(touch) {
 
 function controlsHelp(touch) {
     return touch
-        ? `<div class="city-help"><b>▲▼◀▶</b> kör / gå · <b>E</b> in/ur bil · <b>⤵</b> handbroms / slå / skjut · <b>💰</b> råna · <b>🔫</b> byt vapen · <b>📯</b> tuta · <b>📻</b> radio</div>`
+        ? `<div class="city-help"><b>▲▼◀▶</b> kör / gå · <b>👊</b> slå / skjut (blir <b>⤵</b> handbroms i bilen) · <b>E</b> in/ur bil, plocka upp · <b>💰</b> råna · <b>🔫</b> byt vapen · <b>👥</b> crew-order · <b>📯</b> tuta · <b>📱</b> telefon</div>`
         : `<div class="city-help"><b>WASD/Pilar</b> kör/gå · <b>Shift</b> spring · <b>E</b> in/ur bil, plocka upp · <b>Space</b> handbroms / slå / skjut · <b>R</b> råna (till fots) / radio (i bil) · <b>Q</b> byt vapen · <b>M</b> karta · <b>T</b> telefon · <b>1 2 3</b> crew: följ / stanna / anfall · <b>H</b> tuta · <b>P</b> paus · <b>Esc</b> hem</div>`;
 }
 
@@ -463,6 +463,21 @@ function cycleRadio() {
     s.hud.onEvent({ type: 'radio', name: STATIONS[v.radio].name, tag: STATIONS[v.radio].tag });
 }
 
+// Touch: samma knapp är slag/skott till fots och handbroms i bilen — visa vilket just nu
+function updateTouchLabels() {
+    const s = session, w = s.world;
+    const hb = s.hbBtn || (s.hbBtn = s.overlay.querySelector('.ct-hb'));
+    if (!hb) return;
+    const inCar = !!w.player.vehicle;
+    const wpn = WEAPONS[w.profile.weapon] || WEAPONS.fists;
+    const mode = inCar ? 'car' : wpn.id;
+    if (hb.dataset.mode === mode) return;
+    hb.dataset.mode = mode;
+    hb.textContent = inCar ? '⤵' : wpn.icon;
+    hb.setAttribute('aria-label', inCar ? 'Handbroms' : wpn.melee ? 'Slå' : 'Skjut');
+    hb.classList.toggle('ct-fight', !inCar);
+}
+
 function handleEvents() {
     const s = session, w = s.world;
     for (const e of w.events) {
@@ -554,6 +569,7 @@ function frame(ts) {
             const j = JSON.stringify(s.world.profile);
             if (j !== s.lastSynced) { s.lastSynced = j; if (isMyTurn()) syncState(); else syncMe(); }
         }
+        if (s.touch) updateTouchLabels();
         s.renderer.updateCamera(s.world, s.paused ? 0 : dt);
         s.renderer.draw(s.world, s.paused ? 0 : dt);
         s.hud.draw(s.renderer.ctx, s.world, s.renderer, { touch: s.touch });

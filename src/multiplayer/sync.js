@@ -41,6 +41,7 @@ export const isFirebaseConfigured = isOnlineAvailable;
 export const initFirebase = initOnline;
 
 export function isRoomHost() { return isHost; }
+if (import.meta.env?.DEV && typeof window !== 'undefined') window.__peer = () => peer; // tester: bryt signalservern
 
 function snapshot() {
     const data = JSON.parse(JSON.stringify(gameState));
@@ -56,30 +57,58 @@ function broadcast(msg, except = null) {
     });
 }
 
+// ── Rumskoden måste hållas vid liv ──
+// Tappar signalservern oss (mobilen lägger fliken i bakgrunden, nätet hackar) kan ingen ny gå med
+// förrän vi tagit tillbaka koden. De som redan är med påverkas inte — de pratar direkt med oss.
+let roomGuard = null;
+function reclaimRoom() {
+    if (peer && !peer.destroyed && peer.disconnected) {
+        try { peer.reconnect(); } catch (e) { /* nästa försök om en stund */ }
+    }
+}
+function onVisible() { if (typeof document !== 'undefined' && document.visibilityState === 'visible') reclaimRoom(); }
+function guardRoom() {
+    if (roomGuard) return;
+    roomGuard = setInterval(reclaimRoom, 4000);
+    if (typeof document !== 'undefined') document.addEventListener('visibilitychange', onVisible);
+}
+function unguardRoom() {
+    if (roomGuard) clearInterval(roomGuard);
+    roomGuard = null;
+    if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', onVisible);
+}
+
 // ── Create a room (you are the host) ──
 export function createRoom(playerData, attempt = 0) {
     const roomId = genRoomCode();
     return new Promise((resolve, reject) => {
-        peer = new Peer('empire-' + roomId, PEER_CONFIG);
-        peer.on('open', () => {
+        let opened = false;
+        const me = new Peer('empire-' + roomId, PEER_CONFIG);
+        peer = me;
+        me.on('open', () => {
+            if (opened) return; // samma kod tillbaka efter ett avbrott
+            opened = true;
             isHost = true;
             gameState.roomId = roomId;
             gameState.isOnline = true;
             gameState.hostId = playerData.charKey;
             gameState.myCharKey = playerData.charKey;
+            guardRoom();
             resolve(roomId);
         });
-        peer.on('connection', (conn) => {
+        me.on('disconnected', () => { if (opened) setTimeout(reclaimRoom, 800); });
+        me.on('connection', (conn) => {
             connections.push(conn);
             setupConnection(conn);
             startHeartbeat();
         });
-        peer.on('error', (err) => {
+        me.on('error', (err) => {
             console.error('PeerJS error:', err);
+            if (opened) return; // rummet finns redan: avbrott hanteras av reclaimRoom
             if (err.type === 'unavailable-id' && attempt < 5) {
-                peer.destroy();
+                me.destroy();
                 createRoom(playerData, attempt + 1).then(resolve).catch(reject);
-            } else if (!gameState.roomId) {
+            } else {
                 reject(err);
             }
         });
@@ -343,6 +372,7 @@ export function sendChatOnline(msg) {
 // ── Leave room ──
 export function leaveRoom() {
     stopHeartbeat();
+    unguardRoom();
     connections.forEach(c => { c._closedHandled = true; try { c.close(); } catch (e) { /* ignore */ } });
     connections = [];
     if (peer) { try { peer.destroy(); } catch (e) { /* ignore */ } peer = null; }

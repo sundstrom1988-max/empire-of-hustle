@@ -422,6 +422,32 @@ export class Renderer {
             ctx.lineWidth = 3; ctx.strokeStyle = '#000'; ctx.strokeText(label, fx, fy - 13);
             ctx.fillStyle = color; ctx.fillText(label, fx, fy - 13);
         }
+        // Club Diamant och Pang-Pelle: riktiga rum man går in i — neonskylt och en dörr som lyser
+        for (const sd of world.specialDoors()) {
+            const o = sd.door;
+            if (o.x < view.x0 - 120 || o.x > view.x1 + 120 || o.y < view.y0 - 120 || o.y > view.y1 + 120) continue;
+            const horiz = o.side === N || o.side === S;
+            const dw = horiz ? 28 : 7, dh = horiz ? 7 : 28;
+            const flick = Math.sin(this.t * 7 + o.x) > -0.7;
+            ctx.fillStyle = '#12060f'; ctx.fillRect(o.x - dw / 2, o.y - dh / 2, dw, dh);
+            ctx.shadowColor = sd.color; ctx.shadowBlur = flick ? 14 : 4;
+            ctx.strokeStyle = sd.color; ctx.lineWidth = 3; ctx.strokeRect(o.x - dw / 2, o.y - dh / 2, dw, dh);
+            const fx = o.x - DX[o.side] * 18, fy = o.y - DY[o.side] * 18;
+            ctx.globalAlpha = 0.3 + (0.5 + 0.5 * Math.sin(this.t * 4 + o.y)) * 0.4;
+            ctx.fillStyle = sd.color; ctx.beginPath(); ctx.arc(fx, fy, 13, 0, Math.PI * 2); ctx.fill();
+            ctx.globalAlpha = 1;
+            // Skylten: stor text med neonglöd, ägaren under
+            ctx.font = 'bold 15px Bungee, Impact, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+            ctx.lineWidth = 4; ctx.strokeStyle = '#000'; ctx.strokeText(sd.title, fx, fy - 44);
+            ctx.fillStyle = flick ? sd.neon : sd.color; ctx.fillText(sd.title, fx, fy - 44);
+            ctx.shadowBlur = 0;
+            this.emoji(sd.icon, fx, fy - 64, 20);
+            ctx.font = '9px Bungee, Impact, sans-serif';
+            ctx.lineWidth = 3; ctx.strokeStyle = '#000'; ctx.strokeText(sd.sub, fx, fy - 27);
+            ctx.fillStyle = '#fff'; ctx.fillText(sd.sub, fx, fy - 27);
+            ctx.font = '10px Bungee, Impact, sans-serif';
+            ctx.strokeText('GÅ IN', fx, fy); ctx.fillStyle = '#fff'; ctx.fillText('GÅ IN', fx, fy);
+        }
     }
 
     drawPickups(world, view) {
