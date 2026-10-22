@@ -13,7 +13,7 @@ import { renderEmpire, renderShop, buyShop, upgradeBiz, sellBiz, confirmSellBiz,
 import { renderMarket, doMarketDeal, renderJail, payBail, addRoastWelcome, sendRoastChat, receiveOnlineChat, initCBDLeaves } from './features/features.js';
 import { initMinigames, playDiceBattle, playGuessNumber, playSlotMachine, playCoinFlip } from './features/minigames.js';
 import { showPhoneToggle, togglePhone, phoneOpenSMS, phoneOpenChat, sendPhoneSMS, phoneOpenDeals, doPhoneDeal, phoneOpenCars, buyCar, phoneOpenWallet, phoneOpenStatus, renderDashboard } from './features/phone.js';
-import { createRoom, joinRoom, startOnlineGame, onPlayerJoin, onChat, onSync, onPeerLeft, onHostLost, sayGoodbye, leaveRoom } from './multiplayer/sync.js';
+import { createRoom, joinRoom, startOnlineGame, onPlayerJoin, onChat, onSync, onPeerLeft, onHostLost, sayGoodbye, leaveRoom, syncMe } from './multiplayer/sync.js';
 import { toggleMusic, toggleSfx, showToast, spawnParticles, startMusic } from './utils/effects.js';
 import { unlockAudio, sfx } from './utils/audio.js';
 import { initSms, smsIncoming, smsAck, closeSmsOverlay, refreshSms } from './features/sms.js';
@@ -567,7 +567,8 @@ window.addEventListener('error', (e) => reportError(e.error || e.message));
 window.addEventListener('unhandledrejection', (e) => reportError(e.reason));
 ['pointerdown', 'keydown'].forEach(ev => window.addEventListener(ev, unlockAudio, { once: true, passive: true }));
 // Säg hejdå när fliken stängs så att de andra inte väntar på en spelare som är borta
-window.addEventListener('pagehide', () => { if (gameState.isOnline) { closeSmsOverlay(); sayGoodbye(); leaveRoom(); } });
+// Stängs fliken: skicka det senaste (t.ex. köp i stan) till värden innan vi säger hejdå
+window.addEventListener('pagehide', () => { if (gameState.isOnline) { closeSmsOverlay(); syncMe(); sayGoodbye(); leaveRoom(); } });
 
 // ── Init ──
 renderApp();

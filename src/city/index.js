@@ -478,6 +478,7 @@ function handleEvents() {
                 stopRadio();
                 if (e.music === 'club' && !s.musicMuted) playStation(STATIONS.findIndex(st => st.id === 'diamant'));
                 else if (!e.id) syncVehicleAudio();
+                s.hud.onEvent(e);
                 break;
             case 'place': showPlace(); break;
             case 'enterCar': {

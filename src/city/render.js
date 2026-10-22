@@ -82,8 +82,13 @@ export class Renderer {
             const z = clamp(Math.min(this.w, this.h) / 760, 0.6, 1.25);
             const W = def.w * (INT.IN_TILE || 32), H = def.h * (INT.IN_TILE || 32);
             const hw = this.w / 2 / z, hh = this.h / 2 / z;
+            // Knappraden ligger överst på bredare skärmar — låt rummet börja under den
+            const top = (this.w > 560 ? 52 : 0) / z;
             const cx = W <= hw * 2 ? W / 2 : clamp(p.x, hw, W - hw);
-            const cy = H <= hh * 2 ? H / 2 : clamp(p.y, hh, H - hh);
+            let cy = H <= hh * 2 - top ? H / 2 - top / 2 : clamp(p.y, hh - top, H - hh);
+            // ...men spelaren får aldrig hamna under personsökaren/touchknapparna längst ner
+            const bottom = (this.w > 560 ? 120 : 260) / z;
+            if (p.y > cy + hh - bottom) cy = p.y - hh + bottom;
             if (!this.cam || this.camIn !== world.interior.id) this.cam = { x: cx, y: cy, zoom: z, sx: 0, sy: 0 };
             this.camIn = world.interior.id;
             const k = Math.min(1, dt * 6);

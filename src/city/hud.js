@@ -79,6 +79,9 @@ export class Hud {
             case 'radio':
                 this.radio = { text: e.name, sub: e.tag || '', life: 3 };
                 break;
+            case 'interior':
+                this.banner = null; // turf-skylten hör till gatan
+                break;
             case 'wanted':
                 if (e.up) this.wantedFlash = 2;
                 break;
@@ -204,7 +207,7 @@ export class Hud {
         }
 
         // ── Distriktsbanner ──
-        if (this.banner) {
+        if (this.banner && !world.interior) {
             const b = this.banner;
             const a = Math.min(1, b.life, (b.max - b.life) * 4);
             const by = narrow ? H * 0.3 : H * 0.2;
@@ -254,10 +257,11 @@ export class Hud {
             }
         }
 
-        // ── Pil mot målet ──
-        if (date) this.drawArrow(ctx, r, world, date.dest, '#f472b6', `💃 ${date.name}s lägenhet`, false, py);
-        if (m && m.target) this.drawArrow(ctx, r, world, m.target, '#ffd23f', m.target.label, false, py);
-        else if (!m && !date && left > 0 && world.state === 'play') {
+        // ── Pil mot målet ── (inte inomhus: där gäller rummets koordinater)
+        const outside = !world.interior;
+        if (date && outside) this.drawArrow(ctx, r, world, date.dest, '#f472b6', `💃 ${date.name}s lägenhet`, false, py);
+        if (m && m.target) { if (outside) this.drawArrow(ctx, r, world, m.target, '#ffd23f', m.target.label, false, py); }
+        else if (!m && !date && left > 0 && world.state === 'play' && outside) {
             // Visa vägen till närmaste öppna telefon
             let best = null, bd = Infinity;
             for (const ph of world.city.markers.phones) {

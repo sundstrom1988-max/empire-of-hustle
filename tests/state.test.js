@@ -94,6 +94,28 @@ describe('save / load', () => {
         expect(loadGame('kimit')).toBe(false);
         expect(localStorage.getItem('empire_save_kimit')).toBeNull();
     });
+    it('sparar pengar, crew, vapen, väst, gömställen och klubbägande', () => {
+        const p = createPlayerState('kimit');
+        p.money = 23200;
+        p.crew = [{ id: 'c2-0-1', name: 'Omar', role: 'guard', trait: 'Tuff (+25 % hälsa)', hp: 112, dmg: [17, 25], speed: 165, cost: 2150 },
+            { id: 'c2-1-2', name: 'Kevin', role: 'gunner', trait: 'Lojal (+10 % hälsa)', hp: 77, dmg: [11, 15], speed: 155, cost: 3200 }];
+        p.weapons = ['pistol', 'shotgun']; p.ammo = { pistol: 12, shotgun: 8 }; p.weapon = 'shotgun';
+        p.armor = 50; p.cityHouses = ['house-1'];
+        gameState.players = [p];
+        gameState.cityOwners = { stripclub: { owner: 'kimit', price: 40000, since: 5 } };
+        gameState.accountKey = 'kimit';
+        saveGame();
+        resetGameState();
+        expect(loadGame('kimit')).toBe(true);
+        const q = gameState.players[0];
+        expect(q.money).toBe(23200);
+        expect(q.crew.map(c => [c.name, c.role, c.hp])).toEqual([['Omar', 'guard', 112], ['Kevin', 'gunner', 77]]);
+        expect(q.weapons).toEqual(['pistol', 'shotgun']);
+        expect(q.ammo).toEqual({ pistol: 12, shotgun: 8 });
+        expect(q.armor).toBe(50);
+        expect(q.cityHouses).toEqual(['house-1']);
+        expect(gameState.cityOwners.stripclub.owner).toBe('kimit');
+    });
     it('clamps a bad currentPlayerIdx', () => {
         localStorage.setItem('empire_hustle_save', JSON.stringify({
             players: [{ charKey: 'kimit' }], currentPlayerIdx: 7

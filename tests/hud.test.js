@@ -62,4 +62,23 @@ describe('HUD', () => {
             hud.update(0.5);
         }
     });
+
+    it('inomhus: ingen turf-skylt och inga pilar mot saker ute på gatan', () => {
+        const w = makeWorld();
+        const hud = new Hud();
+        let arrows = 0;
+        hud.drawArrow = () => { arrows++; };
+        w.state = 'play';
+        hud.draw(fakeCtx(), w, fakeRenderer(w), {});
+        expect(arrows).toBe(1); // ute: pilen mot närmaste telefon
+        hud.onEvent({ type: 'district', id: 'orten', own: false, hostile: true });
+        const club = w.city.markers.stripclub;
+        expect(w.enterInterior('stripclub', club)).toBe(true);
+        for (const e of w.events) hud.onEvent(e);
+        expect(hud.banner).toBe(null);
+        w.mission = { title: 'Leverans', target: { x: 10, y: 10, label: 'Mål' }, timeLeft: 30, timeLimit: 60 };
+        arrows = 0;
+        hud.draw(fakeCtx(), w, fakeRenderer(w), {});
+        expect(arrows).toBe(0);
+    });
 });
