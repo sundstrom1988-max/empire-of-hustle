@@ -10,7 +10,7 @@
 //   hp, maxHp          gäst 28–40, personal 45, vakt 80
 //   brawl              'fight' | 'down' | null — rummets tema rör inte NPC:n då
 //   foe                'player' | en annan NPC | en i mitt crew
-//   flashT, stunT      vit blixt / vacklar efter en träff
+//   flashT, stunT      vit blixt / vacklar efter en träff (stunImm: vacklar inte igen direkt)
 //   windup, punchT     uppdragning före slaget / själva slaget (ritas)
 //   fcd                väntetid till nästa slag
 //   kx, ky             knuff bakåt (px/s)
@@ -30,6 +30,7 @@ const REACH = 38;                                 // spelarens slag (px)
 const CLOSE = 24;                                 // så nära träffar man även snett bakom sig
 const NPC_REACH = 22;                             // NPC:ernas slag (px)
 const SPREAD = 140;                               // gäster inom så här långt reagerar
+const LOOT = 40;                                  // så nära den som ligger för att länsa (px)
 const WINDUP = 0.3;
 const STUN = 0.4;
 const GUN_BUTT = [16, 20];                        // pistolkolv: inga skott inomhus
@@ -87,7 +88,7 @@ function joinFight(n, foe, rnd) {
 function endFight(n) {
     n.brawl = null;
     n.foe = null;
-    n.windup = 0;
+    n.windup = 0; n.stunT = 0; n.stunImm = 0;
     n.leaving = true;
     n.pose = 'walk';
 }
@@ -133,12 +134,19 @@ export function hitNpc(world, n, dmg, by) {
     ensureHp(n, rnd);
     n.hp -= dmg;
     n.flashT = 0.12;
-    n.stunT = STUN;
-    n.windup = 0;
+    // Vacklar och tappar slaget — men inte av varje slag i en serie (då kunde man hålla vem som helst nere),
+    // och vakterna står stadigare
+    const guard = isGuard(n), stagger = !(n.stunImm > 0);
+    if (stagger) {
+        n.stunT = guard ? STUN * 0.5 : STUN;
+        n.stunImm = n.stunT + 0.5;
+        n.windup = 0;
+    }
     const from = by === 'player' ? world.player : by;
     if (from && Number.isFinite(from.x)) {
         const dx = n.x - from.x, dy = n.y - from.y, l = Math.hypot(dx, dy) || 1;
-        n.kx = dx / l * 170; n.ky = dy / l * 170;
+        const k = (guard ? 0.6 : 1) * (stagger ? 170 : 90);
+        n.kx = dx / l * k; n.ky = dy / l * k;
     }
     const mine = by === 'player' || !!(by && by.isCrew);
     if (n.hp <= 0) knockOut(world, n, by);
@@ -158,7 +166,7 @@ function knockOut(world, n, by) {
     n.brawl = 'down';
     n.down = DOWN_TIME;
     n.foe = null;
-    n.windup = 0; n.punchT = 0; n.stunT = 0;
+    n.windup = 0; n.punchT = 0; n.stunT = 0; n.stunImm = 0;
     n.leaving = false;
     n.say = null;
     if (by === 'player') world.floater(n.x, n.y - 26, 'KNOCKOUT!', '#facc15');
@@ -176,7 +184,8 @@ function stir(world, n0) {
         F.guardHits = 0;
         const cs = world.profile.cityStats;
         if (cs) cs.barfights = (cs.barfights || 0) + 1;
-        world.message(guards.length ? '🥊 Barbråk! Vakterna är på väg.' : '🥊 Barbråk!');
+        const what = I.id === 'stripclub' || I.id === 'club' ? 'Barbråk!' : 'Slagsmål!';
+        world.message(`🥊 ${what}${guards.length ? ' Vakterna är på väg.' : ''}`);
     }
     let talk = 0;
     // Vakterna kommer alltid springande
@@ -268,7 +277,7 @@ export function bannedFor(world, id) {
 export function playerRob(world) {
     const I = world.interior, p = world.player;
     if (!canBrawl(I) || p.dead) return false;
-    let best = null, bd = 34;
+    let best = null, bd = LOOT;
     for (const n of I.state.npcs) {
         if (n.brawl !== 'down' || !(n.down > 0) || n.looted) continue;
         const d = Math.hypot(n.x - p.x, n.y - p.y);
@@ -308,6 +317,7 @@ export function updateBrawl(world, dt) {
         stepFighter(world, I, n, dt);
         if (world.interior !== I) return; // utslängd
     }
+    if (fighters) spread(I, world.player);
     stepCrew(world, I, dt);
     if (!F.on) return;
     F.quietT += dt;
@@ -322,6 +332,26 @@ function calmDown(world, I) {
     for (const n of I.state.npcs) if (n.brawl === 'fight') { endFight(n); any = true; }
     F.on = false;
     if (any) world.message('😮‍💨 Bråket har lugnat sig.');
+}
+
+// Bråkarna trängs inte på samma punkt, och ingen står inuti spelaren
+function spread(I, p) {
+    const def = I.def, list = I.state.npcs.filter(n => n.brawl === 'fight');
+    for (let i = 0; i < list.length; i++) {
+        const a = list[i];
+        for (let j = i + 1; j < list.length; j++) {
+            const b = list[j], dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy);
+            if (d >= 15) continue;
+            const ux = d > 0.01 ? dx / d : Math.cos(i + j), uy = d > 0.01 ? dy / d : Math.sin(i + j), k = (15 - d) / 2;
+            a.x -= ux * k; a.y -= uy * k; b.x += ux * k; b.y += uy * k;
+        }
+        const dx = a.x - p.x, dy = a.y - p.y, d = Math.hypot(dx, dy);
+        if (d < 17) {
+            const ux = d > 0.01 ? dx / d : Math.cos(i), uy = d > 0.01 ? dy / d : Math.sin(i);
+            a.x += ux * (17 - d); a.y += uy * (17 - d);
+        }
+    }
+    for (const a of list) collideInterior(def, a, R);
 }
 
 // Knuffen efter en träff glider ut
@@ -350,6 +380,7 @@ function stepFighter(world, I, n, dt) {
     const def = I.def;
     n.fcd = Math.max(0, (n.fcd || 0) - dt);
     n.stunT = Math.max(0, (n.stunT || 0) - dt);
+    n.stunImm = Math.max(0, (n.stunImm || 0) - dt);
     slide(n, def, dt);
     const foe = foeOf(world, I, n);
     if (!foe) { endFight(n); return; }
@@ -452,7 +483,7 @@ export function brawlHint(world) {
     let down = false, threat = false, guest = false;
     for (const n of I.state.npcs) {
         const d = Math.hypot(n.x - p.x, n.y - p.y);
-        if (n.brawl === 'down') { if (!n.looted && d < 34) down = true; }
+        if (n.brawl === 'down') { if (!n.looted && d < LOOT) down = true; }
         else if (n.brawl === 'fight') { if (n.foe === 'player' && d < 90) threat = true; }
         else if (d < 30 && !n.leaving && hittable(n) && !isGuard(n) && !isStaff(n)) guest = true;
     }

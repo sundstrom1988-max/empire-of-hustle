@@ -114,6 +114,7 @@ body.city-open .cbd-leaf {
 .ct-right .ct-act { grid-area: act; width: 68px; height: 68px; justify-self: end; font-size: 26px; background: rgba(34, 197, 94, 0.45); }
 .ct-right .ct-hb { grid-area: hb; width: 84px; height: 84px; justify-self: end; font-size: 30px; }
 .ct-right .ct-hb.ct-fight { background: rgba(239, 68, 68, 0.5); border-color: rgba(254, 202, 202, 0.7); font-size: 34px; }
+.ct-right .ct-hb.pressed { background: rgba(255, 210, 63, 0.6); border-color: var(--gta-yellow, #ffd23f); }
 
 /* ── Joystick: flytande, nere till vänster ── */
 .ct-stick {
@@ -174,6 +175,22 @@ body.city-open .cbd-leaf {
     border-color: var(--gta-yellow, #ffd23f);
     background: radial-gradient(circle at 36% 30%, #fff3b0, rgba(255, 210, 63, 0.85) 65%);
     transition: none;
+}
+
+/* Liggande telefon: låg skärm — knapparna i en rad så minikartan får plats ovanför */
+@media (max-height: 500px) and (orientation: landscape) {
+    .ct-stick { width: 40%; }
+    .ct-right {
+        grid-template-columns: repeat(4, 46px) 68px 84px;
+        grid-template-rows: 84px;
+        grid-template-areas: "rob wpn crew horn act hb";
+        align-items: center;
+    }
+    .ct-pad button { width: 46px; height: 46px; }
+    .ct-right .ct-rob, .ct-right .ct-wpn { transform: none; }
+    .ct-right .ct-rob.pressed, .ct-right .ct-wpn.pressed { transform: scale(0.94); }
+    .ct-right .ct-act { width: 68px; height: 68px; align-self: end; }
+    .ct-right .ct-hb { width: 84px; height: 84px; }
 }
 
 /* Små telefoner: lite mindre joystick och knappar så de inte möts */

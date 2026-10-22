@@ -204,3 +204,15 @@ describe('stickDrive + stepVehicle', () => {
         expect(maxBack).toBeLessThan(-30);
     });
 });
+
+describe('touchText (tips på mobilen)', () => {
+    it('byter tangenter mot knapparna', async () => {
+        const { touchText } = await import('../src/city/hud.js');
+        expect(touchText('SPACE — SLÅ!', '👊')).toBe('👊 — SLÅ!');
+        expect(touchText('R — Råna · SPACE — Slå', '👊')).toBe('💰 — Råna · 👊 — Slå');
+        expect(touchText('ESC — Åk hem till imperiet', '👊')).toBe('🏠 HEM — Åk hem till imperiet');
+        expect(touchText('🦹 En rånare är ute efter dig! Slå tillbaka (SPACE) eller spring!', '🔪')).toContain('(🔪)');
+        expect(touchText('🔫 Du köpte Pistol! SPACE skjuter, Q byter vapen.', '🔫')).toBe('🔫 Du köpte Pistol! 🔫 skjuter, 🔫 byter vapen.');
+        expect(touchText('E — Kör Volvo', '⤵')).toBe('E — Kör Volvo');
+    });
+});

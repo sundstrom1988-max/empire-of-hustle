@@ -2227,7 +2227,8 @@ export class World {
         this.updateParticles(dt);
         this.updateRemotes(dt);
         const fight = BRAWL.brawlHint(this);
-        this.hint = (I.fight?.on && fight) || (this.nearInteraction ? this.nearInteraction.label : atExit ? '🚪 Ut' : fight);
+        const urgent = fight && (I.fight?.on || fight.startsWith('R')); // mitt i bråket, eller någon att länsa
+        this.hint = urgent ? fight : this.nearInteraction ? this.nearInteraction.label : atExit ? '🚪 Ut' : fight;
     }
 
     // ── Club Diamant: baren, scenen, vakten och managern ──
@@ -2423,7 +2424,7 @@ export class World {
             const owned = (prof.owned || []).includes(shop.id);
             const sv = SERVICES[shop.id];
             const till = this.tillOf(pl.slot), inRoom = this.interior?.biz === pl;
-            const guests = inRoom ? this.interior.state.npcs.filter(n => n.customer || n.kind === 'customer').length : 0;
+            const guests = inRoom ? this.interior.state.npcs.filter(n => (n.customer || n.cust || n.kind === 'customer') && !n.brawl).length : 0;
             if (!owned) add('buy', `🏢 Köp verksamheten · ${kr(shop.price)}`, { disabled: money < shop.price, note: `Personalen fortsätter jobba åt dig · ${kr(shop.income)} per runda i imperiet + kassan här` });
             else {
                 const done = (prof.cityCollected || []).includes(shop.id);

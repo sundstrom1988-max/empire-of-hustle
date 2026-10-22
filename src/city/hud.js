@@ -38,6 +38,12 @@ function wrap(ctx, text, maxW) {
 
 const fmtTime = s => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
 
+// Touch: knapparna heter annat än tangenterna (fight = 👊/vapnet, eller ⤵ i bilen)
+export function touchText(text, fight) {
+    return String(text).replace('ESC —', '🏠 HEM —').replaceAll('SPACE —', `${fight} —`).replace(/^R —/, '💰 —')
+        .replaceAll('(SPACE)', `(${fight})`).replace(/SPACE (slår|skjuter)/g, `${fight} $1`).replace('Q byter vapen', '🔫 byter vapen');
+}
+
 export class Hud {
     constructor() {
         this.msgs = [];
@@ -239,7 +245,8 @@ export class Hud {
             lines.push({ text: head, color: '#bef264' });
             if (m.type === 'vip' && m.stage === 1 && m.damage !== undefined) lines.push({ text: `VIP-skick: ${Math.round((1 - Math.min(1, m.damage * 1.2)) * 100)}%`, color: '#bef264' });
         }
-        for (const msg of this.msgs) for (const l of wrap(ctx, msg.text, pagerW - 24)) lines.push({ text: l, color: '#d9f99d', alpha: Math.min(1, msg.life) });
+        const fightIcon = p.vehicle ? '⤵' : (WEAPONS[profile.weapon] || WEAPONS.fists).icon;
+        for (const msg of this.msgs) for (const l of wrap(ctx, opts.touch ? touchText(msg.text, fightIcon) : msg.text, pagerW - 24)) lines.push({ text: l, color: '#d9f99d', alpha: Math.min(1, msg.life) });
         const lh = narrow ? 18 : 20;
         const ph = lines.length ? lines.length * lh + 18 : 0;
         const py = H - ph - bottomPad;
@@ -277,8 +284,7 @@ export class Hud {
 
         // ── Tips ── (på touch heter knapparna annat än tangenterna)
         let hint = world.hint;
-        const fightIcon = p.vehicle ? '⤵' : (WEAPONS[profile.weapon] || WEAPONS.fists).icon;
-        if (hint && opts.touch) hint = hint.replace('ESC —', '🏠 HEM —').replaceAll('SPACE —', `${fightIcon} —`).replace(/^R —/, '💰 —');
+        if (hint && opts.touch) hint = touchText(hint, fightIcon);
         if (hint) outlined(ctx, hint, W / 2, py - (lines.length ? 22 : 8), narrow ? 13 : 16, '#fff', 'center', BIG_FONT, 4);
 
         // ── Minikarta över hela stan ──

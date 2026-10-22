@@ -73,7 +73,7 @@ describe('Barbråk inomhus', () => {
         // vakten springer fram och slår — men man dör inte inomhus
         const p = w.player, hp0 = p.hp;
         let near = Infinity;
-        for (let i = 0; i < 60 * 12 && w.interior && p.hp >= hp0; i++) {
+        for (let i = 0; i < 60 * 12 && w.interior && near >= 30; i++) {
             w.update(DT, IDLE);
             near = Math.min(near, Math.hypot(bouncer.x - p.x, bouncer.y - p.y));
         }

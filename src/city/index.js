@@ -63,7 +63,7 @@ function buildOverlay(touch) {
 
 function controlsHelp(touch) {
     return touch
-        ? `<div class="city-help"><b>🕹️ Joysticken</b> — sätt tummen nere till vänster och dra: gå dit du drar, hela vägen ut = spring · i bilen kör den dit du drar (dra bakåt för att backa) · <b>👊</b> slå / skjut (blir <b>⤵</b> handbroms i bilen) · <b>E</b> gå in genom dörrar, in/ur bil, plocka upp · <b>💰</b> råna · <b>🔫</b> byt vapen · <b>👥</b> crew-order · <b>📯</b> tuta · <b>📱</b> telefon · <b>🔍</b> byt vy<br><small>Version ${escapeHtml(BUILD)}</small></div>`
+        ? `<div class="city-help"><b>🕹️ Joysticken</b> (tummen nere till vänster) gå / kör dit du drar · ända ut = spring · dra bakåt i bilen = backa · <b>👊</b> slå / skjut (blir <b>⤵</b> handbroms i bilen) · <b>E</b> gå in genom dörrar, in/ur bil, plocka upp · <b>💰</b> råna · <b>🔫</b> byt vapen · <b>👥</b> crew-order · <b>📯</b> tuta · <b>📱</b> telefon · <b>🔍</b> byt vy<br><small>Version ${escapeHtml(BUILD)}</small></div>`
         : `<div class="city-help"><b>WASD/Pilar</b> kör/gå · <b>Musen</b> siktar, <b>vänsterklick</b> slår/skjuter, <b>hjulet</b> zoomar · <b>Shift</b> spring · <b>E</b> gå in genom dörrar, in/ur bil, plocka upp · <b>Space</b> handbroms / slå / skjut · <b>R</b> råna (till fots) / radio (i bil) · <b>Q</b> byt vapen · <b>M</b> karta · <b>T</b> telefon · <b>V</b> byt vy · <b>1 2 3</b> crew: följ / stanna / anfall · <b>H</b> tuta · <b>P</b> paus · <b>Esc</b> hem<br><small>Version ${escapeHtml(BUILD)}</small></div>`;
 }
 
@@ -258,7 +258,7 @@ function showGuns() {
             <div class="gun-list">${rows}
                 <div class="gun-row"><div class="gun-icon">🦺</div><div class="gun-name">Skyddsväst<small>+50 skydd · tar hälften av skadan · du har ${Math.round(session.world.player.armor || 0)}/100</small></div><button class="city-go" data-act="armor" ${prof.money < 800 || (session.world.player.armor || 0) >= 100 ? 'disabled' : ''}>+50 · 800 kr</button></div>
             </div>
-            <div class="phone-member">💰 Du har ${(prof.money || 0).toLocaleString('sv-SE')} kr · SPACE slår/skjuter · Q byter vapen</div>
+            <div class="phone-member">💰 Du har ${(prof.money || 0).toLocaleString('sv-SE')} kr · ${session.touch ? '👊 slår/skjuter · 🔫 byter vapen' : 'SPACE slår/skjuter · Q byter vapen'}</div>
             <div class="city-row"><button class="city-go alt" data-act="decline-guns">Klar <small>(Esc)</small></button></div>
         </div>`);
 }
@@ -557,6 +557,7 @@ function frame(ts) {
     s.raf = requestAnimationFrame(frame);
     const dt = Math.min(0.1, Math.max(0, (ts - s.last) / 1000));
     s.last = ts;
+    let keepEdges = false; // inget steg den här framen: knapptrycken väntar på nästa
     try {
         const inp = s.input;
         if (s.modalType) {
@@ -590,23 +591,28 @@ function frame(ts) {
         if (s.closing) return;
         if (!s.paused) {
             s.acc += dt;
-            const state = inp.state();
-            // Musen siktar (dator): världskoordinaten under pekaren
-            state.aim = !s.touch && inp.aimActive() ? s.renderer.screenToWorld(inp.mouse.x, inp.mouse.y) : null;
-            // Joysticken i bilen: kör dit man drar (gas och ratt räknas om från riktningen)
-            const car = s.world.player.vehicle;
-            if (car && inp.stick.active) Object.assign(state, stickDrive(inp.stick, car.angle, car.vx * Math.cos(car.angle) + car.vy * Math.sin(car.angle), car.spec.maxSpeed));
-            let steps = 0;
-            while (s.acc >= STEP && steps < 5) {
-                s.world.update(STEP, steps === 0 ? state : { ...state, action: false, punch: false, rob: false, weapon: false });
-                s.acc -= STEP;
-                steps++;
-            }
-            if (steps === 5) s.acc = 0;
+            // Läs kontrollerna bara när ett steg faktiskt körs: 90/120 Hz-skärmar har frames
+            // utan steg, och då skulle knapptryck (👊, E, 💰 …) ätas upp och försvinna
+            if (s.acc >= STEP) {
+                const state = inp.state();
+                // Musen siktar (dator): världskoordinaten under pekaren
+                state.aim = !s.touch && inp.aimActive() ? s.renderer.screenToWorld(inp.mouse.x, inp.mouse.y) : null;
+                // Joysticken i bilen: kör dit man drar (gas och ratt räknas om från riktningen)
+                const car = s.world.player.vehicle;
+                if (car && inp.stick.active) Object.assign(state, stickDrive(inp.stick, car.angle, car.vx * Math.cos(car.angle) + car.vy * Math.sin(car.angle), car.spec.maxSpeed));
+                s.throttle = state.throttle;
+                let steps = 0;
+                while (s.acc >= STEP && steps < 5) {
+                    s.world.update(STEP, steps === 0 ? state : { ...state, action: false, punch: false, rob: false, weapon: false });
+                    s.acc -= STEP;
+                    steps++;
+                }
+                if (steps === 5) s.acc = 0;
+            } else keepEdges = true;
             handleEvents();
             s.hud.update(dt);
             const v = s.world.player.vehicle;
-            if (v && !v.wrecked) engineSet(Math.hypot(v.vx, v.vy) / v.spec.maxSpeed, Math.max(0, state.throttle), v.spec.engine);
+            if (v && !v.wrecked) engineSet(Math.hypot(v.vx, v.vy) / v.spec.maxSpeed, Math.max(0, s.throttle || 0), v.spec.engine);
             sirenSet(s.world.sirenIntensity());
             if (s.world.finished) { close(s.world.finished); return; }
         }
@@ -628,7 +634,7 @@ function frame(ts) {
         s.world.viewDense = zm < 1 ? Math.min(1.6, 1 / (zm * zm)) : 1;
         s.renderer.draw(s.world, s.paused ? 0 : dt);
         s.hud.draw(s.renderer.ctx, s.world, s.renderer, { touch: s.touch });
-        inp.endFrame();
+        if (!keepEdges) inp.endFrame();
         s.errors = Math.max(0, s.errors - 0.02);
     } catch (err) {
         console.error('Stan-fel:', err);

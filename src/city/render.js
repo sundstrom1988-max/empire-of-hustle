@@ -620,8 +620,8 @@ export class Renderer {
         }
         if (npc.maxHp > 0 && npc.hp < npc.maxHp) {
             const f = Math.max(0, npc.hp / npc.maxHp);
-            ctx.fillStyle = 'rgba(0,0,0,0.7)'; ctx.fillRect(npc.x - 13, npc.y - 36, 26, 6);
-            ctx.fillStyle = f < 0.35 ? '#ef4444' : '#facc15'; ctx.fillRect(npc.x - 12, npc.y - 35, 24 * f, 4);
+            ctx.fillStyle = 'rgba(0,0,0,0.7)'; ctx.fillRect(npc.x - 13, npc.y - 40, 26, 6);
+            ctx.fillStyle = f < 0.35 ? '#ef4444' : '#facc15'; ctx.fillRect(npc.x - 12, npc.y - 39, 24 * f, 4);
         }
         const guard = npc.kind === 'bouncer' || npc.kind === 'guard';
         if (npc.foe === 'player') {
@@ -629,7 +629,12 @@ export class Renderer {
             this.ring(npc.x, npc.y, 15, '#ef4444', 2.5);
             ctx.globalAlpha = 1;
         }
-        if (guard || npc.foe === 'player') this.emoji(guard ? '🕴️' : '😠', npc.x, npc.y - 24, 14);
+        if (guard) {
+            // 🕴️ är en tunn figur: ljus platta bakom så att den syns mot dansgolvet
+            ctx.fillStyle = 'rgba(255,255,255,0.85)'; ctx.beginPath(); ctx.arc(npc.x, npc.y - 25, 9, 0, Math.PI * 2); ctx.fill();
+            ctx.strokeStyle = '#ef4444'; ctx.lineWidth = 1.5; ctx.stroke();
+            this.emoji('🕴️', npc.x, npc.y - 25, 15);
+        } else if (npc.foe === 'player') this.emoji('😠', npc.x, npc.y - 24, 14);
     }
 
     pedExtra(ped) {
@@ -780,7 +785,8 @@ export class Renderer {
         ctx.font = '11px "Space Grotesk", sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
         for (const npc of I.state.npcs) {
             if (!npc.say) continue;
-            const w = Math.min(200, ctx.measureText(npc.say.text).width + 14), x = npc.x, y = npc.y - 38;
+            // bråkare har hälsostapel och arg min ovanför huvudet: bubblan en bit högre
+            const w = Math.min(200, ctx.measureText(npc.say.text).width + 14), x = npc.x, y = npc.y - (npc.brawl ? 53 : 38);
             ctx.fillStyle = '#fdf2f8'; ctx.strokeStyle = '#111'; ctx.lineWidth = 1.5;
             roundRect(ctx, x - w / 2, y - 9, w, 18, 7); ctx.fill(); ctx.stroke();
             ctx.fillStyle = '#111'; ctx.fillText(npc.say.text, x, y + 0.5, 190);
