@@ -2199,7 +2199,8 @@ export class World {
         if (I.biz) {
             const shop = SHOPS[I.biz.slot];
             I.state.owned = (this.profile.owned || []).includes(shop.id);
-            I.state.flow = bizFlow(shop.id, this.hour());
+            // mitt i ett slagsmål (brawl.js) kommer inga nya kunder in
+            I.state.flow = I.state.brawlT > 0 ? 0 : bizFlow(shop.id, this.hour());
         }
         INT.updateInterior(I.state, dt, this.rnd);
         // Kunderna som betalade vid disken: pengarna hamnar i kassan
@@ -2365,19 +2366,19 @@ export class World {
     doorInReach(maxD = 46) {
         const p = this.player, m = this.city.markers;
         let best = null;
-        // extra: nattklubbens entré är en hel trappa, inte en smal dörr
-        const consider = (x, y, icon, name, enter, extra = 0) => {
+        // extra: nattklubbens entré är en hel trappa, inte en smal dörr. room: rummet innanför (för utelåsningen)
+        const consider = (x, y, icon, name, enter, extra = 0, room = null) => {
             const d = Math.hypot(x - p.x, y - p.y);
-            if (d <= maxD + extra && (!best || d - extra < best.d - best.extra)) best = { d, extra, icon, name, enter };
+            if (d <= maxD + extra && (!best || d - extra < best.d - best.extra)) best = { d, extra, icon, name, enter, room };
         };
         for (const pl of this.doors()) {
             const o = pl.door || pl;
             const icon = pl.kind === 'business' ? SHOPS[pl.slot].icon : pl.kind === 'house' ? (this.ownsHouse(pl) ? '🏡' : '🔑') : '🏦';
-            consider(o.x, o.y, icon, this.placeName(pl), () => (pl.kind === 'business' ? this.enterBusiness(pl) : this.enterPlace(pl, false)));
+            consider(o.x, o.y, icon, this.placeName(pl), () => (pl.kind === 'business' ? this.enterBusiness(pl) : this.enterPlace(pl, false)), 0, pl.kind === 'business' ? bizInterior(pl.slot) : null);
         }
-        for (const sd of this.specialDoors()) consider(sd.door.x, sd.door.y, sd.icon, sd.name, () => this.enterInterior(sd.id, sd.id === 'stripclub' ? m.stripclub : m.guns));
+        for (const sd of this.specialDoors()) consider(sd.door.x, sd.door.y, sd.icon, sd.name, () => this.enterInterior(sd.id, sd.id === 'stripclub' ? m.stripclub : m.guns), 0, sd.id);
         const nc = this.nightclubPlace();
-        if (nc) consider(nc.x, nc.y, '🍾', nc.name, () => this.enterNightclub(), 14);
+        if (nc) consider(nc.x, nc.y, '🍾', nc.name, () => this.enterNightclub(), 14, INT.INTERIORS.club ? 'club' : null);
         return best;
     }
 
@@ -2760,7 +2761,11 @@ export class World {
         // Samma ordning som E-knappen: föremål, dörr, bil
         const atDoor = door && door.d <= 46 + door.extra && (!v || door.d - door.extra < distToVehicle(v, p.x, p.y));
         if (this.nearItem) this.hint = `E — Plocka upp ${ITEM_TYPES[this.nearItem.type].icon} ${ITEM_TYPES[this.nearItem.type].label}`;
-        else if (atDoor) this.hint = `E — Gå in: ${door.icon} ${door.name}`;
+        else if (atDoor) {
+            // utslängd efter ett bråk (brawl.js): dörren är stängd en stund
+            const ban = door.room ? BRAWL.bannedFor(this, door.room) : 0;
+            this.hint = ban > 0 ? `🚫 ${door.icon} ${door.name} — stängt för dig (${Math.ceil(ban)} s)` : `E — Gå in: ${door.icon} ${door.name}`;
+        }
         else if (v && !v.wrecked) this.hint = v.driver && v.driver !== 'player' ? `E — Sno ${v.spec.name}` : `E — Kör ${v.spec.name}`;
         else if (this.peds.some(pd => pd.attack && !pd.targetPed && Math.hypot(pd.x - p.x, pd.y - p.y) < (gun ? 300 : 120))) this.hint = gun ? 'SPACE — SKJUT!' : 'SPACE — SLÅ!';
         else if (near(28)) this.hint = near(28).down > 0 ? 'R — Länsa fickorna' : 'R — Råna · SPACE — Slå';

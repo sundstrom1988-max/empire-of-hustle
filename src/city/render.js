@@ -13,6 +13,7 @@ import { SHOPS } from '../data/gameData.js';
 import { VEHICLES } from './vehicles.js';
 import { ITEM_TYPES } from './items.js';
 import * as INT from './interiors.js';
+import { bannedFor } from './brawl.js';
 
 export const CREW_LOOK = { guard: { shirt: '#111827' }, gunner: { shirt: '#7f1d1d' }, scout: { shirt: '#065f46' } };
 // Storlek på figurerna (cirka 25 % större än förut)
@@ -50,6 +51,29 @@ function roundRect(ctx, x, y, w, h, r) {
 
 const hasV = m => (m & ((1 << N) | (1 << S))) !== 0;
 const hasH = m => (m & ((1 << E) | (1 << W))) !== 0;
+const isTouch = () => typeof window !== 'undefined' && !!(window.matchMedia?.('(pointer: coarse)').matches || 'ontouchstart' in window);
+
+// Barbråk (brawl.js): den som slåss eller ligger nere har inget i händerna — inget glas, ingen bricka,
+// inget verktyg. Rummens accessory() ritar efter de här fälten, så de döljs medan fn ritar.
+// ('back' = personal på väg tillbaka till sin post: ser ut som vanligt igen)
+const brawling = n => n.brawl === 'fight' || n.brawl === 'down' || n.down > 0;
+const HELD = ['drink', 'item', 'prop', 'act', 'staff'];
+export function withoutProps(npcs, fn) {
+    const saved = [];
+    for (const n of npcs) {
+        if (!brawling(n)) continue;
+        const s = { n, kind: n.kind };
+        for (const k of HELD) if (n[k] != null) { s[k] = n[k]; n[k] = null; }
+        if (n.kind === 'waitress') n.kind = 'brawler'; // brickan hör till servitrisen
+        saved.push(s);
+    }
+    try { return fn(); } finally {
+        for (const s of saved) {
+            s.n.kind = s.kind;
+            for (const k of HELD) if (k in s) s.n[k] = s[k];
+        }
+    }
+}
 
 export class Renderer {
     constructor(canvas) {
@@ -61,6 +85,7 @@ export class Renderer {
         this.cam = null;
         this.dpr = 1; this.w = 1; this.h = 1;
         this.t = 0;
+        this.touch = isTouch();
         this.resize();
     }
 
@@ -86,8 +111,10 @@ export class Renderer {
             const top = (this.w > 560 ? 52 : 0) / z;
             const cx = W <= hw * 2 ? W / 2 : clamp(p.x, hw, W - hw);
             let cy = H <= hh * 2 - top ? H / 2 - top / 2 : clamp(p.y, hh - top, H - hh);
-            // ...men spelaren får aldrig hamna under personsökaren/touchknapparna längst ner
-            const bottom = (this.w > 560 ? 120 : 260) / z;
+            // ...men spelaren (och bråket runt omkring) får aldrig hamna under personsökaren/touchknapparna
+            // längst ner. Smal touchskärm: knapparna (236) + tre rader personsökare (72) + figuren med hälsa och min ovanför.
+            const below = this.w > 560 ? 120 : this.touch ? 360 : 260;
+            const bottom = Math.min(below, this.h * 0.55) / z;
             if (p.y > cy + hh - bottom) cy = p.y - hh + bottom;
             if (!this.cam || this.camIn !== world.interior.id) this.cam = { x: cx, y: cy, zoom: z, sx: 0, sy: 0 };
             this.camIn = world.interior.id;
@@ -453,8 +480,10 @@ export class Renderer {
             ctx.font = '9px Bungee, Impact, sans-serif';
             ctx.lineWidth = 3; ctx.strokeStyle = '#000'; ctx.strokeText(sd.sub, fx, fy - 27);
             ctx.fillStyle = '#fff'; ctx.fillText(sd.sub, fx, fy - 27);
+            // utslängd efter ett bråk (brawl.js): stängt en stund
+            const shut = bannedFor(world, sd.id) > 0;
             ctx.font = '10px Bungee, Impact, sans-serif';
-            ctx.strokeText('GÅ IN', fx, fy); ctx.fillStyle = '#fff'; ctx.fillText('GÅ IN', fx, fy);
+            ctx.strokeText(shut ? 'STÄNGT' : 'GÅ IN', fx, fy); ctx.fillStyle = shut ? '#f87171' : '#fff'; ctx.fillText(shut ? 'STÄNGT' : 'GÅ IN', fx, fy);
         }
     }
 
@@ -601,7 +630,7 @@ export class Renderer {
         const fight = npc.brawl === 'fight';
         this.drawPedShape(ctx, npc, look.shirt || '#444', look.skin || '#e0ac69', look.hair || '#1f1300', npc.phase || 0, PED_SCALE,
             { dress: look.dress, sparkle: look.sparkle, cap: look.cap, pose: fight && npc.windup > 0 ? 'work' : npc.pose, punch: npc.punchT > 0 });
-        if (npc.brawl) this.drawBrawler(ctx, npc);
+        if (brawling(npc)) this.drawBrawler(ctx, npc);
         else if (npc.flashT > 0) this.hitFlash(ctx, npc.x, npc.y);
     }
 
@@ -774,8 +803,10 @@ export class Renderer {
         const hw = this.w / 2 / c.zoom, hh = this.h / 2 / c.zoom;
         const view = { x0: c.x - hw, y0: c.y - hh, x1: c.x + hw, y1: c.y + hh };
         const drawPerson = (cx, npc) => this.drawPerson(cx, npc);
-        if (INT.drawInterior) INT.drawInterior(ctx, I.state, view, this.t, drawPerson);
-        else for (const npc of I.state.npcs) drawPerson(ctx, npc);
+        withoutProps(I.state.npcs, () => {
+            if (INT.drawInterior) INT.drawInterior(ctx, I.state, view, this.t, drawPerson);
+            else for (const npc of I.state.npcs) drawPerson(ctx, npc);
+        });
         this.drawCrew(world, view);
         this.drawRemotes(world, view);
         this.drawPlayerOnFoot(world);
@@ -786,7 +817,7 @@ export class Renderer {
         for (const npc of I.state.npcs) {
             if (!npc.say) continue;
             // bråkare har hälsostapel och arg min ovanför huvudet: bubblan en bit högre
-            const w = Math.min(200, ctx.measureText(npc.say.text).width + 14), x = npc.x, y = npc.y - (npc.brawl ? 53 : 38);
+            const w = Math.min(200, ctx.measureText(npc.say.text).width + 14), x = npc.x, y = npc.y - (brawling(npc) ? 53 : 38);
             ctx.fillStyle = '#fdf2f8'; ctx.strokeStyle = '#111'; ctx.lineWidth = 1.5;
             roundRect(ctx, x - w / 2, y - 9, w, 18, 7); ctx.fill(); ctx.stroke();
             ctx.fillStyle = '#111'; ctx.fillText(npc.say.text, x, y + 0.5, 190);

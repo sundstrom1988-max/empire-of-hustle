@@ -8,7 +8,7 @@ import { generateCity } from './map.js';
 import { World } from './world.js';
 import { Renderer } from './render.js';
 import { Hud } from './hud.js';
-import { Input, stickDrive } from './input.js';
+import { Input, stickCar } from './input.js';
 import { stars } from './wanted.js';
 import { gangById } from './missions.js';
 import { JOIN_RESPECT } from './constants.js';
@@ -63,7 +63,7 @@ function buildOverlay(touch) {
 
 function controlsHelp(touch) {
     return touch
-        ? `<div class="city-help"><b>🕹️ Joysticken</b> (tummen nere till vänster) gå / kör dit du drar · ända ut = spring · dra bakåt i bilen = backa · <b>👊</b> slå / skjut (blir <b>⤵</b> handbroms i bilen) · <b>E</b> gå in genom dörrar, in/ur bil, plocka upp · <b>💰</b> råna · <b>🔫</b> byt vapen · <b>👥</b> crew-order · <b>📯</b> tuta · <b>📱</b> telefon · <b>🔍</b> byt vy<br><small>Version ${escapeHtml(BUILD)}</small></div>`
+        ? `<div class="city-help"><b>🕹️ Joysticken</b> (tummen nere till vänster) gå / kör dit du drar · ända ut = spring · dra mot bilens bakände = backa · <b>👊</b> slå / skjut (blir <b>⤵</b> handbroms i bilen) · <b>E</b> gå in genom dörrar, in/ur bil, plocka upp · <b>💰</b> råna · <b>🔫</b> byt vapen · <b>👥</b> crew-order · <b>📯</b> tuta · <b>📱</b> telefon · <b>🔍</b> byt vy<br><small>Version ${escapeHtml(BUILD)}</small></div>`
         : `<div class="city-help"><b>WASD/Pilar</b> kör/gå · <b>Musen</b> siktar, <b>vänsterklick</b> slår/skjuter, <b>hjulet</b> zoomar · <b>Shift</b> spring · <b>E</b> gå in genom dörrar, in/ur bil, plocka upp · <b>Space</b> handbroms / slå / skjut · <b>R</b> råna (till fots) / radio (i bil) · <b>Q</b> byt vapen · <b>M</b> karta · <b>T</b> telefon · <b>V</b> byt vy · <b>1 2 3</b> crew: följ / stanna / anfall · <b>H</b> tuta · <b>P</b> paus · <b>Esc</b> hem<br><small>Version ${escapeHtml(BUILD)}</small></div>`;
 }
 
@@ -132,19 +132,47 @@ export function openCity(profile, opts = {}) {
         cityExit();
     };
 
-    overlay.querySelector('.city-topbar').addEventListener('click', (e) => {
-        const cmd = e.target.closest('[data-cmd]')?.dataset.cmd;
+    onTap(overlay.querySelector('.city-topbar'), '[data-cmd]', (b) => {
+        const cmd = b.dataset.cmd;
         if (cmd === 'zoom') cycleZoom();
         else if (cmd === 'radio') cycleRadio();
         else if (cmd === 'phone') { if (!session.modalType) showCityPhone(); }
         else if (cmd === 'pause') session.paused ? resume() : showPause();
         else if (cmd === 'home') tryGoHome();
-    });
+    }, touch);
+    // Menyernas knappar: en lyssnare på modalen (innehållet byts varje gång den visas)
+    onTap(modal, '[data-act]', b => onModalAction(b.dataset.act), touch);
 
     stopRadio();
     showIntro();
     session.raf = requestAnimationFrame(frame);
     return true;
+}
+
+// Knappar (rubriken och menyerna). Webbläsaren ger inget click för ett andra finger
+// när ett annat redan är nere — och på mobilen vilar tummen nästan alltid på joysticken.
+// På touch körs knappen därför på pointerup över samma knapp som fick pointerdown;
+// click finns kvar för datorn och tangentbordet (men inte direkt efter ett sådant tryck).
+function onTap(el, sel, fn, touch) {
+    let tapT = -1e9;
+    const hit = (e) => { const b = e.target?.closest?.(sel); return b && el.contains(b) && !b.disabled ? b : null; };
+    el.addEventListener('click', (e) => {
+        const b = hit(e);
+        if (b && performance.now() - tapT > 700) fn(b);
+    });
+    if (!touch) return;
+    const downs = new Map(); // pointerId → knappen fingret sattes ned på
+    el.addEventListener('pointerdown', (e) => { const b = hit(e); if (b) downs.set(e.pointerId, b); });
+    el.addEventListener('pointercancel', (e) => downs.delete(e.pointerId)); // t.ex. scrollar i menyn
+    el.addEventListener('pointerup', (e) => {
+        const b = downs.get(e.pointerId);
+        downs.delete(e.pointerId);
+        // Touch fångar pekaren åt knappen: kolla att fingret fortfarande är över den
+        const over = b?.isConnected && !b.disabled ? document.elementFromPoint(e.clientX, e.clientY) : null;
+        if (!over || !b.contains(over)) return;
+        tapT = performance.now();
+        fn(b);
+    });
 }
 
 // ── Modaler ──
@@ -158,7 +186,6 @@ function showModal(type, html) {
     s.modalType = type;
     s.modal.innerHTML = html;
     s.modal.hidden = false;
-    s.modal.querySelectorAll('[data-act]').forEach(b => b.addEventListener('click', () => onModalAction(b.dataset.act)));
 }
 
 function hideModal() {
@@ -597,9 +624,11 @@ function frame(ts) {
                 const state = inp.state();
                 // Musen siktar (dator): världskoordinaten under pekaren
                 state.aim = !s.touch && inp.aimActive() ? s.renderer.screenToWorld(inp.mouse.x, inp.mouse.y) : null;
-                // Joysticken i bilen: kör dit man drar (gas och ratt räknas om från riktningen)
+                // Joysticken i bilen: kör dit man drar (gas och ratt räknas om från riktningen).
+                // stickCar minns om bilen står fast mot en vägg och backar då loss den.
                 const car = s.world.player.vehicle;
-                if (car && inp.stick.active) Object.assign(state, stickDrive(inp.stick, car.angle, car.vx * Math.cos(car.angle) + car.vy * Math.sin(car.angle), car.spec.maxSpeed));
+                if (car && inp.stick.active) Object.assign(state, stickCar(s.stickMem || (s.stickMem = {}), inp.stick, car, Math.min(5, Math.floor(s.acc / STEP)) * STEP));
+                else s.stickMem = null;
                 s.throttle = state.throttle;
                 let steps = 0;
                 while (s.acc >= STEP && steps < 5) {

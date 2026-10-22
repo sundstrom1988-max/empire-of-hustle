@@ -41,7 +41,35 @@ const fmtTime = s => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStar
 // Touch: knapparna heter annat än tangenterna (fight = 👊/vapnet, eller ⤵ i bilen)
 export function touchText(text, fight) {
     return String(text).replace('ESC —', '🏠 HEM —').replaceAll('SPACE —', `${fight} —`).replace(/^R —/, '💰 —')
-        .replaceAll('(SPACE)', `(${fight})`).replace(/SPACE (slår|skjuter)/g, `${fight} $1`).replace('Q byter vapen', '🔫 byter vapen');
+        .replaceAll('(SPACE)', `(${fight})`).replaceAll('(R)', '(💰)').replace(/SPACE (slår|skjuter)/g, `${fight} $1`).replace('Q byter vapen', '🔫 byter vapen');
+}
+
+// ── Personsökarens plats ──
+// x och bredd. På bred touchskärm (liggande) hamnar rutan högt upp: håll den mellan
+// HUD-kolumnerna (respekt/hälsa till vänster, pengar/snutar/minikarta till höger).
+// mmR = minikartans högerkant på datorn, mapX = minikartans x på touch.
+const HUD_LEFT = 176;
+export function pagerX(W, { touch = false, narrow = false, mmR = 0, mapX = W } = {}) {
+    let w = Math.min(440, W - 24, mmR ? W - mmR - 14 : W);
+    let x = Math.max((W - w) / 2, mmR);
+    if (touch && !narrow) {
+        const right = mapX - 14;
+        w = Math.max(200, Math.min(w, right - HUD_LEFT));
+        x = Math.max(HUD_LEFT, Math.min((W - w) / 2, right - w));
+    }
+    return { x, w };
+}
+// y för rutans överkant (ph = höjden). Touch: ovanför knapparna, men aldrig under
+// knappraden uppe — där ska uppdragstimern (y − 14) och tipset också få plats.
+// Inomhus på smal skärm: under rummet (render.js håller spelaren minst 260 px ovanför
+// botten) och ovanför knapparna, så rutan inte täcker rummets nedre del med utgången.
+export const PAGER_TOP = 72;          // bred skärm: knappraden uppe ligger på 8–42 px
+export const PAGER_TOP_NARROW = 290;  // smal: knapparna på 196 px, minikartan till 252 + etikett
+export function pagerY(H, ph, { touch = false, narrow = false, indoor = false } = {}) {
+    if (!touch) return H - ph - 22;
+    const top = narrow ? PAGER_TOP_NARROW : PAGER_TOP;
+    if (indoor && narrow) return Math.max(top, Math.min(H - 254, H - 160 - ph));
+    return Math.max(top, H - ph - 236);
 }
 
 export class Hud {
@@ -236,8 +264,7 @@ export class Hud {
         const m = world.mission;
         // Personsökaren får inte hamna under minikartan på smala datorskärmar
         const mmR = this.mapRect && !opts.touch && !narrow && !world.showMap ? this.mapRect.x + this.mapRect.size + 14 : 0;
-        const pagerW = Math.min(440, W - 24, mmR ? W - mmR - 14 : W);
-        const bottomPad = opts.touch ? 236 : 22; // ovanför touchknapparna
+        const { x: px, w: pagerW } = pagerX(W, { touch: opts.touch, narrow, mmR, mapX: this.minimapRect(W, H, opts.touch, narrow).x });
         const lines = [];
         ctx.font = `${narrow ? 18 : 20}px ${PAGER_FONT}`;
         if (m) {
@@ -249,9 +276,8 @@ export class Hud {
         for (const msg of this.msgs) for (const l of wrap(ctx, opts.touch ? touchText(msg.text, fightIcon) : msg.text, pagerW - 24)) lines.push({ text: l, color: '#d9f99d', alpha: Math.min(1, msg.life) });
         const lh = narrow ? 18 : 20;
         const ph = lines.length ? lines.length * lh + 18 : 0;
-        const py = H - ph - bottomPad;
+        const py = pagerY(H, ph, { touch: opts.touch, narrow, indoor: !!world.interior });
         if (lines.length) {
-            const px = Math.max((W - pagerW) / 2, mmR);
             ctx.fillStyle = 'rgba(12,26,8,0.88)'; ctx.fillRect(px, py, pagerW, ph);
             ctx.strokeStyle = '#4d7c0f'; ctx.lineWidth = 2; ctx.strokeRect(px + 1, py + 1, pagerW - 2, ph - 2);
             ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
@@ -269,8 +295,10 @@ export class Hud {
 
         // ── Pil mot målet ── (inte inomhus: där gäller rummets koordinater)
         const outside = !world.interior;
-        if (date && outside) this.drawArrow(ctx, r, world, date.dest, '#f472b6', `💃 ${date.name}s lägenhet`, false, py);
-        if (m && m.target) { if (outside) this.drawArrow(ctx, r, world, m.target, '#ffd23f', m.target.label, false, py); }
+        // Pilarna stannar ovanför personsökaren — om den ligger högt upp (liggande touch) ovanför knapparna
+        const arrowBottom = py > H / 2 ? py : opts.touch ? H - 110 : H;
+        if (date && outside) this.drawArrow(ctx, r, world, date.dest, '#f472b6', `💃 ${date.name}s lägenhet`, false, arrowBottom);
+        if (m && m.target) { if (outside) this.drawArrow(ctx, r, world, m.target, '#ffd23f', m.target.label, false, arrowBottom); }
         else if (!m && !date && left > 0 && world.state === 'play' && outside) {
             // Visa vägen till närmaste öppna telefon
             let best = null, bd = Infinity;
@@ -279,7 +307,7 @@ export class Hud {
                 const d = Math.hypot(ph.x - p.x, ph.y - p.y);
                 if (d < bd) { bd = d; best = ph; }
             }
-            if (best && bd > 260) this.drawArrow(ctx, r, world, best, 'rgba(255,255,255,0.75)', '☎️ Telefon', true, py);
+            if (best && bd > 260) this.drawArrow(ctx, r, world, best, 'rgba(255,255,255,0.75)', '☎️ Telefon', true, arrowBottom);
         }
 
         // ── Tips ── (på touch heter knapparna annat än tangenterna)

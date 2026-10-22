@@ -1,9 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { stickVector, stickKnob, stickWalk, stickDrive, STICK_RADIUS, STICK_DEAD, STICK_RUN } from '../src/city/input.js';
+import { stickVector, stickKnob, stickWalk, stickDrive, stickOrigin, stickCar, STICK_RADIUS, STICK_DEAD, STICK_RUN } from '../src/city/input.js';
 import { stepVehicle } from '../src/city/physics.js';
 import { createVehicle } from '../src/city/vehicles.js';
-import { generateCity } from '../src/city/map.js';
+import { generateCity, isSolidTile } from '../src/city/map.js';
 import { TILE, MAP_W, MAP_H } from '../src/city/constants.js';
+import { touchText, pagerX, pagerY, PAGER_TOP } from '../src/city/hud.js';
 
 const R = STICK_RADIUS;
 const on = (x, y) => ({ ...stickVector(x, y, R), active: true });
@@ -58,6 +59,50 @@ describe('stickKnob', () => {
         expect(k.y).toBeCloseTo(0);
         const d = stickKnob(-300, 400, R);
         expect(Math.hypot(d.x, d.y)).toBeCloseTo(R);
+    });
+});
+
+describe('stickOrigin (basen nära skärmkanten)', () => {
+    // Zonen nere till vänster på en 390×844-telefon: 45 % × 60 %, skärmen i zonens koordinater
+    const W = 390, H = 844, ZW = W * 0.45, ZH = H * 0.6;
+    const screen = { x: 0, y: -(H - ZH), w: W, h: H };
+    const ring = 66; // ringens radie + marginal
+
+    it('lägger basen där tummen landar mitt i zonen', () => {
+        expect(stickOrigin({ x: 90, y: ZH - 100 }, screen, ring)).toEqual({ x: 90, y: ZH - 100 });
+    });
+
+    it('flyttar in basen från vänster- och nederkanten så hela ringen syns', () => {
+        const o = stickOrigin({ x: 10, y: ZH - 12 }, screen, ring);
+        expect(o).toEqual({ x: ring, y: ZH - ring });
+    });
+
+    it('flyttar inte basen mot zonens inre kanter (fingret kan dras förbi dem)', () => {
+        expect(stickOrigin({ x: ZW - 5, y: 8 }, screen, ring)).toEqual({ x: ZW - 5, y: 8 });
+    });
+
+    it('fingret når fullt utslag (spring) mot kanten även om tummen landar ytterst', () => {
+        const R = 56; // stickR i 390-bred layout
+        // tumme 10 px från vänsterkanten, dra ut till kanten
+        const o1 = stickOrigin({ x: 10, y: ZH - 200 }, screen, ring);
+        expect(stickVector(0 - o1.x, 0, R).mag).toBeGreaterThan(STICK_RUN);
+        // tumme 12 px från nederkanten, dra ner till kanten
+        const o2 = stickOrigin({ x: 100, y: ZH - 12 }, screen, ring);
+        expect(stickVector(0, ZH - o2.y, R).mag).toBeGreaterThan(STICK_RUN);
+        // utan klamp (som förut) blev det nästan inget utslag
+        expect(stickVector(0, 12, R).mag).toBeLessThan(0.1);
+    });
+
+    it('knoppen visar direkt ett utslag mot fingret när basen flyttats', () => {
+        const p = { x: 6, y: ZH - 6 };
+        const o = stickOrigin(p, screen, ring);
+        const k = stickKnob(p.x - o.x, p.y - o.y, 56);
+        expect(k.x).toBeLessThan(0);
+        expect(k.y).toBeGreaterThan(0);
+    });
+
+    it('centrerar om skärmen är mindre än ringen', () => {
+        expect(stickOrigin({ x: 3, y: 3 }, { x: 0, y: 0, w: 100, h: 400 }, 66).x).toBe(50);
     });
 });
 
@@ -161,6 +206,124 @@ describe('stickDrive (i bilen)', () => {
         stepVehicle(v, c, 1 / 60, OPEN);
         expect(v.angle).toBeLessThan(before);
     });
+
+    it('blocked: backar och vrider nosen mot draget (trepunktsvändning)', () => {
+        const c = stickDrive(on(R, 0), N, 0, 350, true);   // nosen norr, drag österut
+        expect(c.throttle).toBeLessThan(-0.5);
+        // Även litet utslag backar ordentligt
+        expect(stickDrive(on(R * 0.3, 0), N, 0, 350, true).throttle).toBeLessThanOrEqual(-0.6);
+        // I fysiken: backar (fart < 0) och nosen vrids mot öster (vinkeln ökar från -π/2)
+        const v = createVehicle('volvo', MID.x, MID.y, N);
+        for (let i = 0; i < 40; i++) {
+            const fwd = v.vx * Math.cos(v.angle) + v.vy * Math.sin(v.angle);
+            stepVehicle(v, stickDrive(on(R, 0), v.angle, fwd, 350, true), 1 / 60, OPEN);
+        }
+        expect(v.vx * Math.cos(v.angle) + v.vy * Math.sin(v.angle)).toBeLessThan(0);
+        expect(v.angle).toBeGreaterThan(N + 0.1);
+    });
+});
+
+// Riktiga stan: bilen står med nosen mot ett hus och man drar längs gatan
+describe('stickCar (bilen fastnar mot en vägg)', () => {
+    const CITY = generateCity(1337);
+    // En ruta där nosen söderut går rakt in i ett hus, med körbart åt öster och väster
+    const spot = (() => {
+        for (let ty = 2; ty < MAP_H - 2; ty++) for (let tx = 2; tx < MAP_W - 3; tx++) {
+            if (!isSolidTile(CITY, tx, ty + 1) || !isSolidTile(CITY, tx + 1, ty + 1)) continue;
+            if ([-1, 0, 1, 2].some(d => isSolidTile(CITY, tx + d, ty) || isSolidTile(CITY, tx + d, ty - 1))) continue;
+            return { x: (tx + 0.5) * TILE, y: (ty + 1) * TILE };
+        }
+        return null;
+    })();
+    const S = Math.PI / 2;
+    const fwdOf = v => v.vx * Math.cos(v.angle) + v.vy * Math.sin(v.angle);
+    // Kör in nosen i väggen och dra sedan åt sidan; mem = null kör utan stickCar (som förut)
+    const pinned = () => {
+        const v = createVehicle('volvo', spot.x, spot.y - 40, S);
+        const into = on(0, R);
+        for (let i = 0; i < 60; i++) stepVehicle(v, stickDrive(into, v.angle, fwdOf(v), v.spec.maxSpeed), 1 / 60, CITY);
+        v.vx = v.vy = 0;
+        return v;
+    };
+    const run = (v, stick, secs, mem) => {
+        const start = { x: v.x, y: v.y };
+        let maxBack = 0;
+        for (let i = 0; i < secs * 60; i++) {
+            const ctl = mem ? stickCar(mem, stick, v, 1 / 60) : stickDrive(stick, v.angle, fwdOf(v), v.spec.maxSpeed);
+            stepVehicle(v, ctl, 1 / 60, CITY);
+            maxBack = Math.min(maxBack, fwdOf(v));
+        }
+        return { moved: Math.hypot(v.x - start.x, v.y - start.y), dx: v.x - start.x, maxBack };
+    };
+
+    it('hittar en vägg att testa mot', () => { expect(spot).not.toBeNull(); });
+
+    it('utan hjälp står bilen still (felet som stickCar rättar)', () => {
+        expect(run(pinned(), on(R, 0), 2, null).moved).toBeLessThan(5);
+    });
+
+    it('drag 90° österut: kommer loss och kör österut inom 2 s', () => {
+        const v = pinned();
+        const r = run(v, on(R, 0), 2, {});
+        expect(r.dx).toBeGreaterThan(40);
+        expect(Math.cos(v.angle)).toBeGreaterThan(0.5);   // nosen ungefär österut
+        expect(fwdOf(v)).toBeGreaterThan(30);              // och kör framåt igen
+    });
+
+    it('drag 90° västerut och snett bakåt (120°) kommer också loss', () => {
+        expect(run(pinned(), on(-R, 0), 2, {}).dx).toBeLessThan(-40);
+        const a = S - Math.PI * 2 / 3; // 120° från nosen, åt öster/norr
+        const v = pinned();
+        expect(run(v, on(Math.cos(a) * R, Math.sin(a) * R), 2.5, {}).moved).toBeGreaterThan(60);
+        expect(fwdOf(v)).toBeGreaterThan(50);
+    });
+
+    it('snett in i väggen (30°): backar en gång och glider sedan åt det hållet', () => {
+        const v = pinned(), mem = {}, a = S - Math.PI / 6;
+        const stick = on(Math.cos(a) * R, Math.sin(a) * R);
+        const x0 = v.x;
+        let starts = 0, was = false;
+        for (let i = 0; i < 150; i++) {
+            stepVehicle(v, stickCar(mem, stick, v, 1 / 60), 1 / 60, CITY);
+            if (mem.backT > 0 && !was) starts++;
+            was = mem.backT > 0;
+        }
+        expect(v.x - x0).toBeGreaterThan(15);
+        expect(starts).toBeLessThanOrEqual(2);
+    });
+
+    it('halvt utslag åt sidan räcker', () => {
+        expect(run(pinned(), on(R * 0.45, 0), 3, {}).dx).toBeGreaterThan(40);
+    });
+
+    it('drar man rakt in i väggen står den kvar (ingen pendling fram och tillbaka)', () => {
+        const r = run(pinned(), on(0, R), 2, {});
+        expect(r.maxBack).toBeGreaterThan(-5);
+    });
+
+    it('backar aldrig av sig själv på öppen gata', () => {
+        // [drag x, drag y, utslag, fart från början (negativ = rullar bakåt)]
+        const cases = [[R, 0, 1, 0], [R, 0, 0.3, 0], [-R * 0.7, -R * 0.7, 1, 0], [0, -R, 0.25, 0], [R, 0, 0.3, -40], [R, 0, 0.5, -15]];
+        for (const kind of ['van', 'volvo', 'lambo']) for (const [sx, sy, m, v0] of cases) {
+            const v = createVehicle(kind, MID.x, MID.y, N);
+            v.vx = Math.cos(N) * v0; v.vy = Math.sin(N) * v0;
+            const mem = {};
+            const stick = on(sx * m, sy * m);
+            let backed = false;
+            for (let i = 0; i < 180; i++) {
+                stepVehicle(v, stickCar(mem, stick, v, 1 / 60), 1 / 60, OPEN);
+                backed ||= mem.backT > 0;
+            }
+            expect(backed, `${kind} ${sx},${sy} ×${m} från ${v0}`).toBe(false);
+        }
+    });
+
+    it('glömmer läget när man byter bil', () => {
+        const mem = { car: {}, backT: 0.5, x: 0, y: 0 };
+        const v = createVehicle('volvo', MID.x, MID.y, N);
+        expect(stickCar(mem, on(0, -R), v, 1 / 60).throttle).toBeGreaterThan(0);
+        expect(mem.car).toBe(v);
+    });
 });
 
 // Kör bilen på riktigt i fysiken och se att den hamnar dit man drar
@@ -206,13 +369,69 @@ describe('stickDrive + stepVehicle', () => {
 });
 
 describe('touchText (tips på mobilen)', () => {
-    it('byter tangenter mot knapparna', async () => {
-        const { touchText } = await import('../src/city/hud.js');
+    it('byter tangenter mot knapparna', () => {
         expect(touchText('SPACE — SLÅ!', '👊')).toBe('👊 — SLÅ!');
         expect(touchText('R — Råna · SPACE — Slå', '👊')).toBe('💰 — Råna · 👊 — Slå');
         expect(touchText('ESC — Åk hem till imperiet', '👊')).toBe('🏠 HEM — Åk hem till imperiet');
         expect(touchText('🦹 En rånare är ute efter dig! Slå tillbaka (SPACE) eller spring!', '🔪')).toContain('(🔪)');
         expect(touchText('🔫 Du köpte Pistol! SPACE skjuter, Q byter vapen.', '🔫')).toBe('🔫 Du köpte Pistol! 🔫 skjuter, 🔫 byter vapen.');
         expect(touchText('E — Kör Volvo', '⤵')).toBe('E — Kör Volvo');
+        expect(touchText('💰 Gå fram till någon för att råna dem (R).', '👊')).toBe('💰 Gå fram till någon för att råna dem (💰).');
+    });
+
+    it('inga tangentbokstäver kvar i meddelandena på mobilen', async () => {
+        const fs = await import('node:fs');
+        const src = fs.readFileSync(new URL('../src/city/world.js', import.meta.url), 'utf8');
+        const msgs = [...src.matchAll(/this\.message\((['`])(.*?)\1/g)].map(m => m[2]);
+        expect(msgs.length).toBeGreaterThan(10);
+        for (const t of msgs) expect(touchText(t, '👊')).not.toMatch(/\((SPACE|[A-DF-Z])\)/);
+    });
+});
+
+describe('personsökarens plats på touch', () => {
+    const lh = 20;
+    const box = (W, H, lines, indoor = false) => {
+        const narrow = W < 560;
+        const size = Math.round(Math.min(124, W * 0.32));
+        const mapX = W - size - 12;
+        const ph = lines * (narrow ? 18 : lh) + 18;
+        const { x, w } = pagerX(W, { touch: true, narrow, mapX });
+        return { x, w, y: pagerY(H, ph, { touch: true, narrow, indoor }), ph, mapX };
+    };
+
+    it('liggande: aldrig under knappraden uppe, timern får plats ovanför', () => {
+        for (const [W, H] of [[844, 390], [667, 375], [740, 360]]) {
+            for (const lines of [1, 4, 6]) {
+                const b = box(W, H, lines);
+                expect(b.y).toBeGreaterThanOrEqual(PAGER_TOP);
+                expect(b.y - 14 - 10).toBeGreaterThan(42); // timerns överkant under knapparna (8–42)
+            }
+        }
+    });
+
+    it('liggande: mellan HUD-kolumnerna (inte över hälsan eller minikartan)', () => {
+        for (const [W, H] of [[844, 390], [667, 375]]) {
+            const b = box(W, H, 4);
+            expect(b.x).toBeGreaterThanOrEqual(176);
+            expect(b.x + b.w).toBeLessThanOrEqual(b.mapX - 14);
+        }
+        expect(box(844, 390, 2).w).toBe(440);
+    });
+
+    it('stående: som förut ovanför knapparna', () => {
+        const b = box(390, 844, 3);
+        expect(b.y + b.ph).toBe(844 - 236);
+        expect(b.x).toBe((390 - b.w) / 2);
+    });
+
+    it('stående inomhus: under rummet men ovanför knapparna', () => {
+        const b = box(390, 844, 3, true);
+        expect(b.y).toBeGreaterThanOrEqual(844 - 260); // rummet slutar 260 px ovanför botten
+        expect(b.y + b.ph).toBeLessThanOrEqual(844 - 150);
+    });
+
+    it('datorn påverkas inte', () => {
+        expect(pagerY(800, 60)).toBe(800 - 60 - 22);
+        expect(pagerX(1280, { mmR: 220 })).toEqual({ x: 420, w: 440 });
     });
 });

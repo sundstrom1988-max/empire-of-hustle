@@ -8,24 +8,39 @@
 //
 //  Fält på NPC:n (sätts när de behövs):
 //   hp, maxHp          gäst 28–40, personal 45, vakt 80
-//   brawl              'fight' | 'down' | null — rummets tema rör inte NPC:n då
+//   brawl              'fight' | 'down' | 'back' | null — rummets tema rör inte NPC:n då
+//                      ('back' = vakt/personal i Club Diamant på väg tillbaka till sin post)
 //   foe                'player' | en annan NPC | en i mitt crew
 //   flashT, stunT      vit blixt / vacklar efter en träff (stunImm: vacklar inte igen direkt)
 //   windup, punchT     uppdragning före slaget / själva slaget (ritas)
 //   fcd                väntetid till nästa slag
 //   kx, ky             knuff bakåt (px/s)
 //   down, looted       ligger nere (s) / plånboken redan länsad
+//   upT                har just rest sig: går inte att slå på en stund
+//   grabs              vakt: träffar på spelaren i det här bråket (GRABS → utslängd)
 //   stirred            vilket bråk NPC:n redan reagerat på
-//  När bråket är över: brawl = null och leaving = true (de går ut och försvinner).
+//  När bråket är över går gästerna hem (brawl = null, leaving = true). Vakter och
+//  personal går tillbaka till jobbet (leaving = false): i verksamheternas rum tar
+//  temat vid, i Club Diamant går vi dem själva till posten ('back').
+//
+//  Rummets tillstånd:
+//   state.brawlT       sekunder kvar av oron efter senaste slaget (världen släpper inte in nya kunder)
+//   state.panic        sätts bara där det betyder slagsmål (Club Diamant, Kåken). I
+//                      verksamheternas rum (teman 'biz-…') betyder panic rån — där rör vi den inte.
 // ═══════════════════════════════════════════
 
 import { WEAPONS } from './weapons.js';
+import { addHeat } from './wanted.js';
 import { collideInterior, roomStep } from './interiors.js';
 
 export const NO_BRAWL = new Set(['gunshop']);   // Pang-Pelle säger ifrån
 export const BAN_TIME = 20;                       // s utelåst efter att ha blivit utslängd
 export const CALM_TIME = 6;                       // s utan att någon ger sig på spelaren → bråket lugnar sig
 export const DOWN_TIME = 8;                       // s nere efter en knockout
+export const UP_TIME = 1.5;                       // s efter att man rest sig då man inte går att slå
+export const GRABS = 3;                           // träffar från en och samma vakt → utslängd
+export const KO_COPS = 3;                         // knockouts per besök innan personalen ringer snuten
+export const LOOT_MAX = 4;                        // plånböcker per besök
 const REACH = 38;                                 // spelarens slag (px)
 const CLOSE = 24;                                 // så nära träffar man även snett bakom sig
 const NPC_REACH = 22;                             // NPC:ernas slag (px)
@@ -35,6 +50,10 @@ const WINDUP = 0.3;
 const STUN = 0.4;
 const GUN_BUTT = [16, 20];                        // pistolkolv: inga skott inomhus
 const R = 7;                                      // NPC:ernas kropp mot väggar och möbler
+const UNREST = 8;                                 // s oro (brawlT/panic) efter varje slag
+const GUARD_ARMOR = 0.75;                         // vakterna tål mer
+const HEAL = 1 / 25;                              // andel av maxHp per sekund tillbaka för den som inte slåss
+const BACK_GIVEUP = 25;                           // s: kommer man inte fram släpper vi taget ändå
 
 const STAFF_KINDS = new Set(['bartender', 'manager', 'dj', 'waitress', 'seller']);
 const MAD = ['Vad fan gör du?!', 'Kom igen då!', 'Nu jävlar!', 'Fel kille, bror!', 'Du spillde min drink!', 'Kom hit!'];
@@ -42,6 +61,12 @@ const CHAOS = ['Vem knuffade?!', 'Det var du!', 'Akta drinken!', 'Kom hit då!',
 const SCARED = ['Aaah!', 'Jag drar!', 'Ring snuten!', 'Inte här!', 'Spring!'];
 const STAFF_LINES = ['Lugna ner er!', 'Inte här inne!', 'Sluta nu!', 'Vakten!!'];
 const GUARD_LINES = ['Hörru! Ut med dig!', 'Nu åker du ut!', 'Lugna dig!', 'Inga bråk här!'];
+const GUARD_UP = ['Nu jävlar!', 'Där är du ju!', 'Andra ronden!'];
+
+// Verksamheternas rum: där betyder state.panic rån (personalen räcker upp händerna)
+const robberyRoom = I => /^biz-/.test(I.def.theme || '');
+// Club Diamant sköts av interiors.js utan tema: ingen annan räknar ner panic där
+const SELF_PANIC = new Set(['club']);
 
 const pick = (rnd, arr) => arr[Math.min(arr.length - 1, Math.floor(rnd() * arr.length))];
 const wrap = a => Math.atan2(Math.sin(a), Math.cos(a));
@@ -56,18 +81,28 @@ export function canBrawl(I) { return !!I && !NO_BRAWL.has(I.id); }
 
 // Bråkets läge för det här besöket i rummet
 export function fightOf(I) {
-    return I.fight || (I.fight = { on: false, n: 0, quietT: 0, guardHits: 0 });
+    return I.fight || (I.fight = { on: false, n: 0, quietT: 0, guardHits: 0, kos: 0, loots: 0, cops: false });
 }
 
-// Går att slå: inte dansarna på scenen, inte någon som ligger eller redan gått
-function hittable(n) {
+// På benen: inte dansarna på scenen, inte någon som ligger eller redan gått
+function standing(n) {
     return n.beh !== 'dancer' && !n.gone && !n.dead && !(n.down > 0) && n.brawl !== 'down' && Number.isFinite(n.x) && Number.isFinite(n.y);
 }
+// Går att slå: på benen och inte precis uppe igen
+function hittable(n) { return standing(n) && !(n.upT > 0); }
 
 function ensureHp(n, rnd) {
     if (n.maxHp > 0) return;
     n.maxHp = isGuard(n) ? 80 : isStaff(n) ? 45 : Math.round(28 + rnd() * 12);
     n.hp = n.maxHp;
+}
+
+// Glaset åker i golvet. Gästerna tappar allt de har i händerna; personalens grejer
+// (bricka, verktyg) döljer renderaren medan de slåss och finns kvar efteråt.
+function dropProps(n) {
+    n.drink = null;
+    if (!isGuard(n) && !isStaff(n)) { n.item = null; n.prop = null; n.act = null; }
+    if (n.pose === 'sit' || n.pose === 'dance' || n.pose === 'cheer' || n.pose === 'work') n.pose = 'idle';
 }
 
 // In i bråket (eller byt mål)
@@ -76,19 +111,28 @@ function joinFight(n, foe, rnd) {
     if (n.brawl !== 'fight') {
         n.brawl = 'fight';
         n.leaving = false;
-        n.drink = null;            // glaset åker i golvet
         n.windup = 0;
+        n.grabs = 0;
         n.fcd = 0.3 + rnd() * 0.5;
-        if (n.pose === 'sit' || n.pose === 'dance' || n.pose === 'cheer' || n.pose === 'work') n.pose = 'idle';
+        dropProps(n);
     }
     n.foe = foe;
 }
 
-// Ur bråket: går ut genom dörren (rummets tema eller interiors.js tar hand om resten)
+// Ur bråket: gästerna går hem, vakter och personal tillbaka till jobbet
 function endFight(n) {
-    n.brawl = null;
     n.foe = null;
-    n.windup = 0; n.stunT = 0; n.stunImm = 0;
+    n.windup = 0; n.stunT = 0; n.stunImm = 0; n.grabs = 0;
+    if (isGuard(n) || isStaff(n)) {
+        // Rummets tema för tillbaka dem i sitt manus. Club Diamants patrullerande personal går
+        // vi själva till posten ('back') — stepPatrol går rakt fram utan att väja för möblerna.
+        n.leaving = false;
+        n.brawl = n.beh === 'patrol' && n.spots && n.spots.length ? 'back' : null;
+        n.backT = 0;
+        n.pose = n.brawl ? 'walk' : 'idle';
+        return;
+    }
+    n.brawl = null;
     n.leaving = true;
     n.pose = 'walk';
 }
@@ -132,11 +176,12 @@ export function hitNpc(world, n, dmg, by) {
     const I = world.interior, rnd = world.rnd;
     if (!I || !hittable(n)) return;
     ensureHp(n, rnd);
-    n.hp -= dmg;
+    const guard = isGuard(n);
+    n.hp -= dmg * (guard ? GUARD_ARMOR : 1);
     n.flashT = 0.12;
     // Vacklar och tappar slaget — men inte av varje slag i en serie (då kunde man hålla vem som helst nere),
     // och vakterna står stadigare
-    const guard = isGuard(n), stagger = !(n.stunImm > 0);
+    const stagger = !(n.stunImm > 0);
     if (stagger) {
         n.stunT = guard ? STUN * 0.5 : STUN;
         n.stunImm = n.stunT + 0.5;
@@ -153,10 +198,10 @@ export function hitNpc(world, n, dmg, by) {
     else {
         // Vakterna håller sig till spelaren; andra slår tillbaka mot den som slog
         const foe = by === 'player' ? 'player'
-            : by && by.isCrew ? (isGuard(n) || rnd() < 0.5 ? (n.foe || 'player') : by)
-                : isGuard(n) ? (n.foe || 'player') : by;
+            : by && by.isCrew ? (guard || rnd() < 0.5 ? (n.foe || 'player') : by)
+                : guard ? (n.foe || 'player') : by;
         joinFight(n, foe, rnd);
-        if (by === 'player' && n.say == null && rnd() < 0.5) say(n, pick(rnd, isGuard(n) ? GUARD_LINES : MAD));
+        if (by === 'player' && n.say == null && rnd() < 0.5) say(n, pick(rnd, guard ? GUARD_LINES : MAD));
     }
     if (mine) stir(world, n);
 }
@@ -166,18 +211,34 @@ function knockOut(world, n, by) {
     n.brawl = 'down';
     n.down = DOWN_TIME;
     n.foe = null;
-    n.windup = 0; n.punchT = 0; n.stunT = 0; n.stunImm = 0;
+    n.windup = 0; n.punchT = 0; n.stunT = 0; n.stunImm = 0; n.upT = 0; n.grabs = 0;
     n.leaving = false;
     n.say = null;
+    dropProps(n);                 // ligger ner: inget sittande glas som sticker ut
     if (by === 'player') world.floater(n.x, n.y - 26, 'KNOCKOUT!', '#facc15');
+    if (by === 'player' || (by && by.isCrew)) {
+        const F = fightOf(world.interior);
+        F.kos = (F.kos || 0) + 1;
+        if (F.kos >= KO_COPS && !F.cops) callCops(world);
+    }
+}
+
+// För mycket stryk: personalen ringer snuten, som väntar utanför när man går ut
+function callCops(world) {
+    const I = world.interior;
+    fightOf(I).cops = true;
+    I.seen = true;
+    if (world.wanted) addHeat(world.wanted, 1, true);
+    world.message('📞 Personalen har ringt snuten — de väntar utanför.');
 }
 
 // Bråket drar igång / sprider sig runt den som blev slagen
 function stir(world, n0) {
     const I = world.interior, st = I.state, F = fightOf(I), rnd = world.rnd;
     F.quietT = 0;
-    st.panic = Math.max(st.panic || 0, 8);   // rummets tema: övriga kunder flyr, inga nya kommer in
-    const guards = st.npcs.filter(n => isGuard(n) && hittable(n));
+    st.brawlT = Math.max(st.brawlT || 0, UNREST);                               // inga nya kunder på en stund
+    if (!robberyRoom(I)) st.panic = Math.max(st.panic || 0, UNREST);           // de som går ut springer, Kåken hejar
+    const guards = st.npcs.filter(n => isGuard(n) && standing(n));
     if (!F.on) {
         F.on = true;
         F.n++;
@@ -188,7 +249,7 @@ function stir(world, n0) {
         world.message(`🥊 ${what}${guards.length ? ' Vakterna är på väg.' : ''}`);
     }
     let talk = 0;
-    // Vakterna kommer alltid springande
+    // Vakterna kommer alltid springande (även de som är på väg tillbaka till posten)
     for (const g of guards) {
         if (g.brawl === 'fight') continue;
         joinFight(g, 'player', rnd);
@@ -215,15 +276,17 @@ function stir(world, n0) {
                 joinFight(n, m, rnd); joinFight(m, n, rnd);
                 m.stirred = F.n;
                 if (talk++ < 4) say(n, pick(rnd, CHAOS));
-            } else flee(n, rnd, talk++ < 4);
-        } else flee(n, rnd, talk++ < 4);
+            } else flee(I.def, n, rnd, talk++ < 4);
+        } else flee(I.def, n, rnd, talk++ < 4);
     }
 }
 
-function flee(n, rnd, talk) {
+// Upp ur stolen och mot dörren
+function flee(def, n, rnd, talk) {
     n.leaving = true;
     n.drink = null;
     if (n.pose !== 'walk') n.pose = 'walk';
+    collideInterior(def, n, R);
     if (talk && rnd() < 0.6) say(n, pick(rnd, SCARED), 1.8);
 }
 
@@ -252,15 +315,21 @@ export function hurtInside(world, dmg, by) {
     world.sfx('punch');
     if (by && Number.isFinite(by.angle)) { p.vx = (p.vx || 0) + Math.cos(by.angle) * 110; p.vy = (p.vy || 0) + Math.sin(by.angle) * 110; }
     F.quietT = 0;
-    if (by && isGuard(by)) F.guardHits++;
-    if (p.hp <= p.maxHp * 0.2 || F.guardHits >= 3) throwOut(world);
+    // Varje vakt räknar sina egna träffar: två vakter slänger inte ut en dubbelt så fort
+    let grabbed = false;
+    if (by && isGuard(by)) {
+        F.guardHits++;
+        by.grabs = (by.grabs || 0) + 1;
+        grabbed = by.grabs >= GRABS;
+    }
+    if (p.hp <= p.maxHp * 0.2 || grabbed) throwOut(world);
 }
 
 // Ut på gatan, och stället är stängt för en en stund
 export function throwOut(world) {
     const I = world.interior;
     if (!I) return;
-    const guard = I.state.npcs.some(n => isGuard(n) && !n.gone && !n.dead);
+    const guard = I.state.npcs.some(n => isGuard(n) && standing(n));   // en vakt som ligger slänger ingen
     (world.banned || (world.banned = {}))[I.id] = world.time + BAN_TIME;
     world.exitInterior();
     world.sfx('hurt');
@@ -273,7 +342,7 @@ export function bannedFor(world, id) {
     return t ? Math.max(0, t - world.time) : 0;
 }
 
-// R intill någon som ligger: länsa plånboken (en gång per person)
+// R intill någon som ligger: länsa plånboken (en gång per person, några per besök)
 export function playerRob(world) {
     const I = world.interior, p = world.player;
     if (!canBrawl(I) || p.dead) return false;
@@ -284,6 +353,12 @@ export function playerRob(world) {
         if (d < bd) { bd = d; best = n; }
     }
     if (!best) return false;
+    const F = fightOf(I);
+    if ((F.loots || 0) >= LOOT_MAX) {
+        if (!(world.robCd > 0)) { world.robCd = 2; world.message('👛 Personalen har ögonen på dig — inga fler plånböcker här inne.'); }
+        return true;
+    }
+    F.loots = (F.loots || 0) + 1;
     best.looted = true;
     const amount = Math.round((40 + world.rnd() * 210) / 10) * 10;
     world.addMoney(amount, best.x, best.y);
@@ -296,22 +371,23 @@ export function updateBrawl(world, dt) {
     const I = world.interior;
     if (!canBrawl(I) || !(dt > 0)) return;
     if (dt > 0.1) dt = 0.1;
-    const F = fightOf(I), npcs = I.state.npcs, def = I.def;
+    const F = fightOf(I), st = I.state, npcs = st.npcs, def = I.def;
+    if (st.brawlT > 0) st.brawlT = Math.max(0, st.brawlT - dt);
+    if (st.panic > 0 && SELF_PANIC.has(def.theme)) st.panic = Math.max(0, st.panic - dt);
     let fighters = 0;
     for (let i = 0; i < npcs.length; i++) {
         const n = npcs[i];
         if (n.flashT > 0) n.flashT = Math.max(0, n.flashT - dt);
         if (n.punchT > 0) n.punchT = Math.max(0, n.punchT - dt);
+        if (n.upT > 0) n.upT = Math.max(0, n.upT - dt);
         if (n.brawl === 'down') {
             slide(n, def, dt);
-            if ((n.down -= dt) <= 0) {
-                // upp igen, omtöcknad: går hem
-                n.down = 0;
-                n.hp = Math.ceil(n.maxHp * 0.5);
-                endFight(n);
-            }
+            if ((n.down -= dt) <= 0) getUp(world, I, n);
             continue;
         }
+        // den som inte slåss hämtar sig sakta
+        if (n.maxHp > 0 && n.hp < n.maxHp && n.brawl !== 'fight') n.hp = Math.min(n.maxHp, n.hp + n.maxHp * HEAL * dt);
+        if (n.brawl === 'back') { stepBack(def, n, dt); continue; }
         if (n.brawl !== 'fight') continue;
         fighters++;
         stepFighter(world, I, n, dt);
@@ -325,13 +401,48 @@ export function updateBrawl(world, dt) {
     else if (F.quietT >= CALM_TIME) calmDown(world, I);
 }
 
-// Ingen har gett sig på spelaren på en stund: alla går hem
+// Upp igen, omtöcknad: går inte att slå på en stund. Pågår bråket ger sig vakten in i det igen.
+function getUp(world, I, n) {
+    n.down = 0;
+    n.upT = UP_TIME;
+    n.hp = Math.ceil(n.maxHp * (isGuard(n) ? 0.6 : 0.5));
+    if (isGuard(n) && fightOf(I).on && !world.player.dead) {
+        joinFight(n, 'player', world.rnd);
+        say(n, pick(world.rnd, GUARD_UP), 2);
+    } else endFight(n);
+}
+
+// Ingen har gett sig på spelaren på en stund: gästerna går hem, personalen tillbaka till jobbet
 function calmDown(world, I) {
     const F = fightOf(I);
     let any = false;
     for (const n of I.state.npcs) if (n.brawl === 'fight') { endFight(n); any = true; }
     F.on = false;
     if (any) world.message('😮‍💨 Bråket har lugnat sig.');
+}
+
+// Club Diamants vakt/personal: tillbaka till posten runt möblerna. Sista biten, väntan,
+// vändning och pose sköter stepPatrol (interiors.js) när vi släppt taget.
+function stepBack(def, n, dt) {
+    slide(n, def, dt);
+    const sp = n.spots[n.si] || n.spots[0];
+    const d = Math.hypot(sp.x - n.x, sp.y - n.y);
+    n.backT = (n.backT || 0) + dt;
+    if (d < 10 || n.backT > BACK_GIVEUP) {
+        n.brawl = null; n.backT = 0;
+        n.walking = true; n.pose = 'walk';
+        return;
+    }
+    const to = roomStep(def, n.x, n.y, sp.x, sp.y);
+    const sx = to.x - n.x, sy = to.y - n.y, sl = Math.hypot(sx, sy);
+    const m = Math.min(d, Math.max(n.speed || 0, 50) * dt);
+    if (sl > 0.01) {
+        n.x += sx / sl * m; n.y += sy / sl * m;
+        turnTo(n, Math.atan2(sy, sx), dt * 10);
+    }
+    n.pose = 'walk';
+    n.phase = (n.phase || 0) + m * 0.12;
+    collideInterior(def, n, R);
 }
 
 // Bråkarna trängs inte på samma punkt, och ingen står inuti spelaren
@@ -451,7 +562,7 @@ function stepCrew(world, I, dt) {
         if (!F.on) continue;
         let tgt = null, bd = 420;
         for (const n of I.state.npcs) {
-            if (n.brawl !== 'fight' || !(n.foe === 'player' || (n.foe && n.foe.isCrew))) continue;
+            if (n.brawl !== 'fight' || !hittable(n) || !(n.foe === 'player' || (n.foe && n.foe.isCrew))) continue;
             const d = Math.hypot(n.x - c.x, n.y - c.y);
             if (d < bd) { bd = d; tgt = n; }
         }
@@ -480,10 +591,11 @@ export function brawlHint(world) {
     const I = world.interior, p = world.player;
     if (!canBrawl(I)) return '';
     const F = I.fight;
+    const lootLeft = !F || (F.loots || 0) < LOOT_MAX;
     let down = false, threat = false, guest = false;
     for (const n of I.state.npcs) {
         const d = Math.hypot(n.x - p.x, n.y - p.y);
-        if (n.brawl === 'down') { if (!n.looted && d < LOOT) down = true; }
+        if (n.brawl === 'down') { if (!n.looted && lootLeft && d < LOOT) down = true; }
         else if (n.brawl === 'fight') { if (n.foe === 'player' && d < 90) threat = true; }
         else if (d < 30 && !n.leaving && hittable(n) && !isGuard(n) && !isStaff(n)) guest = true;
     }

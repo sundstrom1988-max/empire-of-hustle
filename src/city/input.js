@@ -27,6 +27,14 @@ export function stickKnob(dx, dy, radius = STICK_RADIUS) {
     return { x: dx / d * radius, y: dy / d * radius };
 }
 
+// Var basen hamnar när tummen sätts ned: där tummen är, men hela ringen (radius) ska
+// rymmas på skärmen (area = skärmen i zonens koordinater). Annars når fingret inte fullt
+// utslag mot kanten. Klampad bas = knoppen visar direkt ett utslag mot fingret.
+export function stickOrigin(p, area, radius) {
+    const fit = (v, a0, len) => len >= radius * 2 ? clamp(v, a0 + radius, a0 + len - radius) : a0 + len / 2;
+    return { x: fit(p.x, area.x, area.w), y: fit(p.y, area.y, area.h) };
+}
+
 // Till fots: gå åt joystickens håll (skärm: upp = norr), spring vid fullt utslag
 export function stickWalk(stick) {
     const mag = stick?.active ? stick.mag || 0 : 0;
@@ -38,15 +46,18 @@ export function stickWalk(stick) {
 // efter utslaget. Rakt bakåt i låg fart = backa (med bakänden mot dit man drar).
 // speed = bilens fart framåt (negativ när den backar). maxSpeed (valfri): ett
 // halvt utslag håller ungefär halva toppfarten — lättare att smyga i trånga gator.
+// blocked: bilen står fast med nosen mot något (stickCar) — backa loss och vrid
+// nosen mot draget, som en trepunktsvändning.
 const REVERSE_CONE = Math.PI * 0.72;   // så här långt från nosen räknas som "bakåt"
 const REVERSE_SPEED = 60;              // under den farten får man backa
 const STEER_GAIN = 2.2;
-export function stickDrive(stick, vehicleAngle, speed = 0, maxSpeed = 0) {
+export function stickDrive(stick, vehicleAngle, speed = 0, maxSpeed = 0, blocked = false) {
     const mag = stick?.active ? stick.mag || 0 : 0;
     if (!(mag > 0)) return { throttle: 0, steer: 0 };
     const want = Math.atan2(stick.y, stick.x);
     const diff = wrapAngle(want - vehicleAngle);           // + = medurs på skärmen = höger
     const side = speed < 0 ? -1 : 1;                        // backande bil svänger åt andra hållet
+    if (blocked) return { throttle: -Math.max(0.6, mag), steer: clamp(diff * STEER_GAIN, -1, 1) * side };
     const reversing = speed < -15 && Math.abs(diff) > Math.PI / 2;
     if (reversing || (Math.abs(diff) > REVERSE_CONE && speed < REVERSE_SPEED)) {
         const tail = wrapAngle(want - vehicleAngle - Math.PI);
@@ -62,6 +73,42 @@ export function stickDrive(stick, vehicleAngle, speed = 0, maxSpeed = 0) {
         if (speed > cap) throttle = speed > cap + 40 ? -0.25 : 0;
     }
     return { throttle, steer: clamp(diff * STEER_GAIN, -1, 1) * side };
+}
+
+// Joysticken i bilen, med minne mellan stegen (mem: ett objekt som staden håller).
+// En bil som står still kan inte svänga (styrningen kräver fart), så med nosen mot en
+// vägg och draget åt sidan trycker den bara mot väggen. Märker vi det backar den loss
+// en stund (stickDrive med blocked) och sedan styr man som vanligt igen.
+const STUCK_TIME = 0.25;    // s med gasen i utan att komma någonstans
+const STUCK_PUSH = 8;       // px/s: minst så fort gasen borde ha fått upp bilen hittills...
+const STUCK_SLOW = 5;       // ...men den står i princip still (väggen trycker tillbaka den)
+const UNSTICK_TIME = 0.7;   // backa så här länge som mest
+const UNSTICK_DIST = 36;    // ...eller tills den kommit så här långt
+const UNSTICK_AIM = 0.6;    // ...eller tills nosen pekar nästan dit man drar (och den backat en bit)
+export function stickCar(mem, stick, car, dt) {
+    if (mem.car !== car) Object.assign(mem, { car, t: 0, backT: 0 });
+    const fwd = car.vx * Math.cos(car.angle) + car.vy * Math.sin(car.angle);
+    const max = car.spec.maxSpeed;
+    const moved = () => Math.hypot(car.x - mem.x, car.y - mem.y);
+    if (mem.backT > 0) {
+        const aim = Math.abs(wrapAngle(Math.atan2(stick.y, stick.x) - car.angle));
+        const d = moved();
+        mem.backT = d >= UNSTICK_DIST || (aim < UNSTICK_AIM && d >= UNSTICK_DIST * 0.45) ? 0 : mem.backT - dt;
+        if (mem.backT > 0) return stickDrive(stick, car.angle, fwd, max, true);
+    }
+    const ctl = stickDrive(stick, car.angle, fwd, max);
+    // Gasar framåt och vill svänga men står still? (rakt in i väggen = spelarens val)
+    if (ctl.throttle > 0 && Math.abs(ctl.steer) > 0.8 && Math.abs(fwd) < STUCK_SLOW) {
+        if (!(mem.t > 0) || moved() > 2) Object.assign(mem, { t: 0, push: 0, f0: fwd, x: car.x, y: car.y });
+        mem.t += dt;
+        mem.push += car.spec.accel * ctl.throttle * dt;
+        // Fri bil hade fått upp farten med push (minus lite friktion) — den här har inte det
+        if (mem.t >= STUCK_TIME && mem.push > STUCK_PUSH && fwd - mem.f0 < mem.push * 0.4) {
+            Object.assign(mem, { t: 0, backT: UNSTICK_TIME, x: car.x, y: car.y });
+            return stickDrive(stick, car.angle, fwd, max, true);
+        }
+    } else mem.t = 0;
+    return ctl;
 }
 
 const MAP = {
@@ -194,7 +241,10 @@ export class Input {
                 try { this.zone.setPointerCapture(e.pointerId); } catch (err) { /* äldre webbläsare */ }
                 // Radien följer basens storlek i CSS (mindre på små skärmar)
                 this.stickR = base.offsetWidth ? Math.max(30, base.offsetWidth / 2 - 6) : STICK_RADIUS;
-                this.stickO = local(e);
+                // Nära skärmkanten flyttas basen in så att hela ringen syns och fingret når fullt utslag
+                const z = this.zone.getBoundingClientRect(), o = root.getBoundingClientRect();
+                const ring = (base.offsetWidth ? base.offsetWidth / 2 : this.stickR + 6) + 4;
+                this.stickO = stickOrigin(local(e), { x: o.left - z.left, y: o.top - z.top, w: o.width, h: o.height }, ring);
                 base.style.left = `${this.stickO.x}px`;
                 base.style.top = `${this.stickO.y}px`;
                 base.classList.add('on');
