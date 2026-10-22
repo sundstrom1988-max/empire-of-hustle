@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { World } from '../src/city/world.js';
+import { World, startSpot } from '../src/city/world.js';
 import { generateCity } from '../src/city/map.js';
 import { mulberry32 } from '../src/city/rng.js';
 import { createPlayerState } from '../src/game/state.js';
@@ -19,6 +19,22 @@ function makeWorld(seed = 7, profile = createPlayerState('kimit')) {
 }
 
 function finite(e) { return ['x', 'y', 'vx', 'vy'].every(k => Number.isFinite(e[k])); }
+
+describe('Startplatser online', () => {
+    it('ger varje spelare en egen gångbar plats vid HQ', () => {
+        const spots = [0, 1, 2, 3, 4, 5].map(s => startSpot(city, s));
+        for (const p of spots) {
+            expect(isWalkableTile(city, Math.floor(p.x / TILE), Math.floor(p.y / TILE))).toBe(true);
+            expect(Math.hypot(p.x - city.spawn.x, p.y - city.spawn.y)).toBeLessThan(160);
+        }
+        for (let i = 0; i < spots.length; i++) for (let j = i + 1; j < spots.length; j++) {
+            expect(Math.hypot(spots[i].x - spots[j].x, spots[i].y - spots[j].y)).toBeGreaterThan(30);
+        }
+        const w = new World(city, createPlayerState('mehmet'), { round: 2, rnd: mulberry32(3), slot: 1 });
+        expect(w.player.x).toBe(spots[1].x);
+        expect(w.player.y).toBe(spots[1].y);
+    });
+});
 
 describe('World simulation', () => {
     it('runs two minutes of chaos without breaking', () => {

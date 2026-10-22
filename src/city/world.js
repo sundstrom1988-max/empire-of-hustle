@@ -59,6 +59,18 @@ function hashStr(s) {
     return h >>> 0;
 }
 
+// Plats nummer `slot` runt HQ (0 = mitt på), alltid på gångbar mark
+export function startSpot(city, slot) {
+    const s = city.spawn;
+    if (!slot) return { x: s.x, y: s.y };
+    for (let k = 0; k < 8; k++) {
+        const a = slot * 2.4 + k * 0.7, d = 64 + 8 * k;
+        const x = s.x + Math.cos(a) * d, y = s.y + Math.sin(a) * d;
+        if (isWalkableTile(city, Math.floor(x / TILE), Math.floor(y / TILE))) return { x, y };
+    }
+    return spotNear(city, s.x, s.y, slot);
+}
+
 export class World {
     constructor(city, profile, opts = {}) {
         this.city = city;
@@ -131,15 +143,17 @@ export class World {
         if (!Array.isArray(profile.weapons)) profile.weapons = [];
         if (!profile.ammo || typeof profile.ammo !== 'object') profile.ammo = {};
         if (!ownsWeapon(profile, profile.weapon)) profile.weapon = 'fists';
+        // Online har varje spelare en egen startplats vid HQ så att ingen börjar ovanpå någon annan
+        const start = startSpot(city, opts.slot || 0);
         this.player = {
-            x: city.spawn.x, y: city.spawn.y, vx: 0, vy: 0, r: 8.5, angle: -Math.PI / 2,
+            x: start.x, y: start.y, vx: 0, vy: 0, r: 8.5, angle: -Math.PI / 2,
             hp: 100 + 10 * (profile.strength || 0), maxHp: 100 + 10 * (profile.strength || 0), vehicle: null, dead: false, nitro: 0, walkPhase: 0, bustT: 0, hitT: 0, hurtT: 0, punchT: 0, muzzle: 0,
             charIcon: profile.char?.icon || '😎', color: profile.char?.color || '#ff4fd8'
         };
         this.player.armor = Math.max(0, Math.min(ARMOR_CAP, profile.armor || 0));
         this.player.protT = 0;
         if (!Array.isArray(profile.crew)) profile.crew = [];
-        this.crew = profile.crew.map((m, i) => { const s = spotNear(city, city.spawn.x, city.spawn.y, i); return makeMember(m, i, s.x, s.y); });
+        this.crew = profile.crew.map((m, i) => { const s = spotNear(city, start.x, start.y, i); return makeMember(m, i, s.x, s.y); });
         this.setupOwnedCars();
         this.setupPickups();
         this.updateDistrict();

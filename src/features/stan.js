@@ -151,6 +151,7 @@ export function goToCity() {
         maxFence: gameState.maxFencePerRound,
         maxGoods: gameState.maxGoodsPerRound,
         musicMuted: gameState.musicMuted,
+        slot: gameState.isOnline ? Math.max(0, gameState.players.indexOf(p)) : 0,
         sms: { open: openSmsOverlay, unread: smsUnread },
         onClose: onCityClosed
     });

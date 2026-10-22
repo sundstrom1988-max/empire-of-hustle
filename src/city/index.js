@@ -79,7 +79,7 @@ export function openCity(profile, opts = {}) {
     const canvas = overlay.querySelector('.city-canvas');
     // Den delade staden: andra spelares positioner och värdens beslut kommer via nätet
     const net = { online: cityNetActive(), remotes: cityRemotes, taken: cityTaken, request: cityRequest };
-    const world = new World(cityCache, profile, { round: opts.round, maxMissions: opts.maxMissions, maxFence: opts.maxFence, maxGoods: opts.maxGoods, net });
+    const world = new World(cityCache, profile, { round: opts.round, maxMissions: opts.maxMissions, maxFence: opts.maxFence, maxGoods: opts.maxGoods, slot: opts.slot, net });
     world.ownersRef = () => gameState.cityOwners;
     world.nameOf = id => gameState.players.find(pl => pl.charKey === id)?.char?.name || id;
     cityEnter(profile.charKey);
