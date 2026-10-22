@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import * as A from '../src/multiplayer/authority.js';
 import { gameState, resetGameState, createPlayerState, mergeRemoteState, normalizePlayer } from '../src/game/state.js';
-import { cityEnter, cityPublish, cityRequest, cityRemotes, cityTaken, onCityNet, _resetCityNet, _hostHandle } from '../src/multiplayer/citynet.js';
+import { cityEnter, cityPublish, cityRequest, cityRemotes, cityTaken, onCityNet, _resetCityNet, _hostHandle, _sanitizePos } from '../src/multiplayer/citynet.js';
 import { World } from '../src/city/world.js';
 import { generateCity } from '../src/city/map.js';
 import { mulberry32 } from '../src/city/rng.js';
@@ -249,5 +249,20 @@ describe('PvP och tjänster', () => {
         expect(w.callDoctor()).toBe(true);
         expect(w.player.hp).toBe(w.player.maxHp);
         expect(profile.money).toBe(before - 400);
+    });
+});
+
+describe('Positioner genom värden', () => {
+    it('den som är inomhus syns vid dörren på kartan (dörren följer med genom värden)', () => {
+        const city = generateCity(1337);
+        const w = new World(city, createPlayerState('mehmet'), { round: 2, rnd: mulberry32(9) });
+        w.enterInterior('stripclub', city.markers.stripclub);
+        const sent = _sanitizePos(JSON.parse(JSON.stringify(w.netSnapshot())));
+        expect(sent.in).toBe('stripclub');
+        expect(sent.ox).toBe(Math.round(city.markers.stripclub.door.x));
+        expect(sent.oy).toBe(Math.round(city.markers.stripclub.door.y));
+        // Ute: dörren är samma som där man står
+        const out = _sanitizePos({ x: 100, y: 200 });
+        expect([out.ox, out.oy]).toEqual([100, 200]);
     });
 });

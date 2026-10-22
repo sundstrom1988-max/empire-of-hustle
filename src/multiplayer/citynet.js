@@ -54,7 +54,8 @@ const str = (v, n = 24) => (typeof v === 'string' ? v.slice(0, n) : null);
 function sanitizePos(p) {
     const crew = Array.isArray(p.crew) ? p.crew.slice(0, 8).map(c => ({ x: num(c.x), y: num(c.y), r: str(c.r, 12), hp: num(c.hp), mhp: num(c.mhp, 1), d: !!c.d, a: num(c.a) })) : [];
     return {
-        x: num(p.x), y: num(p.y), a: num(p.a), v: str(p.v), vc: str(p.vc, 9), in: str(p.in),
+        // ox/oy: dörren man gick in genom — där syns man på kartan när man är inomhus
+        x: num(p.x), y: num(p.y), ox: num(p.ox, num(p.x)), oy: num(p.oy, num(p.y)), a: num(p.a), v: str(p.v), vc: str(p.vc, 9), in: str(p.in),
         hp: num(p.hp), mhp: num(p.mhp, 100), dead: !!p.dead, prot: !!p.prot, w: str(p.w, 12), stars: Math.max(0, Math.min(5, num(p.stars))),
         ar: num(p.ar), crew
     };
@@ -282,3 +283,4 @@ export function _resetCityNet() {
     me.remotes.clear(); me.taken = new Set(); me.seen.clear(); me.inCity = false; me.listeners.clear();
 }
 export const _hostHandle = hostHandle;
+export const _sanitizePos = sanitizePos;
