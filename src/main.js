@@ -15,7 +15,9 @@ import { initMinigames, playDiceBattle, playGuessNumber, playSlotMachine, playCo
 import { showPhoneToggle, togglePhone, phoneOpenSMS, phoneOpenChat, sendPhoneSMS, phoneOpenDeals, doPhoneDeal, phoneOpenCars, buyCar, phoneOpenWallet, phoneOpenStatus, renderDashboard } from './features/phone.js';
 import { createRoom, joinRoom, startOnlineGame, onPlayerJoin, onChat, onSync, onPeerLeft, onHostLost, sayGoodbye, leaveRoom } from './multiplayer/sync.js';
 import { toggleMusic, toggleSfx, showToast, spawnParticles, startMusic } from './utils/effects.js';
-import { unlockAudio } from './utils/audio.js';
+import { unlockAudio, sfx } from './utils/audio.js';
+import { initSms, smsIncoming, smsAck, closeSmsOverlay, refreshSms } from './features/sms.js';
+import { smsSend, smsContacts, onSmsIncoming, onSmsStatus } from './multiplayer/citynet.js';
 import { showHeistButton, selectHeistTarget, doHeist, sweepEvidence } from './features/gargamel.js';
 import { renderGarage, buyGarageCar, pimpCar } from './features/garage.js';
 import { renderStanPanel, goToCity } from './features/stan.js';
@@ -354,6 +356,20 @@ function renderLobby() {
     if (btn) btn.textContent = gameState.players.length > 1 ? `⚡ STARTA MATCH (${gameState.players.length} spelare)` : '⚡ STARTA ÄNDÅ (bara du)';
 }
 
+// ── SMS mellan riktiga spelare: appen pratar med värden via citynet ──
+onSmsIncoming(smsIncoming);
+onSmsStatus(smsAck);
+function setupSms() {
+    initSms({
+        myId: () => (gameState.isOnline ? gameState.myCharKey : null),
+        players: smsContacts,
+        send: smsSend,
+        accountKey: () => gameState.accountKey,
+        roomId: () => gameState.roomId,
+        notify: () => sfx('phone', 0.5)
+    });
+}
+
 async function startOnlineMode() {
     const player = normalizePlayer({ charKey: selectedChar });
     let roomId;
@@ -367,6 +383,7 @@ async function startOnlineMode() {
     gameState.players = [player];
     gameState.currentPlayerIdx = 0; gameState.round = 1;
     gameState.gameOver = false; gameState.accountKey = null;
+    setupSms();
     showToast(`🌐 Rum skapat: ${roomId}`);
     document.getElementById('screen-select').innerHTML = `
         <div class="lobby-box">
@@ -400,6 +417,7 @@ window.joinOnlineRoom = async function (code) {
     if (res.ok) {
         gameState.mode = 'online';
         gameState.accountKey = null;
+        setupSms();
         showToast(`🌐 Gick med i rum ${room}!`);
         showGameScreen();
     } else {
@@ -409,17 +427,20 @@ window.joinOnlineRoom = async function (code) {
 
 // ── Online-händelser ──
 onPlayerJoin((p) => {
+    refreshSms();
     showToast(`🟢 ${p.char.icon} ${p.char.name} gick med!`);
     renderLobby();
     refreshUI();
 });
 onChat((msg) => receiveOnlineChat(msg));
 onSync(() => {
+    refreshSms(); // vem som är online kan ha ändrats
     if (document.getElementById('screen-game')?.style.display === 'flex') refreshUI();
     showWinIfOver();
     ensureAITurn();
 });
 onPeerLeft((p) => {
+    refreshSms();
     showToast(`🔴 ${p.char.name} lämnade — AI:n tar över`);
     refreshUI();
     ensureAITurn(); // även om den som lämnade höll på med en AI-tur
@@ -546,7 +567,7 @@ window.addEventListener('error', (e) => reportError(e.error || e.message));
 window.addEventListener('unhandledrejection', (e) => reportError(e.reason));
 ['pointerdown', 'keydown'].forEach(ev => window.addEventListener(ev, unlockAudio, { once: true, passive: true }));
 // Säg hejdå när fliken stängs så att de andra inte väntar på en spelare som är borta
-window.addEventListener('pagehide', () => { if (gameState.isOnline) { sayGoodbye(); leaveRoom(); } });
+window.addEventListener('pagehide', () => { if (gameState.isOnline) { closeSmsOverlay(); sayGoodbye(); leaveRoom(); } });
 
 // ── Init ──
 renderApp();

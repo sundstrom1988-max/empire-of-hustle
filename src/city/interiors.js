@@ -104,7 +104,7 @@ export const INTERIORS = {
         id: 'stripclub', name: 'Club Diamant', theme: 'club', w: 30, h: 22,
         rows: CLUB_ROWS,
         spawn: { x: 480, y: tc(19) },
-        exit: { x: 480, y: 21 * TS + 14, r: 30 },
+        exit: { x: 480, y: 21 * TS + 20, r: 22 },
         interactions: [
             { id: 'bartender', label: 'E — Prata med bartendern', x: 148, y: tc(10), r: 64 },
             { id: 'bouncer', label: 'E — Prata med vakten', x: tc(17), y: tc(20) - 6, r: 46 },
@@ -118,7 +118,7 @@ export const INTERIORS = {
         zones: [
             { x: 1, y: 1, w: 7, h: 2, kind: 'dj' },
             { x: 1, y: 6, w: 2, h: 9, kind: 'service' },
-            { x: 23, y: 1, w: 6, h: 11, kind: 'vip' },
+            { x: 22, y: 1, w: 7, h: 11, kind: 'vip' },
             { x: 23, y: 16, w: 6, h: 5, kind: 'office' }
         ]
     },
@@ -126,12 +126,12 @@ export const INTERIORS = {
         id: 'gunshop', name: 'Pang-Pelles Vapen', theme: 'gunshop', w: 16, h: 12,
         rows: GUN_ROWS,
         spawn: { x: 256, y: tc(9) },
-        exit: { x: 256, y: 11 * TS + 20, r: 24 },
+        exit: { x: 256, y: 11 * TS + 24, r: 22 },
         interactions: [
             { id: 'seller', label: 'E — Prata med Pang-Pelle', x: 256, y: tc(6), r: 64 }
         ],
         music: null,
-        zones: []
+        zones: [{ x: 1, y: 3, w: 14, h: 2, kind: 'staff' }]
     }
 };
 
@@ -255,11 +255,14 @@ export function atInteriorExit(def, x, y) {
 
 // ═══════════════════════════════════════════
 //  FOLK
-//  npc: { kind, x, y, angle, phase, pose, look, say }
+//  npc: { kind, x, y, angle, phase, pose, look: { shirt, skin, hair, dress?, cap?, sparkle? }, say }
+//  kind klubben: dancer, bartender, bouncer, manager, dj, waitress, guest, vip, patron
+//  kind butiken: seller, customer
 //  pose: 'idle' | 'walk' | 'dance' | 'sit' | 'work' | 'cheer'
-//  phase går framåt med rörelsen/dansen (som walkPhase i stan).
+//  phase går framåt med rörelsen/dansen (walk: som walkPhase i stan, dance: ~3 rad/s).
 //  move (bara dansare): 'orbit' | 'sway' | 'spin' | 'strut'
-//  say: { text, life } — life räknas ner av updateInterior.
+//  say: { text, life } — life räknas ner av updateInterior, renderaren ritar bubblan.
+//  state.focus = { x, y } (valfri, t.ex. spelaren): personalen vänder sig mot den när den är nära.
 // ═══════════════════════════════════════════
 
 const SKINS = ['#f1c27d', '#e0ac69', '#c68642', '#8d5524', '#ffdbac', '#a0522d'];
@@ -306,19 +309,20 @@ function patrol(kind, rnd, spots, o = {}) {
 }
 
 function seated(kind, tx, ty, ang, rnd, look, drink) {
-    const x = tc(tx), y = tc(ty);
-    return makeNpc(kind, x, y, rnd, {
+    const sx = tc(tx), sy = tc(ty), ph = rnd() * TAU;
+    return makeNpc(kind, sx + Math.sin(ph) * 0.6, sy + Math.cos(ph) * 0.6, rnd, {
         angle: ang, pose: 'sit', beh: 'seat', look, drink,
-        extra: { sx: x, sy: y, ph: rnd() * TAU, cd: rand(rnd, 2, 12) }
+        extra: { sx, sy, ph, cd: rand(rnd, 2, 12) }
     });
 }
 
 function floorDancer(tx, ty, rnd, look) {
-    const x = tc(tx), y = tc(ty);
-    return makeNpc('patron', x, y, rnd, {
-        angle: -PI / 2, pose: 'dance', beh: 'floor', look,
+    const hx = tc(tx), hy = tc(ty), ph = rnd() * TAU;
+    // startar där dansen börjar (t = 0), så att första bildrutan inte hoppar
+    return makeNpc('patron', hx + Math.sin(ph) * 9, hy + Math.cos(ph * 1.7) * 6, rnd, {
+        angle: -PI / 2 + Math.sin(ph) * 0.7, pose: 'dance', beh: 'floor', look,
         drink: rnd() < 0.35 ? pick(rnd, DRINKS) : null,
-        extra: { hx: x, hy: y, ph: rnd() * TAU, spd: rand(rnd, 6.5, 9.5) }
+        extra: { hx, hy, ph, spd: rand(rnd, 2.6, 3.8) }
     });
 }
 
@@ -345,7 +349,7 @@ function dancer(anchors, script, start, rnd, dress, hair, skin) {
     return makeNpc('dancer', a.x, a.y, rnd, {
         angle: PI / 2, pose: 'dance', beh: 'dancer',
         look: { shirt: dress, skin, hair, dress, sparkle: true },
-        extra: { anchors, script, si: start, st: rnd() * 1.5, bx: a.x, by: a.y, ox: 0, oy: 0, th: rnd() * TAU, mt: rnd() * 10, move: 'sway' }
+        extra: { anchors, script, si: start, st: rnd() * 1.5, bx: a.x, by: a.y, ox: 0, oy: 0, th: rnd() * TAU, mt: rnd() * 10, move: 'sway', rate: rand(rnd, 3, 3.6) }
     });
 }
 
@@ -362,14 +366,14 @@ function populateClub(def, rnd) {
 
     // Personalen
     npcs.push(patrol('bartender', rnd, [
-        { x: 62, y: tc(8), a: 0, pose: 'work', w: [4, 9] },
+        { x: 62, y: tc(9), a: 0, pose: 'work', w: [4, 9] },
         { x: 62, y: tc(10), a: 0, pose: 'work', w: [4, 9] },
-        { x: 62, y: tc(12), a: 0, pose: 'work', w: [4, 9] }
+        { x: 62, y: tc(11), a: 0, pose: 'work', w: [4, 9] }
     ], { speed: 38, watch: true, start: 1, look: { shirt: '#f8fafc', skin: '#c68642', hair: '#3f2a14' } }));
     npcs.push(patrol('bouncer', rnd, [
         { x: tc(17), y: tc(20) - 4, a: 2.8, pose: 'idle', w: [7, 12] },
         { x: tc(17), y: tc(19), a: -0.6, pose: 'idle', w: [4, 7] }
-    ], { speed: 30, watch: true, look: { shirt: '#0b0b0f', skin: '#8d5524', hair: '#111111', cap: '#111827' } }));
+    ], { speed: 30, watch: true, look: { shirt: '#1b2433', skin: '#8d5524', hair: '#111111', cap: '#111827' } }));
     npcs.push(patrol('manager', rnd, [
         { x: tc(26), y: tc(17), a: PI, pose: 'idle', w: [6, 10] },
         { x: tc(27) - 4, y: tc(16) + 2, a: -PI / 2, pose: 'work', w: [3, 5] }
@@ -440,7 +444,7 @@ export function createInteriorState(id, rnd = Math.random) {
     const def = INTERIORS[id];
     if (!def) throw new Error('Okänd interiör: ' + id);
     const npcs = def.theme === 'club' ? populateClub(def, rnd) : populateGunshop(def, rnd);
-    return { id, def, t: 0, npcs, focus: null };
+    return { id, def, t: 0, npcs, focus: null, talking: 0 };
 }
 
 // ── Animation ──
@@ -455,7 +459,13 @@ const wrapAngle = a => {
 };
 const turnToward = (n, a, k) => { n.angle = wrapAngle(n.angle + angDiff(n.angle, a) * Math.min(1, k)); };
 
-function say(n, text, life = 2.4) { n.say = { text, life }; }
+// Högst några bubblor samtidigt, annars blir det som en tecknad serie
+const MAX_SAY = 4;
+function trySay(st, n, text, life) {
+    if (n.say || st.talking >= MAX_SAY) return;
+    n.say = { text, life };
+    st.talking++;
+}
 
 // Håll dansaren på scenen (huvudscenen eller catwalken)
 function clampToStage(st, n) {
@@ -495,13 +505,13 @@ function stepDancer(n, st, dt) {
         default: // strut
             ang = moving ? Math.atan2(dy, dx) : PI / 2;
     }
-    const k = Math.min(1, dt * 7);
+    const k = Math.min(1, dt * 5);
     n.ox += (tx - n.ox) * k; n.oy += (ty - n.oy) * k;
     n.x = n.bx + n.ox; n.y = n.by + n.oy;
     clampToStage(st, n);
     if (spin) n.angle = wrapAngle(n.angle + 6.4 * dt); else turnToward(n, ang, dt * 8);
     n.move = s.m;
-    n.phase += dt * (spin ? 14 : s.m === 'strut' && moving ? 11 : 8.5);
+    n.phase += dt * (spin ? 4.8 : n.rate);
 }
 
 function stepFloorDancer(n, dt, t) {
@@ -511,15 +521,15 @@ function stepFloorDancer(n, dt, t) {
     n.angle = wrapAngle(-PI / 2 + Math.sin(t * 0.9 + n.ph) * 0.7);
 }
 
-function stepSeated(n, dt, t, rnd) {
-    n.phase += dt * (n.pose === 'cheer' ? 9 : 1.6);
+function stepSeated(n, st, dt, t, rnd) {
+    n.phase += dt * (n.pose === 'cheer' ? 2 : 1.6);
     n.x = n.sx + Math.sin(t * 1.3 + n.ph) * 0.6;
     n.y = n.sy + Math.cos(t * 1.1 + n.ph) * 0.6;
     n.cd -= dt;
     if (n.cd > 0) return;
     if (n.pose === 'cheer') { n.pose = 'sit'; n.cd = rand(rnd, 5, 15); } else {
         n.pose = 'cheer'; n.cd = rand(rnd, 1.3, 2.3);
-        if (rnd() < 0.6) say(n, pick(rnd, CHEERS), 1.8);
+        if (rnd() < 0.6) trySay(st, n, pick(rnd, CHEERS), 1.8);
     }
 }
 
@@ -555,7 +565,8 @@ function stepPatrol(n, st, dt, rnd) {
         }
     }
     // står stilla: andas, jobbar och tittar gärna på spelaren
-    n.phase += dt * (n.pose === 'work' ? 3.4 : n.pose === 'dance' ? 8 : 1);
+    if (n.pose === 'idle') n.phase += (Math.round(n.phase / PI) * PI - n.phase) * Math.min(1, dt * 5);
+    else n.phase += dt * (n.pose === 'dance' ? 3.2 : 1.5);
     let want = n.turnTo;
     const f = st.focus;
     if (f && n.watch && n.pose !== 'walk') {
@@ -580,14 +591,14 @@ export function updateInterior(state, dt, rnd = Math.random) {
     if (dt > 0.1) dt = 0.1;
     state.t += dt;
     const t = state.t, npcs = state.npcs;
-    let talking = 0;
-    for (let i = 0; i < npcs.length; i++) if (npcs[i].say) talking++;
+    state.talking = 0;
+    for (let i = 0; i < npcs.length; i++) if (npcs[i].say) state.talking++;
     for (let i = 0; i < npcs.length; i++) {
         const n = npcs[i];
         switch (n.beh) {
             case 'dancer': stepDancer(n, state.def.stage, dt); break;
             case 'floor': stepFloorDancer(n, dt, t); break;
-            case 'seat': stepSeated(n, dt, t, rnd); break;
+            case 'seat': stepSeated(n, state, dt, t, rnd); break;
             case 'patrol': stepPatrol(n, state, dt, rnd); break;
             default: n.phase += dt;
         }
@@ -595,7 +606,7 @@ export function updateInterior(state, dt, rnd = Math.random) {
             if ((n.say.life -= dt) <= 0) n.say = null;
         } else if (n.lines && (n.chatT -= dt) <= 0) {
             n.chatT = rand(rnd, 12, 30);
-            if (talking < 3) { say(n, pick(rnd, n.lines), 2.6); talking++; }
+            trySay(state, n, pick(rnd, n.lines), 2.6);
         }
     }
 }
@@ -604,12 +615,11 @@ export function updateInterior(state, dt, rnd = Math.random) {
 //  RITNING
 //  Det statiska lagret (golv, väggar, möbler, skyltar) ritas en
 //  gång till en offscreen-canvas. Varje bildruta läggs sedan det
-//  rörliga ovanpå: dansgolvets färger, lampor, folk och pratbubblor.
+//  rörliga ovanpå: dansgolvets färger, lampor och folk.
 // ═══════════════════════════════════════════
 
 const EMOJI_FONT = '"Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif';
 const SIGN_FONT = 'Bungee, Impact, sans-serif';
-const TEXT_FONT = '"Space Grotesk", sans-serif';
 
 function tileHash(x, y) {
     let h = (x * 374761393 + y * 668265263) >>> 0;
@@ -622,10 +632,6 @@ function hexRgb(hex) {
     return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
 }
 function rgba(hex, a) { const c = hexRgb(hex); return `rgba(${c[0]},${c[1]},${c[2]},${a})`; }
-function shade(hex, f) {
-    const c = hexRgb(hex);
-    return `rgb(${clamp(Math.round(c[0] * f), 0, 255)},${clamp(Math.round(c[1] * f), 0, 255)},${clamp(Math.round(c[2] * f), 0, 255)})`;
-}
 
 function rr(g, x, y, w, h, r) {
     g.beginPath();
@@ -642,13 +648,16 @@ function softShadow(g, cx, cy, rx, ry, a = 0.28) {
     g.fillStyle = `rgba(0,0,0,${a})`; g.beginPath(); g.ellipse(cx + 2, cy + 3, rx, ry, 0, 0, TAU); g.fill();
 }
 
+// shadowBlur följer inte transformen, så den skalas med cachens upplösning
+let paintScale = 1;
+
 // Neonskylt: färgad text med sken och ljus kärna
 function neonText(g, text, x, y, size, color, glow, font = SIGN_FONT) {
     g.save();
     g.font = `${size}px ${font}`; g.textAlign = 'center'; g.textBaseline = 'middle';
-    g.shadowColor = glow; g.shadowBlur = size * 0.8;
+    g.shadowColor = glow; g.shadowBlur = size * 0.8 * paintScale;
     g.lineWidth = Math.max(2, size * 0.16); g.strokeStyle = glow; g.globalAlpha = 0.5; g.strokeText(text, x, y);
-    g.globalAlpha = 1; g.shadowBlur = size * 0.45; g.fillStyle = color; g.fillText(text, x, y);
+    g.globalAlpha = 1; g.shadowBlur = size * 0.45 * paintScale; g.fillStyle = color; g.fillText(text, x, y);
     g.shadowBlur = 0; g.globalAlpha = 0.4; g.fillStyle = '#ffffff'; g.fillText(text, x, y);
     g.restore();
 }
@@ -656,7 +665,7 @@ function neonText(g, text, x, y, size, color, glow, font = SIGN_FONT) {
 function neonLine(g, pts, color, width = 2.5) {
     g.save();
     g.lineCap = 'round'; g.lineJoin = 'round';
-    g.shadowColor = color; g.shadowBlur = 10;
+    g.shadowColor = color; g.shadowBlur = 10 * paintScale;
     g.strokeStyle = rgba(color, 0.55); g.lineWidth = width + 2;
     g.beginPath(); g.moveTo(pts[0][0], pts[0][1]); for (let i = 1; i < pts.length; i++) g.lineTo(pts[i][0], pts[i][1]); g.stroke();
     g.shadowBlur = 0; g.strokeStyle = color; g.lineWidth = width; g.stroke();
@@ -679,12 +688,13 @@ const derivedCache = new WeakMap();
 function derived(def) {
     let d = derivedCache.get(def);
     if (d) return d;
-    d = { dance: [], bulbs: [], poles: [] };
+    d = { dance: [], bulbs: [], poles: [], tables: [] };
     const isStage = (tx, ty) => { const c = chAt(def, tx, ty); return c === 'T' || c === 'P'; };
     for (let ty = 0; ty < def.h; ty++) for (let tx = 0; tx < def.w; tx++) {
         const c = def.rows[ty][tx];
         if (c === 'd') d.dance.push(tx, ty);
         if (c === 'P') d.poles.push({ x: tc(tx), y: tc(ty) });
+        if (c === 't') d.tables.push(tc(tx), tc(ty));
         if (c === 'T' || c === 'P') {
             // lampor längs scenkanten som vetter mot publiken
             if (!isStage(tx, ty + 1) && chAt(def, tx, ty + 1) !== '#') d.bulbs.push([tx * TS + 8, ty * TS + TS - 3], [tx * TS + 24, ty * TS + TS - 3]);
@@ -699,17 +709,16 @@ function derived(def) {
 // ── Cache av färdigmålade små bilder (sken, ljuskäglor) ──
 const sprites = new Map();
 function sprite(key, w, h, paint) {
-    let s = sprites.get(key);
-    if (s !== undefined) return s;
-    s = null;
-    if (typeof document !== 'undefined') {
-        const cv = document.createElement('canvas');
-        cv.width = w; cv.height = h;
-        const g = cv.getContext('2d');
-        if (g) { paint(g, w, h); s = cv; }
-    }
-    sprites.set(key, s);
-    return s;
+    const have = sprites.get(key);
+    if (have) return have;
+    if (typeof document === 'undefined') return null;
+    const cv = document.createElement('canvas');
+    cv.width = w; cv.height = h;
+    const g = cv.getContext('2d');
+    if (!g) return null;
+    paint(g, w, h);
+    sprites.set(key, cv);
+    return cv;
 }
 function glowSprite(hex) {
     return sprite('glow' + hex, 96, 96, (g, w, h) => {
@@ -750,13 +759,14 @@ function staticLayer(ctx, def) {
     const g = cv.getContext('2d');
     if (!g) return null;
     g.scale(want, want);
-    paintStatic(g, def);
+    paintScale = want;
+    try { paintStatic(g, def); } finally { paintScale = 1; }
     L = { cv, scale: want };
     layers.set(def, L);
     // skyltarna använder Bungee: måla om en gång när typsnittet har laddats
     if (!fontWatch && document.fonts && document.fonts.load) {
         fontWatch = true;
-        try { document.fonts.load('16px Bungee').then(() => { layers = new WeakMap(); }).catch(() => {}); } catch (e) { /* inget typsnitt, inget problem */ }
+        try { document.fonts.load('16px Bungee').then(() => { layers = new WeakMap(); }).catch(() => {}); } catch { /* inget typsnitt, inget problem */ }
     }
     return L;
 }
@@ -824,12 +834,21 @@ function slabGroup(g, def, chars, o) {
     });
 }
 
-function plankFloor(g, x, y, h, cols) {
+// Långa brädor (96 px) med slumpad förskjutning per rad
+function plankFloor(g, tx, ty, cols) {
+    const x = tx * TS, y = ty * TS;
     for (let i = 0; i < 4; i++) {
-        g.fillStyle = cols[(h >> (i * 2)) & 3];
-        g.fillRect(x, y + i * 8, TS, 8);
-        g.fillStyle = 'rgba(0,0,0,0.3)'; g.fillRect(x, y + i * 8 + 7, TS, 1);
-        g.fillRect(x + ((h >> (i * 4 + 3)) & 31), y + i * 8, 1, 7);
+        const gy = ty * 4 + i, off = tileHash(gy, 7) % 96;
+        const j = (96 - (x + off) % 96) % 96, p0 = Math.floor((x + off) / 96), yy = y + i * 8;
+        if (j === 0 || j >= TS) {
+            g.fillStyle = cols[tileHash(gy, p0) & 3]; g.fillRect(x, yy, TS, 8);
+            if (j === 0) { g.fillStyle = 'rgba(0,0,0,0.35)'; g.fillRect(x, yy, 1, 7); }
+        } else {
+            g.fillStyle = cols[tileHash(gy, p0) & 3]; g.fillRect(x, yy, j, 8);
+            g.fillStyle = cols[tileHash(gy, p0 + 1) & 3]; g.fillRect(x + j, yy, TS - j, 8);
+            g.fillStyle = 'rgba(0,0,0,0.35)'; g.fillRect(x + j, yy, 1, 7);
+        }
+        g.fillStyle = 'rgba(0,0,0,0.26)'; g.fillRect(x, yy + 7, TS, 1);
     }
 }
 
@@ -846,16 +865,16 @@ function carpetTile(g, x, y, base, orn) {
 // ═══════════════════════════════════════════
 
 const CLUB_WALL = { wall: '#1a1325', face: '#33264a', hi: '#4d3b6e', line: '#0b0710' };
-const WOOD_CLUB = ['#47384f', '#3f3148', '#4d3d56', '#43354c'];
+const WOOD_CLUB = ['#46384f', '#43354c', '#483a52', '#41334a'];
 
 function clubFloorTile(g, def, tx, ty, ch) {
-    const x = tx * TS, y = ty * TS, h = tileHash(tx, ty), zone = zoneAt(def, tx, ty);
+    const x = tx * TS, y = ty * TS, zone = zoneAt(def, tx, ty);
     if (ch === 'd') {
         const a = (tx + ty) & 1;
-        box(g, x, y, TS, TS, a ? '#4b3b70' : '#3d2f5f');
+        box(g, x, y, TS, TS, a ? '#45366a' : '#392c5a');
         g.beginPath(); g.moveTo(x + 16, y + 4); g.lineTo(x + 28, y + 16); g.lineTo(x + 16, y + 28); g.lineTo(x + 4, y + 16); g.closePath();
-        g.fillStyle = a ? 'rgba(255,120,220,0.12)' : 'rgba(80,220,255,0.12)'; g.fill();
-        g.strokeStyle = a ? 'rgba(255,130,225,0.5)' : 'rgba(90,225,255,0.5)'; g.lineWidth = 1.4; g.stroke();
+        g.fillStyle = a ? 'rgba(255,120,220,0.1)' : 'rgba(80,220,255,0.1)'; g.fill();
+        g.strokeStyle = a ? 'rgba(255,130,225,0.42)' : 'rgba(90,225,255,0.42)'; g.lineWidth = 1.4; g.stroke();
         g.strokeStyle = 'rgba(0,0,0,0.4)'; g.lineWidth = 1; g.strokeRect(x + 0.5, y + 0.5, TS - 1, TS - 1);
         return;
     }
@@ -898,7 +917,7 @@ function clubFloorTile(g, def, tx, ty, ch) {
         box(g, x, y, TS, TS, '#1a1018');
         return;
     }
-    plankFloor(g, x, y, h, WOOD_CLUB);
+    plankFloor(g, tx, ty, WOOD_CLUB);
     if (ch === '+') { box(g, x, y, TS, TS, '#33261f'); box(g, x + 12, y, 8, TS, '#8a6a3b'); box(g, x + 12, y, 8, 2, '#c9a24f'); }
 }
 
@@ -971,7 +990,6 @@ function clubBar(g, def) {
     // disken
     slabGroup(g, def, 'B', { side: '#2a170d', top: '#5e3822', hi: 'rgba(255,225,180,0.3)' });
     // glas och flaskor på disken
-    let k = 0;
     eachTile(def, 'B', (tx, ty) => {
         const h = tileHash(tx, ty), x = tx * TS, y = ty * TS;
         for (let i = 0; i < 2; i++) {
@@ -980,8 +998,14 @@ function clubBar(g, def) {
             const col = DRINKS[(h >> (i + 2)) % DRINKS.length];
             disc(g, gx, gy, 3, 'rgba(255,255,255,0.78)'); disc(g, gx, gy, 1.9, col);
         }
-        k++;
     });
+    // diskho och kylskåp bakom disken
+    box(g, 36, 6 * TS + 4, 56, 22, '#9aa3b2'); box(g, 38, 6 * TS + 6, 23, 18, '#5b6573'); box(g, 65, 6 * TS + 6, 23, 18, '#5b6573');
+    box(g, 60, 6 * TS + 3, 6, 4, '#d4d8de'); disc(g, 63, 6 * TS + 4, 1.6, '#4b5563');
+    box(g, 36, 13 * TS + 6, 56, 52, '#2c3340'); box(g, 38, 13 * TS + 8, 52, 48, '#8fb8d8');
+    g.fillStyle = 'rgba(255,255,255,0.28)'; g.beginPath(); g.moveTo(40, 13 * TS + 56); g.lineTo(54, 13 * TS + 8); g.lineTo(62, 13 * TS + 8); g.lineTo(48, 13 * TS + 56); g.fill();
+    for (let i = 0; i < 5; i++) { box(g, 41 + i * 9.5, 13 * TS + 14, 6, 14, ['#16a34a', '#dc2626', '#d97706', '#cbd5e1', '#3b82f6'][i]); box(g, 41 + i * 9.5, 13 * TS + 34, 6, 14, ['#ec4899', '#a3e635', '#cbd5e1', '#d97706', '#dc2626'][i]); }
+    box(g, 38, 13 * TS + 30, 52, 2, '#2c3340');
     // kassa i övre hörnet
     box(g, 38, 168, 20, 16, '#1f2937'); box(g, 40, 170, 16, 7, '#7dd3fc'); box(g, 40, 170, 16, 2, 'rgba(255,255,255,0.4)');
     // neon under disklisten mot gästerna
@@ -1014,7 +1038,6 @@ function clubDj(g, def) {
     }
     box(g, 130, 102, 28, 20, '#0b0a10'); box(g, 131, 103, 26, 18, '#1d1a28');
     for (let i = 0; i < 3; i++) disc(g, 135 + i * 8, 108, 1.8, ['#ff4fd8', '#ffd23f', '#22e5ff'][i]);
-    box(g, 133, 116, 20, 2, '#22e5ff');
     box(g, 222, 101, 22, 16, '#0c0c12'); box(g, 224, 103, 18, 12, '#60a5fa'); box(g, 224, 103, 18, 3, 'rgba(255,255,255,0.35)');
     neonLine(g, [[34, 4 * TS - 2], [8 * TS - 2, 4 * TS - 2]], '#a855f7', 2);
 }
@@ -1048,7 +1071,7 @@ function clubSeating(g, def) {
     });
 }
 
-function sofaTiles(g, def, tx, ty, pal) {
+function sofaTile(g, def, tx, ty, pal) {
     const x = tx * TS, y = ty * TS;
     const wl = chAt(def, tx - 1, ty) === '#', wr = chAt(def, tx + 1, ty) === '#', wt = chAt(def, tx, ty - 1) === '#', wb = chAt(def, tx, ty + 1) === '#';
     softShadow(g, x + 16, y + 16, 15, 15, 0.3);
@@ -1093,7 +1116,7 @@ function clubVip(g, def) {
     // soffor (VIP och kontor)
     eachTile(def, 'S', (tx, ty) => {
         const z = zoneAt(def, tx, ty);
-        sofaTiles(g, def, tx, ty, z === 'office' ? { base: '#2b3345', seat: '#58647e', back: '#3b4660' } : { base: '#4a0f2e', seat: '#a02a66', back: '#6b1744' });
+        sofaTile(g, def, tx, ty, z === 'office' ? { base: '#2b3345', seat: '#58647e', back: '#3b4660' } : { base: '#4a0f2e', seat: '#a02a66', back: '#6b1744' });
     });
     // guldrutan "VIP" på mattan vid ingången till loungen
     g.save();
@@ -1133,18 +1156,18 @@ function plantAt(g, cx, cy, seed) {
 function clubPlants(g, def) { eachTile(def, 'x', (tx, ty) => plantAt(g, tc(tx), tc(ty), tileHash(tx, ty) % 7)); }
 
 function clubEntrance(g, def) {
-    // dubbla dörrar sedda uppifrån, nattblå gata utanför
-    for (const tx of [14, 15]) {
-        const x = tx * TS, y = 21 * TS;
-        box(g, x, y, TS, TS, '#120b14');
-        box(g, x, y + 22, TS, 10, '#1d2a4a');
-        box(g, x, y + 26, TS, 6, '#2b3f6e');
-        box(g, tx === 14 ? x + 2 : x + 18, y + 4, 12, 18, '#4b2a1a'); box(g, tx === 14 ? x + 4 : x + 20, y + 6, 8, 14, '#6b3d24');
-        disc(g, tx === 14 ? x + 12 : x + 20, y + 14, 1.8, '#f7da7a');
-    }
-    box(g, 14 * TS, 21 * TS, 2 * TS, 3, '#d4a72c');
-    // mässingsstolpar vid dörrposten
-    for (const px of [13 * TS + 28, 16 * TS + 4]) { disc(g, px, 21 * TS + 6, 3.5, '#d4a72c'); disc(g, px, 21 * TS + 6, 1.6, '#f7da7a'); }
+    // mattan rullar ut genom dörren till den nattblå gatan, dörrbladen står öppna mot väggen
+    const x = 14 * TS, y = 21 * TS, w = 2 * TS;
+    box(g, x, y, w, TS, '#0d0911');
+    box(g, x, y + 20, w, 12, '#1b2747'); box(g, x, y + 28, w, 4, '#2d4474');
+    box(g, x, y, w, 20, '#8c1c3c');
+    box(g, x, y, 3, 20, '#d4a72c'); box(g, x + w - 3, y, 3, 20, '#d4a72c');
+    g.fillStyle = 'rgba(255,215,130,0.28)';
+    for (const px of [x + 12, x + 44]) { g.fillRect(px + 2, y + 6, 4, 8); g.fillRect(px, y + 8, 8, 4); }
+    box(g, x, y + 19, w, 2, '#d4a72c');
+    box(g, x - 3, y + 1, 5, 19, '#4b2a1a'); box(g, x + w - 2, y + 1, 5, 19, '#4b2a1a');
+    box(g, x - 3, y + 1, 5, 2, '#6b3d24'); box(g, x + w - 2, y + 1, 5, 2, '#6b3d24');
+    for (const px of [x - 4, x + w + 4]) { disc(g, px, y + 3, 3.4, '#d4a72c'); disc(g, px, y + 3, 1.6, '#f7da7a'); }
 }
 
 function clubSigns(g, def) {
@@ -1162,14 +1185,14 @@ function clubSigns(g, def) {
             g.save(); g.translate(s.x, s.y); g.rotate(s.rot);
             neonText(g, s.text, 0, 1, s.size, s.color, s.glow);
             g.restore();
-        } else neonText(g, s.text, s.x + (s.dx || 0), s.y + 1, s.size, s.color, s.glow);
+        } else neonText(g, s.text, s.x, s.y + 1, s.size, s.color, s.glow);
     }
     // diamantlogga på vardera sidan om skylten
     g.font = `18px ${EMOJI_FONT}`; g.textAlign = 'center'; g.textBaseline = 'middle';
     g.fillText('💎', 356, 17); g.fillText('💎', 604, 17);
     // utgångsskylt vid dörren
-    box(g, 16 * TS + 2, 21 * TS + 8, 28, 12, '#052e16'); box(g, 16 * TS + 2, 21 * TS + 8, 28, 12, 'rgba(34,197,94,0.25)');
-    g.font = `8px ${SIGN_FONT}`; g.fillStyle = '#4ade80'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText('UTGÅNG', 16 * TS + 16, 21 * TS + 14.5);
+    box(g, 16 * TS + 6, 21 * TS + 8, 42, 12, '#052e16'); box(g, 16 * TS + 6, 21 * TS + 8, 42, 12, 'rgba(34,197,94,0.25)');
+    g.font = `7px ${SIGN_FONT}`; g.fillStyle = '#4ade80'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText('UTGÅNG', 16 * TS + 27, 21 * TS + 14.5);
     // kontorsskylt vid kontorsdörren
     g.save(); g.translate(22 * TS + 16, 15.5 * TS + 4); g.rotate(-PI / 2);
     box(g, -22, -6, 44, 12, '#8a6a3b'); box(g, -21, -5, 42, 10, '#d4a72c');
@@ -1177,9 +1200,9 @@ function clubSigns(g, def) {
     g.restore();
 }
 
-// Skyltarna (statiskt ritade, "dim"-rutan används av flimret)
+// Skyltarna (den första flimrar till i dynClub)
 const CLUB_SIGNS = [
-    { text: 'CLUB DIAMANT', x: 480, y: 17, w: 186, h: 24, size: 17, color: '#ff8de8', glow: '#ff2bd6', flick: true },
+    { text: 'CLUB DIAMANT', x: 480, y: 17, w: 186, h: 24, size: 17, color: '#ff8de8', glow: '#ff2bd6' },
     { text: 'DJ', x: 144, y: 14, w: 40, h: 18, size: 12, color: '#c4a1ff', glow: '#8b5cf6' },
     { text: 'BAR', x: 16, y: 13 * TS, w: 24, h: 40, size: 13, color: '#8cf3ff', glow: '#22e5ff', rot: -PI / 2 },
     { text: 'VIP', x: 29 * TS + 16, y: 7 * TS, w: 24, h: 44, size: 13, color: '#ffe38a', glow: '#ffb300', rot: PI / 2 }
@@ -1270,7 +1293,7 @@ function gunRackWall(g) {
     for (let r = 0; r < 3; r++) {
         const sy = y0 + 22 + r * 19;
         for (let i = 0; i < 7; i++) ammoBox(g, x0 + 350 + i * 14, sy - 11, 12.5, 10.5, cols[(i + r * 2) % cols.length]);
-        box(g, x0 + 346, sy, 104, 3, '#262b28');
+        box(g, x0 + 346, sy, 100, 3, '#262b28');
     }
     // stolpar mellan sektionerna
     for (const px of [112, 224, 336]) { box(g, x0 + px - 1, y0, 3, h, '#2a302d'); box(g, x0 + px - 1, y0, 1, h, 'rgba(255,255,255,0.12)'); }
@@ -1296,6 +1319,10 @@ function gunCounter(g, def) {
 }
 
 function gunFloorItems(g, def) {
+    // svart gummimatta innanför dörren
+    box(g, 7 * TS + 3, 10 * TS + 6, 2 * TS - 6, 20, '#25272a');
+    g.fillStyle = 'rgba(255,255,255,0.07)'; for (let i = 0; i < 6; i++) g.fillRect(7 * TS + 5, 10 * TS + 9 + i * 3, 2 * TS - 10, 1);
+    g.strokeStyle = 'rgba(0,0,0,0.5)'; g.lineWidth = 1; g.strokeRect(7 * TS + 3.5, 10 * TS + 6.5, 2 * TS - 7, 19);
     // ammohyllor längs sidorna
     eachTile(def, 'A', (tx, ty) => {
         const x = tx * TS, y = ty * TS, h = tileHash(tx, ty);
@@ -1332,12 +1359,12 @@ function gunWalls(g, def) {
     for (const [dx, dy] of [[0, 6], [3, 2], [-4, 9], [1, -9], [-2, 15], [5, 13]]) disc(g, px + dx, py + dy, 1.1, '#000');
     // affisch "KONTANT" på vänstra väggen
     box(g, 4, 8 * TS + 2, 24, 28, '#c2410c'); box(g, 6, 8 * TS + 4, 20, 24, '#fde68a');
-    g.font = `6px ${SIGN_FONT}`; g.fillStyle = '#7c2d12'; g.textAlign = 'center'; g.textBaseline = 'middle';
-    g.fillText('KONT', 16, 8 * TS + 12); g.fillText('ANT', 16, 8 * TS + 20);
+    g.font = `10px ${SIGN_FONT}`; g.fillStyle = '#7c2d12'; g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.fillText('$$$', 16, 8 * TS + 14); box(g, 9, 8 * TS + 22, 14, 2, '#7c2d12'); box(g, 11, 8 * TS + 26, 10, 1.5, '#7c2d12');
     // kamerans fäste (själva kameran är animerad)
     box(g, 0, 6 * TS + 10, 8, 12, '#111');
     // utgångsskylt
-    box(g, 5 * TS + 2, 11 * TS + 8, 26, 12, '#052e16'); box(g, 5 * TS + 2, 11 * TS + 8, 26, 12, 'rgba(34,197,94,0.25)');
+    box(g, 5 * TS - 6, 11 * TS + 8, 42, 12, '#052e16'); box(g, 5 * TS - 6, 11 * TS + 8, 42, 12, 'rgba(34,197,94,0.25)');
     g.font = `7px ${SIGN_FONT}`; g.fillStyle = '#4ade80'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText('UTGÅNG', 5 * TS + 15, 11 * TS + 14.5);
 }
 
@@ -1374,7 +1401,7 @@ function paintGun(g, def) {
 }
 
 // ═══════════════════════════════════════════
-//  RÖRLIGT LAGER — dansgolv, lampor, folk, bubblor
+//  RÖRLIGT LAGER — dansgolv, lampor, folk
 // ═══════════════════════════════════════════
 
 const DANCE_COLORS = ['#ff4fd8', '#22e5ff', '#a855f7', '#ffd23f'];
@@ -1395,7 +1422,7 @@ function dynClub(ctx, state, v, t) {
     for (let i = 0; i < dl.length; i += 2) {
         const tx = dl[i], ty = dl[i + 1], x = tx * TS, y = ty * TS;
         if (x > v.x1 || x + TS < v.x0 || y > v.y1 || y + TS < v.y0) continue;
-        ctx.globalAlpha = 0.05 + (Math.sin(t * 3.4 - (tx + ty) * 0.8) * 0.5 + 0.5) * 0.2;
+        ctx.globalAlpha = 0.04 + (Math.sin(t * 3.4 - (tx + ty) * 0.8) * 0.5 + 0.5) * 0.15;
         ctx.fillStyle = DANCE_COLORS[(tx * 3 + ty * 5 + step) & 3];
         ctx.fillRect(x + 3, y + 3, TS - 6, TS - 6);
     }
@@ -1456,36 +1483,53 @@ function drawPoleTops(ctx, def, v) {
     }
 }
 
-// Drinkar, bricka och glitter som sitter på folket
+// Drinkar, bricka och glitter ovanpå figurerna. Lägena följer händerna i renderarens
+// drawPedShape (skala 1,6): lx framåt, ly åt höger.
+function glassAt(ctx, x, y, r, col) {
+    ctx.fillStyle = 'rgba(255,255,255,0.88)'; ctx.beginPath(); ctx.arc(x, y, r, 0, TAU); ctx.fill();
+    ctx.fillStyle = col; ctx.beginPath(); ctx.arc(x, y, r * 0.62, 0, TAU); ctx.fill();
+    ctx.strokeStyle = 'rgba(0,0,0,0.45)'; ctx.lineWidth = 0.7; ctx.beginPath(); ctx.arc(x, y, r, 0, TAU); ctx.stroke();
+}
+
 function accessory(ctx, n, t) {
-    const c = Math.cos(n.angle), s = Math.sin(n.angle);
+    const L = n.look || {};
+    let rot = n.angle;
     if (n.kind === 'waitress') {
-        const x = n.x + c * 9 - s * 3, y = n.y + s * 9 + c * 3;
-        ctx.fillStyle = 'rgba(0,0,0,0.25)'; ctx.beginPath(); ctx.arc(x + 1.5, y + 2, 6, 0, TAU); ctx.fill();
-        ctx.fillStyle = '#cbd5e1'; ctx.beginPath(); ctx.arc(x, y, 6, 0, TAU); ctx.fill();
-        ctx.strokeStyle = '#64748b'; ctx.lineWidth = 0.8; ctx.stroke();
-        for (let i = 0; i < 3; i++) {
-            const gx = x + Math.cos(i * 2.1 + 0.4) * 3, gy = y + Math.sin(i * 2.1 + 0.4) * 3;
-            ctx.fillStyle = 'rgba(255,255,255,0.85)'; ctx.beginPath(); ctx.arc(gx, gy, 1.9, 0, TAU); ctx.fill();
-            ctx.fillStyle = DRINKS[i]; ctx.beginPath(); ctx.arc(gx, gy, 1.1, 0, TAU); ctx.fill();
+        // bricka framför bröstet, hållen med båda armarna
+        const c = Math.cos(rot), s = Math.sin(rot), x = n.x + c * 15, y = n.y + s * 15;
+        ctx.lineCap = 'round'; ctx.strokeStyle = L.dress || L.shirt || '#111827'; ctx.lineWidth = 3.2;
+        for (let k = -1; k <= 1; k += 2) {
+            ctx.beginPath(); ctx.moveTo(n.x - s * 5.5 * k, n.y + c * 5.5 * k); ctx.lineTo(n.x + c * 13 - s * 5 * k, n.y + s * 13 + c * 5 * k); ctx.stroke();
         }
+        ctx.lineCap = 'butt';
+        ctx.fillStyle = 'rgba(0,0,0,0.25)'; ctx.beginPath(); ctx.arc(x + 1.5, y + 2, 7, 0, TAU); ctx.fill();
+        ctx.fillStyle = '#cbd5e1'; ctx.beginPath(); ctx.arc(x, y, 7, 0, TAU); ctx.fill();
+        ctx.strokeStyle = '#64748b'; ctx.lineWidth = 0.8; ctx.stroke();
+        for (let i = 0; i < 3; i++) glassAt(ctx, x + Math.cos(i * 2.1 + 0.4) * 3.6, y + Math.sin(i * 2.1 + 0.4) * 3.6, 2.2, DRINKS[i]);
     } else if (n.drink && n.pose !== 'work') {
-        const up = n.pose === 'cheer' ? 4 : 0;
-        const x = n.x + c * (10 + up) - s * 5, y = n.y + s * (10 + up) + c * 5;
-        const r = n.pose === 'cheer' ? 3.2 : 2.5;
-        ctx.fillStyle = 'rgba(255,255,255,0.85)'; ctx.beginPath(); ctx.arc(x, y, r, 0, TAU); ctx.fill();
-        ctx.fillStyle = n.drink; ctx.beginPath(); ctx.arc(x, y, r * 0.62, 0, TAU); ctx.fill();
-        ctx.strokeStyle = 'rgba(0,0,0,0.4)'; ctx.lineWidth = 0.7; ctx.beginPath(); ctx.arc(x, y, r, 0, TAU); ctx.stroke();
+        let lx = Math.sin(n.phase) * 3.84, ly = 11.5, r = 2.7;
+        if (n.pose === 'cheer') { lx = 3.2 + 3.2 * Math.abs(Math.sin(n.phase * 3)); ly = 13.6; r = 3.4; }
+        else if (n.pose === 'dance') { rot += Math.sin(n.phase * 2) * 0.45; lx = -Math.sin(n.phase * 2) * 6.4; ly = 13.6; }
+        else if (n.pose === 'sit') { lx = 11; ly = 8.5; }
+        const c = Math.cos(rot), s = Math.sin(rot), x = n.x + lx * c - ly * s, y = n.y + lx * s + ly * c;
+        if (n.pose === 'sit') {
+            // sittande figurer saknar händer i renderaren: en arm och en hand om glaset
+            ctx.lineCap = 'round'; ctx.strokeStyle = L.shirt || '#888'; ctx.lineWidth = 3.4;
+            ctx.beginPath(); ctx.moveTo(n.x - s * 5.5, n.y + c * 5.5); ctx.lineTo(x, y); ctx.stroke(); ctx.lineCap = 'butt';
+            ctx.fillStyle = L.skin || '#e0ac69'; ctx.beginPath(); ctx.arc(x, y, 2.5, 0, TAU); ctx.fill();
+        }
+        glassAt(ctx, x, y, r, n.drink);
         if (n.pose === 'cheer') {
             ctx.fillStyle = '#fff';
             const k = Math.sin(t * 14 + n.phase);
             ctx.fillRect(x + 4 + k, y - 5, 1.3, 1.3); ctx.fillRect(x - 5 - k, y - 3, 1.3, 1.3); ctx.fillRect(x + 1, y - 7 + k, 1.3, 1.3);
         }
     }
-    if (n.look && n.look.sparkle) {
+    if (L.sparkle) {
+        // paljettglitter som blinkar runt dansarna
         ctx.fillStyle = '#ffffff';
         for (let i = 0; i < 3; i++) {
-            const a = t * 2.3 + n.phase * 0.2 + i * 2.1, r = 9 + 4 * Math.sin(t * 3 + i);
+            const a = t * 2.3 + n.phase * 0.2 + i * 2.1, r = 12 + 4 * Math.sin(t * 3 + i);
             const al = 0.5 + 0.5 * Math.sin(t * 9 + i * 3 + n.phase);
             if (al < 0.3) continue;
             const px = n.x + Math.cos(a) * r, py = n.y + Math.sin(a * 1.3) * r;
@@ -1502,8 +1546,8 @@ function fallbackPerson(ctx, n) {
     const swing = n.pose === 'walk' || n.pose === 'dance' ? Math.sin(n.phase) * 4 : 0;
     ctx.save();
     ctx.translate(n.x, n.y);
-    ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.beginPath(); ctx.ellipse(2, 2, 7, 8, 0, 0, TAU); ctx.fill();
-    ctx.rotate(n.angle); ctx.scale(1.3, 1.3);
+    ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.beginPath(); ctx.ellipse(2.5, 2.5, 9, 11, 0, 0, TAU); ctx.fill();
+    ctx.rotate(n.angle); ctx.scale(1.6, 1.6);
     if (n.pose !== 'sit') { ctx.fillStyle = '#1f2937'; ctx.fillRect(swing - 2, -4, 5, 3); ctx.fillRect(-swing - 2, 1, 5, 3); }
     if (n.pose === 'cheer') { ctx.fillStyle = L.skin || '#e0ac69'; ctx.fillRect(2, -7.5, 4, 2.2); ctx.fillRect(2, 5.3, 4, 2.2); }
     ctx.fillStyle = L.dress || L.shirt || '#888'; ctx.beginPath(); ctx.ellipse(0, 0, L.dress ? 5 : 4.2, 7, 0, 0, TAU); ctx.fill();
@@ -1511,23 +1555,6 @@ function fallbackPerson(ctx, n) {
     ctx.fillStyle = L.hair || '#222'; ctx.beginPath(); ctx.arc(-0.6, 0, 3.2, PI * 0.5, PI * 1.5); ctx.fill();
     if (L.cap) { ctx.fillStyle = typeof L.cap === 'string' ? L.cap : '#111827'; ctx.beginPath(); ctx.arc(0, 0, 3.7, PI * 0.35, PI * 1.65); ctx.fill(); ctx.fillRect(2, -2.2, 2.4, 4.4); }
     ctx.restore();
-}
-
-function drawBubbles(ctx, npcs) {
-    let on = false;
-    for (let i = 0; i < npcs.length; i++) {
-        const n = npcs[i];
-        if (!n.say) continue;
-        if (!on) { ctx.font = `11px ${TEXT_FONT}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; on = true; }
-        const text = n.say.text;
-        const w = Math.min(200, ctx.measureText(text).width + 14), h = 18, x = n.x, y = n.y - 28;
-        ctx.globalAlpha = clamp(n.say.life * 2, 0, 1);
-        ctx.fillStyle = '#ffffff'; ctx.strokeStyle = '#111'; ctx.lineWidth = 1.5;
-        rr(ctx, x - w / 2, y - h / 2, w, h, 7); ctx.fill(); ctx.stroke();
-        ctx.beginPath(); ctx.moveTo(x - 4, y + h / 2 - 1); ctx.lineTo(x, y + h / 2 + 6); ctx.lineTo(x + 4, y + h / 2 - 1); ctx.closePath(); ctx.fill();
-        ctx.fillStyle = '#111'; ctx.fillText(text, x, y + 0.5, 190);
-    }
-    if (on) ctx.globalAlpha = 1;
 }
 
 function drawStaticLayer(ctx, def, v) {
@@ -1542,7 +1569,7 @@ function drawStaticLayer(ctx, def, v) {
     } else paintStatic(ctx, def); // utan DOM (tester): rita direkt
 }
 
-// Ritar golv, möbler, skyltar, folk (via drawPerson) och pratbubblor.
+// Ritar golv, möbler, skyltar och folk (via drawPerson). Pratbubblor (npc.say) ritar renderaren.
 // ctx är redan transformerad: 1 enhet = 1 px inomhus. view = { x0, y0, x1, y1 }.
 export function drawInterior(ctx, state, view, t, drawPerson) {
     const def = state.def;
@@ -1558,7 +1585,6 @@ export function drawInterior(ctx, state, view, t, drawPerson) {
         accessory(ctx, n, t);
     }
     if (def.theme === 'club') drawPoleTops(ctx, def, v);
-    drawBubbles(ctx, npcs);
 }
 
 // ═══════════════════════════════════════════
@@ -1607,6 +1633,7 @@ export function drawInteriorLights(ctx, state, view, t) {
     if (t === undefined) t = state.t;
     const v = view || { x0: 0, y0: 0, x1: def.w * TS, y1: def.h * TS };
     ctx.save();
+    ctx.beginPath(); ctx.rect(0, 0, def.w * TS, def.h * TS); ctx.clip(); // inget sken utanför rummet
     ctx.globalCompositeOperation = 'lighter';
     const glows = def.theme === 'club' ? CLUB_GLOWS : GUN_GLOWS;
     for (let i = 0; i < glows.length; i++) {
@@ -1634,8 +1661,8 @@ export function drawInteriorLights(ctx, state, view, t) {
             ctx.restore();
         }
         // levande ljus på borden
-        const flick = 0.85 + 0.15 * Math.sin(t * 9);
-        eachTile(def, 't', (tx, ty) => lightGlow(ctx, tc(tx), tc(ty), 24, '#ffb347', 0.22 * flick, v));
+        const flick = 0.85 + 0.15 * Math.sin(t * 9), tb = derived(def).tables;
+        for (let i = 0; i < tb.length; i += 2) lightGlow(ctx, tb[i], tb[i + 1], 24, '#ffb347', 0.22 * flick, v);
     }
     ctx.restore();
 }

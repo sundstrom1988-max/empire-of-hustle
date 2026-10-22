@@ -5,6 +5,7 @@ import { updateHUD } from '../game/core.js';
 import { generateBotReply } from '../features/features.js';
 import { syncState } from '../multiplayer/sync.js';
 import { escapeHtml } from '../utils/html.js';
+import { renderSmsApp, smsUnread, onSmsChange } from './sms.js';
 
 // ── Phone State ──
 let phoneOpen = false, phoneScreen = 'home', phoneSmsTarget = null;
@@ -31,7 +32,7 @@ export function togglePhone() {
 function phoneGoHome() {
     phoneScreen = 'home';
     const myKey = currentPlayer().charKey;
-    const unread = countUnread(myKey);
+    const unread = countUnread(myKey) + smsUnread();
     document.getElementById('phone-toggle').classList.toggle('has-notif', unread > 0);
     document.getElementById('phone-header').innerHTML = '<span class="ph-title">📱 Telefon</span>';
     document.getElementById('phone-body').innerHTML = `<div class="phone-apps">
@@ -47,9 +48,18 @@ function setHeader(title, backFn) {
     document.getElementById('phone-header').innerHTML = `<button class="ph-back" onclick="${backFn || 'window.game.togglePhone();window.game.togglePhone()'}">←</button><span class="ph-title">${title}</span>`;
 }
 
+// Nytt SMS från en annan spelare: uppdatera appmärket och pricken på telefonknappen
+onSmsChange(() => {
+    if (!currentPlayer()) return;
+    if (phoneOpen && phoneScreen === 'home') phoneGoHome();
+    else document.getElementById('phone-toggle')?.classList.toggle('has-notif', countUnread(currentPlayer().charKey) + smsUnread() > 0);
+});
+
 // SMS
 export function phoneOpenSMS() {
     phoneScreen = 'sms'; setHeader('💬 SMS', 'window.game.togglePhone();window.game.togglePhone()');
+    // Online: riktiga SMS mellan spelare (features/sms.js). Offline: bot-SMS:et nedan.
+    if (gameState.isOnline) { renderSmsApp(document.getElementById('phone-body')); return; }
     const myKey = currentPlayer().charKey;
     document.getElementById('phone-body').innerHTML = Object.entries(CHARACTERS).filter(([k]) => k !== myKey).map(([key, ch]) => {
         const unread = countUnreadFrom(myKey, key);

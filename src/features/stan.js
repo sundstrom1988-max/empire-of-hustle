@@ -17,6 +17,7 @@ import { stopRadio, unlockAudio } from '../utils/audio.js';
 import { syncState, syncMe } from '../multiplayer/sync.js';
 import { closePhone } from './phone.js';
 import { escapeHtml } from '../utils/html.js';
+import { openSmsOverlay, smsUnread } from './sms.js';
 
 // Online är stan gemensam och öppen för alla, även mellan turerna
 function canGoToCity() {
@@ -150,6 +151,7 @@ export function goToCity() {
         maxFence: gameState.maxFencePerRound,
         maxGoods: gameState.maxGoodsPerRound,
         musicMuted: gameState.musicMuted,
+        sms: { open: openSmsOverlay, unread: smsUnread },
         onClose: onCityClosed
     });
 }
