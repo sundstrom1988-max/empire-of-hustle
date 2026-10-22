@@ -70,31 +70,31 @@ body.city-open .cbd-leaf {
     gap: 10px;
 }
 
-.ct-left {
-    left: 14px;
-    grid-template-columns: 74px 74px;
-}
-
+/* Höger tumme: 👊 störst i hörnet, E bredvid, småknapparna i en båge ovanför */
 .ct-right {
-    right: 14px;
-    grid-template-columns: 62px 62px 74px;
-    grid-template-rows: 50px 62px 74px;
+    right: 12px;
+    grid-template-columns: repeat(4, 48px);
+    grid-template-rows: 48px 84px;
     grid-template-areas:
-        "rob wpn crew"
-        "act hb horn"
-        ". down gas";
+        "rob wpn crew horn"
+        "act act hb hb";
+    column-gap: 8px;
+    row-gap: 10px;
     align-items: end;
+    justify-items: center;
 }
 
 .ct-pad button {
-    width: 100%;
-    height: 74px;
+    width: 48px;
+    height: 48px;
+    padding: 0;
     border-radius: 50%;
     border: 3px solid rgba(255, 255, 255, 0.35);
     background: rgba(20, 20, 30, 0.45);
     color: #fff;
     font-family: 'Bungee', Impact, sans-serif;
-    font-size: 24px;
+    font-size: 18px;
+    line-height: 1;
     touch-action: none;
     transition: none;
 }
@@ -105,15 +105,86 @@ body.city-open .cbd-leaf {
     transform: scale(0.94);
 }
 
-.ct-right .ct-act { grid-area: act; height: 62px; background: rgba(34, 197, 94, 0.45); }
-.ct-right .ct-hb { grid-area: hb; height: 62px; }
-.ct-right .ct-hb.ct-fight { background: rgba(239, 68, 68, 0.5); border-color: rgba(254, 202, 202, 0.7); font-size: 26px; }
-.ct-right .ct-horn { grid-area: horn; height: 62px; font-size: 20px; }
-.ct-right [data-key="down"] { grid-area: down; }
-.ct-right .ct-gas { grid-area: gas; background: rgba(255, 210, 63, 0.35); }
-.ct-right .ct-rob { grid-area: rob; height: 50px; font-size: 18px; }
-.ct-right .ct-wpn { grid-area: wpn; height: 50px; font-size: 18px; }
-.ct-right .ct-crew { grid-area: crew; height: 50px; font-size: 18px; }
+.ct-right .ct-rob { grid-area: rob; transform: translateY(14px); }
+.ct-right .ct-wpn { grid-area: wpn; transform: translateY(2px); }
+.ct-right .ct-crew { grid-area: crew; }
+.ct-right .ct-horn { grid-area: horn; font-size: 17px; }
+.ct-right .ct-rob.pressed { transform: translateY(14px) scale(0.94); }
+.ct-right .ct-wpn.pressed { transform: translateY(2px) scale(0.94); }
+.ct-right .ct-act { grid-area: act; width: 68px; height: 68px; justify-self: end; font-size: 26px; background: rgba(34, 197, 94, 0.45); }
+.ct-right .ct-hb { grid-area: hb; width: 84px; height: 84px; justify-self: end; font-size: 30px; }
+.ct-right .ct-hb.ct-fight { background: rgba(239, 68, 68, 0.5); border-color: rgba(254, 202, 202, 0.7); font-size: 34px; }
+
+/* ── Joystick: flytande, nere till vänster ── */
+.ct-stick {
+    position: absolute;
+    left: 0;
+    bottom: 0;
+    width: 45%;
+    height: 60%;
+    z-index: 1;
+    touch-action: none;
+}
+
+.ct-stick-base {
+    --r: 62px;
+    position: absolute;
+    left: calc(var(--r) + 22px);            /* vila: där tummen brukar sitta */
+    top: calc(100% - var(--r) - 30px);
+    width: calc(var(--r) * 2);
+    height: calc(var(--r) * 2);
+    margin: calc(var(--r) * -1) 0 0 calc(var(--r) * -1);
+    border-radius: 50%;
+    border: 3px solid rgba(255, 255, 255, 0.35);
+    background:
+        url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100' fill='none' stroke='white' stroke-width='5' stroke-linecap='round' stroke-linejoin='round' opacity='.55'%3E%3Cpath d='M42 13l8-7 8 7M42 87l8 7 8-7M13 42l-7 8 7 8M87 42l7 8-7 8'/%3E%3C/svg%3E") center / 100% no-repeat,
+        radial-gradient(circle, rgba(20, 20, 30, 0.2) 0 42%, rgba(20, 20, 30, 0.5) 72%, rgba(255, 255, 255, 0.1) 100%);
+    box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.35), inset 0 0 18px rgba(0, 0, 0, 0.45);
+    opacity: 0.38;
+    pointer-events: none;
+    transition: opacity 0.2s, left 0.12s ease-out, top 0.12s ease-out;
+}
+
+.ct-stick-base.on {
+    opacity: 1;
+    transition: none;
+}
+
+/* Fullt utslag = spring */
+.ct-stick-base.run {
+    border-color: var(--gta-yellow, #ffd23f);
+    box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.35), 0 0 16px rgba(255, 210, 63, 0.55), inset 0 0 18px rgba(0, 0, 0, 0.45);
+}
+
+.ct-stick-knob {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 58px;
+    height: 58px;
+    margin: -29px 0 0 -29px;
+    border-radius: 50%;
+    border: 3px solid rgba(255, 255, 255, 0.7);
+    background: radial-gradient(circle at 36% 30%, rgba(255, 255, 255, 0.5), rgba(55, 55, 70, 0.85) 70%);
+    box-shadow: 0 3px 0 rgba(0, 0, 0, 0.5), 0 0 0 2px rgba(0, 0, 0, 0.35);
+    transition: transform 0.12s ease-out;
+}
+
+.ct-stick-base.on .ct-stick-knob {
+    border-color: var(--gta-yellow, #ffd23f);
+    background: radial-gradient(circle at 36% 30%, #fff3b0, rgba(255, 210, 63, 0.85) 65%);
+    transition: none;
+}
+
+/* Små telefoner: lite mindre joystick och knappar så de inte möts */
+@media (max-width: 370px) {
+    .ct-stick-base { --r: 54px; }
+    .ct-stick-knob { width: 50px; height: 50px; margin: -25px 0 0 -25px; }
+    .ct-right { grid-template-columns: repeat(4, 44px); grid-template-rows: 44px 76px; column-gap: 6px; }
+    .ct-pad button { width: 44px; height: 44px; font-size: 16px; }
+    .ct-right .ct-act { width: 62px; height: 62px; }
+    .ct-right .ct-hb { width: 76px; height: 76px; }
+}
 
 /* ── Modaler ── */
 .city-modal {

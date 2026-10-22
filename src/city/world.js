@@ -19,6 +19,7 @@ import { cityItemDefs, itemGain, ITEM_TYPES, ARMOR_CAP } from './items.js';
 import { PROPERTIES, pvpLoss, SPAWN_PROTECTION } from '../multiplayer/authority.js';
 import * as INT from './interiors.js';
 import { bizInterior, bizFlow, salePrice, tillCap } from './businesses.js';
+import * as BRAWL from './brawl.js';
 import { SHOPS } from '../data/gameData.js';
 
 export const CLOCK_START = 19.5; // 19:30 — kvällen är ung
@@ -132,6 +133,7 @@ export class World {
         this.net = opts.net || null;
         this.crew = [];
         this.interior = null;
+        this.banned = {};           // utslängd efter ett bråk: rummets id → world.time då man får komma in igen
         this.feed = [];             // korta händelser: vem som kom, gick, sänkte vem
         this.showMap = false;
         this.lastAttacker = null;   // senaste spelare som träffade mig
@@ -2135,6 +2137,11 @@ export class World {
         const def = INT.INTERIORS?.[id];
         const p = this.player;
         if (!def || p.vehicle || this.interior) return false;
+        const ban = BRAWL.bannedFor(this, id);
+        if (ban > 0) {
+            if (this.time - (this.banMsgT ?? -9) > 2) { this.banMsgT = this.time; this.message(`🕴️ Vakten: "Du igen? Du kommer inte in. Försök om ${Math.ceil(ban)} s."`); }
+            return false;
+        }
         const door = marker.door || marker;
         this.interior = {
             id, def, door: { x: door.x, y: door.y, side: door.side ?? 0 },
@@ -2178,7 +2185,6 @@ export class World {
 
     updateInteriorMode(dt, input) {
         const I = this.interior, p = this.player, def = I.def;
-        this.punchCd = Math.max(0, this.punchCd - dt);
         // Gå omkring
         const speed = input.run ? 165 : 110;
         const len = Math.hypot(input.mx, input.my);
@@ -2189,6 +2195,7 @@ export class World {
         INT.collideInterior(def, p, p.r);
         p.hurtT = Math.max(0, (p.hurtT || 0) - dt);
         p.protT = Math.max(0, (p.protT || 0) - dt);
+        p.punchT = Math.max(0, (p.punchT || 0) - dt);
         if (I.biz) {
             const shop = SHOPS[I.biz.slot];
             I.state.owned = (this.profile.owned || []).includes(shop.id);
@@ -2201,10 +2208,15 @@ export class World {
             for (const e of ev) if (e.type === 'sale' && I.biz) this.bizSale(I.biz.slot, e.x, e.y);
             ev.length = 0;
         }
-        // Prata med folk (E) och vapen/bråk är förbjudna här inne
+        // Prata med folk (E). Bråk går att starta överallt utom hos Pang-Pelle (brawl.js).
         this.nearInteraction = INT.interactionAt(def, p.x, p.y);
         if (input.action && this.nearInteraction) this.emit({ type: 'interact', id: this.nearInteraction.id });
-        if ((input.punch || input.rob) && this.punchCd <= 0) { this.punchCd = 1.5; this.message(I.id === 'stripclub' ? '🕴️ Vakten: "Inga bråk här inne, bror."' : '🔫 Pang-Pelle: "Lugn! Inte i min butik."'); }
+        if (BRAWL.canBrawl(I)) {
+            if (input.punch) BRAWL.playerPunch(this);
+            if (input.rob && !BRAWL.playerRob(this) && this.robCd <= 0) { this.robCd = 2; this.message('👛 Här inne rånar man ingen — men den som ligger ner kan du länsa.'); }
+            BRAWL.updateBrawl(this, dt);
+            if (this.interior !== I) return; // utslängd
+        } else if ((input.punch || input.rob) && this.punchCd <= 0) { this.punchCd = 0.75; this.message('🔫 Pang-Pelle: "Lugn! Inte i min butik."'); }
         // Ut genom dörren (först när man gått en bit in, så att man inte studsar ut direkt)
         const atExit = INT.atInteriorExit ? INT.atInteriorExit(def, p.x, p.y) : Math.hypot(p.x - def.exit.x, p.y - def.exit.y) < def.exit.r;
         if (!atExit) I.exitArmed = true;
@@ -2214,7 +2226,8 @@ export class World {
         if (I.seen) this.wanted.calm = 0;
         this.updateParticles(dt);
         this.updateRemotes(dt);
-        this.hint = this.nearInteraction ? this.nearInteraction.label : atExit ? '🚪 Ut' : '';
+        const fight = BRAWL.brawlHint(this);
+        this.hint = (I.fight?.on && fight) || (this.nearInteraction ? this.nearInteraction.label : atExit ? '🚪 Ut' : fight);
     }
 
     // ── Club Diamant: baren, scenen, vakten och managern ──

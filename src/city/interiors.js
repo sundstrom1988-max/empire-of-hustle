@@ -589,6 +589,9 @@ function stepPatrol(n, st, dt, rnd) {
     n.pose = 'walk';
 }
 
+// Beteenden som sköts här (inte av ett rums tema)
+const OWN_BEH = new Set(['dancer', 'floor', 'seat', 'patrol']);
+
 export function updateInterior(state, dt, rnd = Math.random) {
     if (!(dt > 0)) return;
     if (dt > 0.1) dt = 0.1;
@@ -596,9 +599,17 @@ export function updateInterior(state, dt, rnd = Math.random) {
     const t = state.t, npcs = state.npcs, th = THEMES.get(state.def.theme);
     state.talking = 0;
     for (let i = 0; i < npcs.length; i++) if (npcs[i].say) state.talking++;
+    let gone = false;
     for (let i = 0; i < npcs.length; i++) {
         const n = npcs[i];
-        switch (n.beh) {
+        const own = !(th && th.step) || OWN_BEH.has(n.beh); // sköts av koden här, inte av temat
+        if (n.brawl) {
+            // Slagsmål (brawl.js) styr NPC:n — temat får bara städa undan köplats och stol
+            if (!own) th.step(n, state, dt, rnd);
+        } else if (n.leaving) {
+            // Bråket är över: ut genom dörren och bort
+            if (own || !th.step(n, state, dt, rnd)) gone = stepLeaving(n, state, dt) || gone;
+        } else switch (n.beh) {
             case 'dancer': stepDancer(n, state.def.stage, dt); break;
             case 'floor': stepFloorDancer(n, dt, t); break;
             case 'seat': stepSeated(n, state, dt, t, rnd); break;
@@ -607,12 +618,79 @@ export function updateInterior(state, dt, rnd = Math.random) {
         }
         if (n.say) {
             if ((n.say.life -= dt) <= 0) n.say = null;
-        } else if (n.lines && (n.chatT -= dt) <= 0) {
+        } else if (n.lines && !n.brawl && !n.leaving && (n.chatT -= dt) <= 0) {
             n.chatT = rand(rnd, 12, 30);
             trySay(state, n, pick(rnd, n.lines), 2.6);
         }
     }
+    if (gone) for (let i = npcs.length - 1; i >= 0; i--) if (npcs[i].gone && npcs[i].leaving) npcs.splice(i, 1);
     if (th && th.update) th.update(state, dt, rnd);
+}
+
+// ── På väg ut (n.leaving) ──
+// Avstånd i rutor till en målruta (BFS, 8 riktningar utan att skära hörn), cachat per rum. -1 = når inte dit.
+const flowCache = new WeakMap();
+const N8 = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]];
+function roomFlow(def, gx, gy) {
+    let m = flowCache.get(def);
+    if (!m) { m = new Map(); flowCache.set(def, m); }
+    const key = gy * def.w + gx;
+    let d = m.get(key);
+    if (d) return d;
+    d = new Int16Array(def.w * def.h).fill(-1);
+    if (!solidTile(def, gx, gy)) {
+        const q = [gx, gy];
+        d[key] = 0;
+        for (let qi = 0; qi < q.length; qi += 2) {
+            const x = q[qi], y = q[qi + 1], dist = d[y * def.w + x];
+            for (const [ox, oy] of N8) {
+                const nx = x + ox, ny = y + oy;
+                if (solidTile(def, nx, ny) || d[ny * def.w + nx] >= 0) continue;
+                if (ox && oy && (solidTile(def, x + ox, y) || solidTile(def, x, y + oy))) continue;
+                d[ny * def.w + nx] = dist + 1;
+                q.push(nx, ny);
+            }
+        }
+    }
+    if (m.size > 64) m.clear();
+    m.set(key, d);
+    return d;
+}
+
+// Nästa punkt (px) att gå mot för att ta sig från (x, y) till (gx, gy) runt möblerna
+export function roomStep(def, x, y, gx, gy) {
+    const tx = Math.floor(x / TS), ty = Math.floor(y / TS), Gx = Math.floor(gx / TS), Gy = Math.floor(gy / TS);
+    if ((tx === Gx && ty === Gy) || !(Number.isFinite(x) && Number.isFinite(y) && Number.isFinite(gx) && Number.isFinite(gy))) return { x: gx, y: gy };
+    if (Gx < 0 || Gy < 0 || Gx >= def.w || Gy >= def.h) return { x: gx, y: gy };
+    const d = roomFlow(def, Gx, Gy);
+    const here = solidTile(def, tx, ty) ? -1 : d[ty * def.w + tx];
+    let best = null, bd = here >= 0 ? here : Infinity;
+    for (const [ox, oy] of N8) {
+        const nx = tx + ox, ny = ty + oy;
+        if (solidTile(def, nx, ny)) continue;
+        if (ox && oy && here >= 0 && (solidTile(def, tx + ox, ty) || solidTile(def, tx, ty + oy))) continue;
+        const nd = d[ny * def.w + nx];
+        if (nd >= 0 && nd < bd) { bd = nd; best = { x: tc(nx), y: tc(ny) }; }
+    }
+    return best || { x: gx, y: gy };
+}
+
+// Går mot utgången och markeras n.gone när den är framme. true = försvann den här bildrutan.
+function stepLeaving(n, state, dt) {
+    const def = state.def, ex = def.exit || def.spawn;
+    if (n.down > 0) return false;
+    const to = roomStep(def, n.x, n.y, ex.x, ex.y);
+    const dx = to.x - n.x, dy = to.y - n.y, dist = Math.hypot(dx, dy);
+    const m = Math.min(dist, (state.panic > 0 ? 100 : 66) * dt);
+    if (dist > 0.01) {
+        n.x += dx / dist * m; n.y += dy / dist * m;
+        turnToward(n, Math.atan2(dy, dx), dt * 10);
+    }
+    collideInterior(def, n, 7);
+    n.pose = 'walk';
+    n.phase += m * 0.12;
+    if (Math.hypot(ex.x - n.x, ex.y - n.y) < 18) { n.gone = true; return true; }
+    return false;
 }
 
 // ═══════════════════════════════════════════

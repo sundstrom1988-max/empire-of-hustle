@@ -597,8 +597,39 @@ export class Renderer {
     // Folk inomhus (interiörernas personal och gäster) ritas med samma figurer
     drawPerson(ctx, npc) {
         const look = npc.look || {};
+        // Barbråk (brawl.js): garden uppe under uppdragningen, näven ute när slaget går
+        const fight = npc.brawl === 'fight';
         this.drawPedShape(ctx, npc, look.shirt || '#444', look.skin || '#e0ac69', look.hair || '#1f1300', npc.phase || 0, PED_SCALE,
-            { dress: look.dress, sparkle: look.sparkle, cap: look.cap, pose: npc.pose });
+            { dress: look.dress, sparkle: look.sparkle, cap: look.cap, pose: fight && npc.windup > 0 ? 'work' : npc.pose, punch: npc.punchT > 0 });
+        if (npc.brawl) this.drawBrawler(ctx, npc);
+        else if (npc.flashT > 0) this.hitFlash(ctx, npc.x, npc.y);
+    }
+
+    hitFlash(ctx, x, y) {
+        ctx.globalAlpha = 0.75; ctx.fillStyle = '#fff';
+        ctx.beginPath(); ctx.arc(x, y, 12, 0, Math.PI * 2); ctx.fill();
+        ctx.globalAlpha = 1;
+    }
+
+    // Blixt vid träff, hälsa, arg min och röd ring (går på mig), 🕴️ för vakter, 💫 för den som ligger
+    drawBrawler(ctx, npc) {
+        if (npc.flashT > 0) this.hitFlash(ctx, npc.x, npc.y);
+        if (npc.down > 0) {
+            this.emoji('💫', npc.x, npc.y - 17 + Math.sin(this.t * 5) * 1.5, 14);
+            return;
+        }
+        if (npc.maxHp > 0 && npc.hp < npc.maxHp) {
+            const f = Math.max(0, npc.hp / npc.maxHp);
+            ctx.fillStyle = 'rgba(0,0,0,0.7)'; ctx.fillRect(npc.x - 13, npc.y - 36, 26, 6);
+            ctx.fillStyle = f < 0.35 ? '#ef4444' : '#facc15'; ctx.fillRect(npc.x - 12, npc.y - 35, 24 * f, 4);
+        }
+        const guard = npc.kind === 'bouncer' || npc.kind === 'guard';
+        if (npc.foe === 'player') {
+            ctx.globalAlpha = 0.55 + 0.35 * Math.sin(this.t * 10);
+            this.ring(npc.x, npc.y, 15, '#ef4444', 2.5);
+            ctx.globalAlpha = 1;
+        }
+        if (guard || npc.foe === 'player') this.emoji(guard ? '🕴️' : '😠', npc.x, npc.y - 24, 14);
     }
 
     pedExtra(ped) {

@@ -8,7 +8,7 @@ import { generateCity } from './map.js';
 import { World } from './world.js';
 import { Renderer } from './render.js';
 import { Hud } from './hud.js';
-import { Input } from './input.js';
+import { Input, stickDrive } from './input.js';
 import { stars } from './wanted.js';
 import { gangById } from './missions.js';
 import { JOIN_RESPECT } from './constants.js';
@@ -44,20 +44,17 @@ function buildOverlay(touch) {
             <button class="city-btn city-home" data-cmd="home" title="Åk hem (Esc)">🏠 HEM</button>
         </div>
         ${touch ? `
+        <div class="ct-stick" aria-label="Joystick: dra för att gå eller köra">
+            <div class="ct-stick-base"><div class="ct-stick-knob"></div></div>
+        </div>
         <div class="city-touch">
-            <div class="ct-pad ct-left">
-                <button data-key="left" aria-label="Vänster">◀</button>
-                <button data-key="right" aria-label="Höger">▶</button>
-            </div>
             <div class="ct-pad ct-right">
                 <button data-key="r" class="ct-rob" aria-label="Råna">💰</button>
                 <button data-key="crew" class="ct-crew" aria-label="Crew-order">👥</button>
                 <button data-key="weapon" class="ct-wpn" aria-label="Byt vapen">🔫</button>
+                <button data-key="horn" class="ct-horn" aria-label="Tuta">📯</button>
                 <button data-key="act" class="ct-act" aria-label="In/ur bil">E</button>
                 <button data-key="hb" class="ct-hb ct-fight" aria-label="Slå">👊</button>
-                <button data-key="horn" class="ct-horn" aria-label="Tuta">📯</button>
-                <button data-key="down" aria-label="Broms/back">▼</button>
-                <button data-key="up" class="ct-gas" aria-label="Gas">▲</button>
             </div>
         </div>` : ''}
         <div class="city-modal" hidden></div>`;
@@ -66,7 +63,7 @@ function buildOverlay(touch) {
 
 function controlsHelp(touch) {
     return touch
-        ? `<div class="city-help"><b>▲▼◀▶</b> kör / gå · <b>👊</b> slå / skjut (blir <b>⤵</b> handbroms i bilen) · <b>E</b> gå in genom dörrar, in/ur bil, plocka upp · <b>💰</b> råna · <b>🔫</b> byt vapen · <b>👥</b> crew-order · <b>📯</b> tuta · <b>📱</b> telefon · <b>🔍</b> byt vy<br><small>Version ${escapeHtml(BUILD)}</small></div>`
+        ? `<div class="city-help"><b>🕹️ Joysticken</b> — sätt tummen nere till vänster och dra: gå dit du drar, hela vägen ut = spring · i bilen kör den dit du drar (dra bakåt för att backa) · <b>👊</b> slå / skjut (blir <b>⤵</b> handbroms i bilen) · <b>E</b> gå in genom dörrar, in/ur bil, plocka upp · <b>💰</b> råna · <b>🔫</b> byt vapen · <b>👥</b> crew-order · <b>📯</b> tuta · <b>📱</b> telefon · <b>🔍</b> byt vy<br><small>Version ${escapeHtml(BUILD)}</small></div>`
         : `<div class="city-help"><b>WASD/Pilar</b> kör/gå · <b>Musen</b> siktar, <b>vänsterklick</b> slår/skjuter, <b>hjulet</b> zoomar · <b>Shift</b> spring · <b>E</b> gå in genom dörrar, in/ur bil, plocka upp · <b>Space</b> handbroms / slå / skjut · <b>R</b> råna (till fots) / radio (i bil) · <b>Q</b> byt vapen · <b>M</b> karta · <b>T</b> telefon · <b>V</b> byt vy · <b>1 2 3</b> crew: följ / stanna / anfall · <b>H</b> tuta · <b>P</b> paus · <b>Esc</b> hem<br><small>Version ${escapeHtml(BUILD)}</small></div>`;
 }
 
@@ -93,6 +90,12 @@ export function openCity(profile, opts = {}) {
     input.ignoreMouse = (x, y) => {
         const r = session?.hud.mapRect;
         return !session || !!session.modalType || world.showMap || (!!r && x >= r.x && x <= r.x + r.size && y >= r.y && y <= r.y + r.size);
+    };
+    // Joysticken: med stora kartan uppe stänger trycket kartan i stället (som på resten av skärmen)
+    input.stickGate = () => {
+        if (!session || session.modalType) return false;
+        if (world.showMap) { world.showMap = false; return false; }
+        return true;
     };
     const modal = overlay.querySelector('.city-modal');
 
@@ -590,6 +593,9 @@ function frame(ts) {
             const state = inp.state();
             // Musen siktar (dator): världskoordinaten under pekaren
             state.aim = !s.touch && inp.aimActive() ? s.renderer.screenToWorld(inp.mouse.x, inp.mouse.y) : null;
+            // Joysticken i bilen: kör dit man drar (gas och ratt räknas om från riktningen)
+            const car = s.world.player.vehicle;
+            if (car && inp.stick.active) Object.assign(state, stickDrive(inp.stick, car.angle, car.vx * Math.cos(car.angle) + car.vy * Math.sin(car.angle), car.spec.maxSpeed));
             let steps = 0;
             while (s.acc >= STEP && steps < 5) {
                 s.world.update(STEP, steps === 0 ? state : { ...state, action: false, punch: false, rob: false, weapon: false });

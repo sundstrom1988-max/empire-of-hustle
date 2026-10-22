@@ -95,7 +95,7 @@ export function findPath(def, x0, y0, x1, y1) {
     const route = tileRoute(def, sx, sy, gx, gy);
     if (!route) return [{ x: x1, y: y1 }];
     const pts = [{ x: x0, y: y0 }];
-    for (let i = 1; i < route.length - 1; i++) pts.push({ x: tc(route[i][0]), y: tc(route[i][1]) });
+    for (let i = 0; i < route.length; i++) pts.push({ x: tc(route[i][0]), y: tc(route[i][1]) });
     pts.push({ x: x1, y: y1 });
     const out = [];
     let i = 0;
@@ -131,26 +131,39 @@ function walk(n, dt, speed) {
     return false;
 }
 
-// Gå till (x,y) (planerar om när målet byts). true när framme.
+// Gå till (x,y) (planerar om när målet byts eller när man knuffats så att nästa sträcka skär ett hörn). true när framme.
 function goStep(n, st, dt, x, y, speed) {
     if (Math.hypot(n.x - x, n.y - y) < 1.2) { n.mv = null; return true; }
-    const mv = n.mv;
-    if (!mv || mv.tx !== x || mv.ty !== y) n.mv = { path: findPath(st.def, n.x, n.y, x, y), i: 0, tx: x, ty: y };
+    let mv = n.mv;
+    if (!mv || mv.tx !== x || mv.ty !== y) mv = n.mv = { path: findPath(st.def, n.x, n.y, x, y), i: 0, tx: x, ty: y, cd: 0.25 };
+    else if ((mv.cd -= dt) <= 0) {
+        mv.cd = 0.25;
+        const p = mv.path[mv.i];
+        if (p && !lineClear(st.def, n.x, n.y, p.x, p.y, 8)) mv = n.mv = { path: findPath(st.def, n.x, n.y, x, y), i: 0, tx: x, ty: y, cd: 0.25 };
+    }
     const done = walk(n, dt, speed);
     if (!done) avoid(n, st, dt);
     return done;
 }
 
-// Mjuk knuff bort från de man går nära så att ingen går i varandra
+// Mjuk knuff åt sidan bort från de man går nära så att ingen går rakt i varandra. Aldrig framåt/bakåt (då kan
+// två som möts i en smal gång fastna): går det inte att väja går man bara förbi varandra.
 function avoid(n, st, dt) {
+    const mv = n.mv, p = mv && mv.path[mv.i];
+    if (!p) return;
+    const hl = Math.hypot(p.x - n.x, p.y - n.y);
+    if (hl < 0.5) return;
+    const hx = (p.x - n.x) / hl, hy = (p.y - n.y) / hl;
     let px = 0, py = 0;
     for (const m of st.npcs) {
         if (m === n || m.gone) continue;
         const dx = n.x - m.x, dy = n.y - m.y, d2 = dx * dx + dy * dy;
         if (d2 > 0.01 && d2 < 20 * 20) { const d = Math.sqrt(d2), k = (20 - d) / 20; px += dx / d * k; py += dy / d * k; }
     }
+    const along = px * hx + py * hy;
+    px -= along * hx; py -= along * hy;
     if (!px && !py) return;
-    const nx = n.x + px * 60 * dt, ny = n.y + py * 60 * dt;
+    const nx = n.x + px * 40 * dt, ny = n.y + py * 40 * dt;
     if (circleClear(st.def, nx, ny, 8)) { n.x = nx; n.y = ny; }
 }
 
@@ -210,14 +223,16 @@ function makeStaff(kind, spots, rnd, o = {}) {
     return n;
 }
 
+// Räknas med i köer, på platser och i maxantalet: inte borta, inte i slagsmål (n.brawl) och inte på väg ut efter ett
+function live(m) { return !m.gone && !m.brawl && !m.leaving; }
 function holder(st, key) {
-    for (const m of st.npcs) if (m.c && m.c.hold === key && !m.gone) return m;
+    for (const m of st.npcs) if (m.c && m.c.hold === key && live(m)) return m;
     return null;
 }
-function custs(st) { return st.npcs.filter(m => m.beh === 'cust' && !m.gone); }
+function custs(st) { return st.npcs.filter(m => m.beh === 'cust' && !m.gone && !m.brawl); }
 // Den som just nu betalar vid kön q
 function payer(st, q) {
-    for (const m of st.npcs) { const s = m.c && m.c.s; if (s && s.k === 'queue' && s.q === q && s.ph === 2 && !m.gone && !m.c.flee) return m; }
+    for (const m of st.npcs) { const s = m.c && m.c.s; if (s && s.k === 'queue' && s.q === q && s.ph === 2 && live(m) && !m.c.flee) return m; }
     return null;
 }
 
@@ -308,7 +323,7 @@ function stepQueue(R, n, st, dt, rnd, c, s) {
     let rank = 0;
     for (const m of st.npcs) {
         const ms = m.c && m.c.s;
-        if (m !== n && !m.gone && !m.c.flee && ms && ms.k === 'queue' && ms.q === s.q && ms.ph >= 1 && ms.seq < s.seq) rank++;
+        if (m !== n && live(m) && ms && !m.c.flee && ms.k === 'queue' && ms.q === s.q && ms.ph >= 1 && ms.seq < s.seq) rank++;
     }
     const slot = Q.slots[Math.min(rank, Q.slots.length - 1)];
     if (s.ph === 1) {
@@ -335,6 +350,7 @@ function stepUse(R, n, st, dt, rnd, c, s) {
     let slot = s.i == null ? null : pool[s.i];
     if (s.ph === 0 || s.ph === 9) {
         if (s.ph === 9) { stand(n, dt, n.angle); if ((s.t -= dt) > 0) return false; s.ph = 0; }
+        if (s.ph === 0 && s.skipIf && R.until[s.skipIf](st, n, s)) return true;
         const free = [];
         for (let i = 0; i < pool.length; i++) {
             const key = s.pool + ':' + i;
@@ -364,7 +380,7 @@ function stepUse(R, n, st, dt, rnd, c, s) {
     }
     if (s.ph === 3) {
         if (!s.started) {
-            s.started = true; s.t = rand(rnd, s.dur[0], s.dur[1]); s.say = rand(rnd, 1.5, 4); s.pt = rand(rnd, 2, 4);
+            s.started = true; s.since = st.t; s.t = rand(rnd, s.dur[0], s.dur[1]); s.say = rand(rnd, 1.5, 4); s.pt = rand(rnd, 2, 4);
             n.pose = slot.pose; n.act = slot.act; n.useT = 0;
         }
         n.x = slot.x; n.y = slot.y;
@@ -442,7 +458,17 @@ function stepCust(R, n, st, dt, rnd) {
     }
 }
 
+// Spelets slagsmål är över (n.brawl nollställt, n.leaving satt): tillbaka till dörren som en vanlig gående, även personalen
+function stepLeaving(R, n, st, dt) {
+    const d = st.def.door;
+    if (n.c) { n.c.hold = null; n.c.seat = null; n.c.tw = null; n.c.flee = false; }
+    n.act = null;
+    if (goStep(n, st, dt, d.x, d.y, n.c ? n.c.speed : 52)) n.gone = true;
+}
+
 function bizStep(R, n, st, dt, rnd) {
+    if (n.brawl) return true;               // slagsmål sköts av spelet: rör inte
+    if (n.leaving) { stepLeaving(R, n, st, dt); return true; }
     if (n.beh === 'cust') { stepCust(R, n, st, dt, rnd); return true; }
     if (n.beh === 'staff') { stepStaff(R, n, st, dt, rnd); return true; }
     return false;
@@ -458,7 +484,7 @@ function bizUpdate(R, st, dt, rnd) {
     if (st.owned && !b.owned) {
         let all = true;
         for (const n of npcs) {
-            if (n.beh !== 'staff' || n.staff.greeted) continue;
+            if (n.beh !== 'staff' || n.staff.greeted || n.brawl || n.leaving) continue;
             const had = n.say;
             trySay(st, n, 'Välkommen, chefen!', 3);
             if (!had && n.say) n.staff.greeted = true; else all = false;
@@ -472,6 +498,7 @@ function bizUpdate(R, st, dt, rnd) {
     const d = st.def.door;
     let count = 0, blocked = false;
     for (const m of npcs) {
+        if (m.brawl) continue;
         if (m.beh === 'cust') count++;
         if (Math.hypot(m.x - d.x, m.y - d.y) < 26) blocked = true;
     }
@@ -525,6 +552,7 @@ function armTo(ctx, n, side, hx, hy) {
 }
 
 const ROOMS = new Map();
+export const bizRooms = ROOMS; // för tester: rummens platser, köer och manus
 function room(R, def, theme) {
     R.id = def.id;
     ROOMS.set(def.id, R);
@@ -634,10 +662,9 @@ const KEBAB_R = {
         });
         const cash = { x: tc(10), y: 5 * TS + 13, a: PI / 2, pose: 'work', w: [3, 6] };
         const kassor = makeStaff('cashier', [cash, { x: 400, y: 172, a: PI / 2, pose: 'idle', w: [2, 5] }, { x: 272, y: 172, a: PI / 2, pose: 'idle', w: [2, 5] }], rnd, {
-            speed: 34, look: { shirt: '#2563eb', skin: '#e0ac69', hair: '#3f2a14', dress: null },
+            speed: 34, look: { shirt: '#2563eb', skin: '#e0ac69', hair: '#3f2a14' },
             lines: ['Nästa, tack!', 'Vill du ha dryck?', 'Det blir fyrtio kronor.', 'Välkommen!']
         });
-        kassor.look.dress = undefined;
         return [mehmet, kassor];
     },
     act: null
@@ -648,7 +675,7 @@ KEBAB_R.act = (() => {
         if (desk(n, st, dt, rnd, s)) return true;
         if (s.role === 'cook') {
             // väntar någon på maten står Mehmet vid skärbänken
-            const waiting = st.npcs.some(m => m.c && m.c.s && m.c.s.tag === 'food' && !m.gone && !m.c.flee);
+            const waiting = st.npcs.some(m => m.c && m.c.s && m.c.s.tag === 'food' && live(m) && !m.c.flee);
             if (waiting) {
                 s.walking = false; s.atPrep = true;
                 if (goStep(n, st, dt, s.prep.x, s.prep.y, 40)) stand(n, dt, -PI / 2, 'work');
@@ -759,6 +786,7 @@ function kebabBackWall(g, def) {
     // skylt
     g.fillStyle = 'rgba(10,6,4,0.9)'; rr(g, 150, 2, 276, 24, 6); g.fill();
     g.strokeStyle = 'rgba(255,170,40,0.85)'; g.lineWidth = 1.3; rr(g, 151, 3, 274, 22, 5); g.stroke();
+    neonText(g, 'MEHMETS KEBAB', 288, 14.5, 16, '#ffd23f', '#ff6a00');
     // wallPass ritar väggens framkant under det här: lägg tillbaka den
     box(g, TS, 3 * TS - 10, 16 * TS, 10, K_WALL.face); box(g, TS, 3 * TS - 10, 16 * TS, 1, K_WALL.hi); box(g, TS, 3 * TS - 2, 16 * TS, 2, K_WALL.line);
 }
@@ -784,6 +812,18 @@ function kebabKitchen(g, def) {
         g.fillStyle = 'rgba(255,240,170,0.5)'; g.fillRect(fx + 3, 3 * TS + 8, 8, 2);
         g.strokeStyle = '#1a1c20'; g.lineWidth = 1.6; g.beginPath(); g.moveTo(fx + 6, 3 * TS + 14); g.lineTo(fx + 18, 3 * TS + 14); g.stroke();
     }
+    // gummimattor framför bänkarna, golvbrunn, pitalådor, skurhink och soptunna
+    for (const [mx, mw] of [[2 * TS - 2, 3 * TS + 8], [6 * TS, 3 * TS], [10 * TS, 2 * TS + 8]]) {
+        box(g, mx, 4 * TS + 2, mw, 14, '#2a2d33'); box(g, mx, 4 * TS + 2, mw, 1.5, 'rgba(255,255,255,0.18)');
+        g.fillStyle = 'rgba(255,255,255,0.08)'; for (let x = mx + 4; x < mx + mw - 4; x += 8) g.fillRect(x, 4 * TS + 5, 4, 8);
+    }
+    box(g, 8 * TS + 10, 5 * TS + 8, 12, 12, '#8d95a0'); for (let i = 0; i < 3; i++) box(g, 8 * TS + 12, 5 * TS + 10 + i * 3.4, 8, 1.4, '#3b414a');
+    for (const [cx, cy] of [[15 * TS, 4 * TS + 4], [15 * TS + 2, 5 * TS + 8]]) {
+        box(g, cx + 2, cy + 2, 28, 20, 'rgba(0,0,0,0.25)'); box(g, cx, cy, 28, 20, '#b8814a'); box(g, cx, cy, 28, 3, '#d9a566');
+        box(g, cx + 4, cy + 7, 20, 7, '#f3ead2'); label(g, 'PITA', cx + 14, cy + 10.6, 5, '#7a4a1a');
+    }
+    disc(g, 1 * TS + 16, 5 * TS + 16, 9, '#3b82c4'); disc(g, 1 * TS + 16, 5 * TS + 16, 7, '#9ccaf0'); disc(g, 1 * TS + 16, 5 * TS + 16, 4.4, '#5aa0d8');
+    disc(g, 5 * TS - 4, 5 * TS + 14, 10, '#2d3138'); disc(g, 5 * TS - 4, 5 * TS + 14, 8, '#40454d'); disc(g, 5 * TS - 4, 5 * TS + 14, 3, '#23262b');
     // kökshandduk och mjölsäck i hörnet
     box(g, 14 * TS + 6, 3 * TS + 6, 18, 20, '#c9a46a'); box(g, 14 * TS + 6, 3 * TS + 6, 18, 2, '#e1c18c'); label(g, 'MJÖL', 14 * TS + 15, 3 * TS + 17, 5, '#6b4a2a');
     box(g, 16 * TS + 2, 3 * TS + 8, 10, 14, '#3b82c4'); box(g, 16 * TS + 2, 3 * TS + 8, 10, 3, '#9ccaf0');
@@ -885,4 +925,1473 @@ function paintKebab(g, def) {
     kebabCounter(g, def);
     kebabDining(g, def);
     kebabDecor(g, def);
+}
+
+// ── Kebabens rörliga lager ──
+// Roterande dönerspett sett från sidan: koniskt kött i skivor med glänsande reflexer som vandrar
+function doner(ctx, cx, t, speed, rTop, rBot, pal) {
+    const y0 = 29, n = 13, sh = 4.1, th = t * speed * 1.5;
+    ctx.save();
+    ctx.beginPath();
+    ctx.moveTo(cx - rTop, y0); ctx.lineTo(cx + rTop, y0); ctx.lineTo(cx + rBot, y0 + n * sh); ctx.lineTo(cx - rBot, y0 + n * sh); ctx.closePath();
+    ctx.clip();
+    for (let j = 0; j < n; j++) {
+        const k = j / (n - 1), r = rTop + (rBot - rTop) * k + Math.sin(j * 1.9) * 1.1, y = y0 + j * sh;
+        ctx.fillStyle = pal[(tileHash(j, rTop | 0) >> 3) % pal.length];
+        ctx.fillRect(cx - r - 1, y, r * 2 + 2, sh + 0.4);
+        // ytan snurrar: ljusa och mörka kornlinjer vandrar över sidan
+        for (let i = 0; i < 4; i++) {
+            const a = th + j * 0.5 + i * 1.57, vis = Math.cos(a);
+            if (vis < 0) continue;
+            ctx.fillStyle = i & 1 ? 'rgba(255,225,170,0.30)' : 'rgba(40,12,4,0.30)';
+            ctx.fillRect(cx + Math.sin(a) * r * 0.92 - 1, y, 2.2 * vis + 0.5, sh);
+        }
+        ctx.fillStyle = 'rgba(60,20,6,0.28)'; ctx.fillRect(cx - r, y + sh - 1, r * 2, 1);
+    }
+    // cylindrisk skuggning och glans
+    const gr = ctx.createLinearGradient(cx - rTop, 0, cx + rTop, 0);
+    gr.addColorStop(0, 'rgba(0,0,0,0.5)'); gr.addColorStop(0.28, 'rgba(255,255,255,0.14)'); gr.addColorStop(0.5, 'rgba(0,0,0,0)'); gr.addColorStop(1, 'rgba(0,0,0,0.55)');
+    ctx.fillStyle = gr; ctx.fillRect(cx - rTop - 1, y0, rTop * 2 + 2, n * sh);
+    ctx.restore();
+    // toppen med knoppen
+    ctx.fillStyle = pal[0]; ctx.beginPath(); ctx.ellipse(cx, y0, rTop, 2.6, 0, 0, TAU); ctx.fill();
+    ctx.fillStyle = 'rgba(255,230,180,0.35)'; ctx.beginPath(); ctx.ellipse(cx - 2, y0 - 0.4, rTop * 0.55, 1.2, 0, 0, TAU); ctx.fill();
+    // fettdroppe som glider ned
+    const dy = (t * 26 + cx) % 58;
+    ctx.fillStyle = 'rgba(255,214,120,0.85)'; ctx.beginPath(); ctx.arc(cx + Math.sin(cx + Math.floor(t * 26 / 58) * 3) * rBot * 0.6, y0 + 6 + dy, 1.1, 0, TAU); ctx.fill();
+}
+const BEEF = ['#8a4a2b', '#9c5732', '#7a3d22', '#a4623a', '#6f3620'];
+const CHICKEN = ['#c98d4f', '#d9a45e', '#b9783d', '#e0b374', '#c28246'];
+
+function dynKebab(ctx, st, v, t) {
+    const def = st.def;
+    // värmeelement
+    for (const cx of [88, 138]) {
+        for (let i = 0; i < 4; i++) {
+            ctx.fillStyle = rgba('#ff6a1a', 0.5 + 0.2 * Math.sin(t * 3 + i * 1.3 + cx));
+            ctx.fillRect(cx - 14 + i * 9, 34, 5, 46);
+            ctx.fillStyle = 'rgba(255,230,160,0.35)'; ctx.fillRect(cx - 13 + i * 9, 34, 1.4, 46);
+        }
+    }
+    doner(ctx, 88, t, 1.0, 15, 6, BEEF);
+    doner(ctx, 138, t, 1.25, 11, 5, CHICKEN);
+    // ånga från stekplåten och fritösen
+    for (const [sx, sy] of [[3 * TS + 16, 3 * TS + 8], [10 * TS + 16, 3 * TS + 6], [11 * TS + 16, 3 * TS + 6]]) {
+        for (let i = 0; i < 3; i++) {
+            const k = ((t * 0.45 + i / 3 + sx * 0.013) % 1);
+            ctx.globalAlpha = (1 - k) * 0.22;
+            ctx.fillStyle = '#ffffff'; ctx.beginPath(); ctx.arc(sx + Math.sin(k * 6 + i) * 4, sy - k * 26, 2 + k * 4, 0, TAU); ctx.fill();
+        }
+    }
+    ctx.globalAlpha = 1;
+    // kassaskärmen blinkar till
+    if (Math.floor(t * 2) % 5 === 0) { ctx.fillStyle = 'rgba(255,255,255,0.5)'; ctx.fillRect(10 * TS + 6, 6 * TS + 7, 20, 8); }
+    // menytavlans kant tänds i takt
+    for (let i = 0; i < 26; i++) {
+        if ((i + Math.floor(t * 5)) % 4) continue;
+        const px = 324 + 4 + i * 8, py = i < 13 ? 31.5 : 85.5;
+        ctx.fillStyle = '#fff1b8'; ctx.beginPath(); ctx.arc(px % 208 + 324, py, 1.2, 0, TAU); ctx.fill();
+    }
+    exitArrow(ctx, def, t);
+}
+
+// ── Saker i händerna och verktyg (alla rum) ──
+function drawWrap(ctx, x, y, rot, s = 1) {
+    ctx.save(); ctx.translate(x, y); ctx.rotate(rot); ctx.scale(s, s);
+    ctx.fillStyle = 'rgba(0,0,0,0.22)'; rr(ctx, -6, -2.2, 13, 6, 3); ctx.fill();
+    ctx.fillStyle = '#d6dae0'; rr(ctx, -6.5, -3, 12, 6, 2.8); ctx.fill();            // foliepappret
+    ctx.fillStyle = '#eecf8c'; rr(ctx, 1.5, -2.6, 5.4, 5.2, 2.4); ctx.fill();         // pitabröd
+    ctx.fillStyle = '#7bbf4a'; ctx.fillRect(5, -1.8, 2, 1.6);                           // sallad
+    ctx.fillStyle = '#d83a2a'; ctx.fillRect(5.2, 0.4, 1.8, 1.4);                        // tomat
+    ctx.fillStyle = 'rgba(255,255,255,0.8)'; ctx.fillRect(-5.5, -2.6, 6, 1);
+    ctx.restore();
+}
+function drawCan(ctx, x, y, col = '#d83a2a') {
+    ctx.fillStyle = 'rgba(0,0,0,0.25)'; ctx.beginPath(); ctx.arc(x + 0.8, y + 1, 2.8, 0, TAU); ctx.fill();
+    ctx.fillStyle = col; ctx.beginPath(); ctx.arc(x, y, 2.7, 0, TAU); ctx.fill();
+    ctx.fillStyle = '#e5e7eb'; ctx.beginPath(); ctx.arc(x, y, 1.6, 0, TAU); ctx.fill();
+    ctx.fillStyle = 'rgba(0,0,0,0.35)'; ctx.fillRect(x - 0.4, y - 0.8, 0.8, 1.6);
+}
+
+// Verktyg för personalen. spot.tool: 'knife' (skär dönern), 'chop' (hackar), 'scissors', 'clipper', ...
+function staffTool(ctx, n, t) {
+    const sp = n.staff.spots[n.staff.si];
+    let tool = n.pose === 'work' ? (n.staff.tool || (sp && sp.tool)) : null;
+    if (n.kind === 'cook' && n.staff.atPrep) tool = 'chop';
+    if (!tool) return;
+    if (tool === 'knife' || tool === 'chop') {
+        const fast = tool === 'chop';
+        const sw = fast ? Math.abs(Math.sin(t * 13 + n.phase)) : Math.abs(Math.sin(t * 2.6 + n.phase));
+        const reach = (fast ? 11 : 9) + (fast ? 3 : 8) * sw, p = at(n, reach, 5.6);
+        const a = n.angle + (fast ? 0.15 : -0.5 + 0.5 * sw);
+        ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(a);
+        ctx.fillStyle = '#2a2018'; ctx.fillRect(-4, -1.3, 5, 2.6);
+        ctx.fillStyle = '#dfe5ec'; ctx.beginPath(); ctx.moveTo(1, -1.7); ctx.lineTo(15, -0.6); ctx.lineTo(15, 1); ctx.lineTo(1, 1.7); ctx.closePath(); ctx.fill();
+        ctx.fillStyle = 'rgba(255,255,255,0.8)'; ctx.fillRect(2, -1.2, 11, 0.7);
+        ctx.restore();
+        // skivor som faller ned i brickan
+        if (!fast) {
+            ctx.fillStyle = '#9c5732';
+            for (let i = 0; i < 3; i++) {
+                const k = (t * 1.3 + i / 3) % 1;
+                ctx.globalAlpha = 1 - k; ctx.fillRect(p.x + Math.cos(n.angle) * 12 + (i - 1) * 3, p.y + Math.sin(n.angle) * 12 - 2 + k * 9, 2.2, 1.4);
+            }
+            ctx.globalAlpha = 1;
+        }
+    }
+}
+
+function itemOf(ctx, n, t) {
+    const L = n.look || {};
+    if (n.pose === 'sit') {
+        // sittande saknar händer i renderaren: en arm och en hand om maten
+        if (n.act === 'eat' && n.item === 'wrap') {
+            const bite = Math.max(0, Math.sin(t * 2.4 + n.phase * 0.5));
+            const p = at(n, 9 - bite * 4.5, 4 - bite * 2);
+            armTo(ctx, n, 1, p.x, p.y);
+            drawWrap(ctx, p.x + Math.cos(n.angle) * 2, p.y + Math.sin(n.angle) * 2, n.angle - 0.3 + bite * 0.2);
+        }
+        return;
+    }
+    if (n.item === 'wrap') {
+        const p = at(n, 10.5, 7);
+        armTo(ctx, n, 1, p.x, p.y);
+        drawWrap(ctx, p.x + Math.cos(n.angle) * 3, p.y + Math.sin(n.angle) * 3, n.angle - 0.35);
+    } else if (n.item === 'can') {
+        const p = at(n, 9, 8);
+        armTo(ctx, n, 1, p.x, p.y);
+        drawCan(ctx, p.x, p.y);
+    }
+}
+
+function accessoryA(ctx, n, t) {
+    if (n.staff) staffTool(ctx, n, t);
+    if (n.item || n.act) itemOf(ctx, n, t);
+}
+
+function lightsKebab(ctx, st, v, t, glow) {
+    // grillen ger ett varmt sken som andas
+    glow(112, 108, 84, '#ff8a2a', 0.2 + 0.07 * Math.sin(t * 2.3));
+    glow(360, 112, 52, '#ffb347', 0.12 + 0.04 * Math.sin(t * 7));
+}
+
+registerKebab();
+function registerKebab() {
+    room(KEBAB_R, KEBAB, {
+        paint: paintKebab, dyn: dynKebab, accessory: accessoryA, lights: lightsKebab,
+        glows: [
+            [288, 14, 160, '#ff7a1a', 0.3, 0],
+            [416, 60, 120, '#ffd36a', 0.16, 0],
+            [528, 256, 72, '#7dd3fc', 0.22, 2.2],
+            [112, 300, 130, '#ffb45a', 0.1, 0],
+            [112, 330, 130, '#ffb45a', 0.1, 0],
+            [464, 300, 130, '#ffb45a', 0.1, 0],
+            [464, 340, 130, '#ffb45a', 0.1, 0],
+            [288, 426, 70, '#22c55e', 0.12, 3.2]
+        ]
+    });
+}
+
+// ═══════════════════════════════════════════
+//  Gemensamma möbler
+// ═══════════════════════════════════════════
+
+// Soffa: ryggen mot väggen om det finns en, annars mot ändan
+function sofaPaint(g, def, pal) {
+    eachTile(def, 'S', (tx, ty) => {
+        const x = tx * TS, y = ty * TS;
+        const wl = chAt(def, tx - 1, ty) === '#', wr = chAt(def, tx + 1, ty) === '#', wt = chAt(def, tx, ty - 1) === '#', wb = chAt(def, tx, ty + 1) === '#';
+        softShadow(g, x + 16, y + 16, 15, 15, 0.3);
+        box(g, x, y, TS, TS, pal.base);
+        const l = wl ? 10 : 2, r = wr ? 10 : 2, t = wt ? 10 : 2, b = wb ? 10 : 2;
+        g.fillStyle = pal.seat; rr(g, x + l, y + t, TS - l - r, TS - t - b, 4); g.fill();
+        g.fillStyle = 'rgba(255,255,255,0.13)'; rr(g, x + l + 2, y + t + 2, TS - l - r - 4, 5, 2); g.fill();
+        g.strokeStyle = 'rgba(0,0,0,0.45)'; g.lineWidth = 1; rr(g, x + l, y + t, TS - l - r, TS - t - b, 4); g.stroke();
+        g.fillStyle = pal.back;
+        if (wt) g.fillRect(x, y, TS, 10); if (wb) g.fillRect(x, y + TS - 10, TS, 10);
+        if (wl) g.fillRect(x, y, 10, TS); if (wr) g.fillRect(x + TS - 10, y, 10, TS);
+        g.fillStyle = 'rgba(255,255,255,0.14)';
+        if (wt) g.fillRect(x, y, TS, 1.5); if (wr) g.fillRect(x + TS - 1.5, y, 1.5, TS);
+        // sömmar mellan sittplatserna
+        g.strokeStyle = 'rgba(0,0,0,0.3)';
+        if (chAt(def, tx + 1, ty) === 'S') { g.beginPath(); g.moveTo(x + TS - 0.5, y + t); g.lineTo(x + TS - 0.5, y + TS - b); g.stroke(); }
+        if (chAt(def, tx, ty + 1) === 'S') { g.beginPath(); g.moveTo(x + l, y + TS - 0.5); g.lineTo(x + TS - r, y + TS - 0.5); g.stroke(); }
+    });
+}
+
+// Soffbord
+function coffeeTable(g, def, o) {
+    slabGroup(g, def, 'V', { side: o.side, top: o.top, hi: 'rgba(255,255,255,0.3)', ins: 2 });
+}
+
+// Den vanliga utgångsskylten
+function exitSign(g, x, y) {
+    box(g, x, y, 42, 12, '#052e16'); box(g, x, y, 42, 12, 'rgba(34,197,94,0.25)');
+    label(g, 'UTGÅNG', x + 21, y + 6.5, 7, '#4ade80', { font: SIGN_FONT, weight: 400 });
+}
+
+// Framkant på en vägg som just målats över (wallPass ritar den under)
+function wallLip(g, x0, x1, ty, pal) {
+    box(g, x0, ty * TS - 10, x1 - x0, 10, pal.face); box(g, x0, ty * TS - 10, x1 - x0, 1, pal.hi); box(g, x0, ty * TS - 2, x1 - x0, 2, pal.line);
+}
+
+// ═══════════════════════════════════════════
+//  💈 FRISÖREN PÅ HÖRNET
+//  Tre frisörstolar framför speglar, väntsoffor, kassan i hörnet.
+//  18 × 13 rutor.
+// ═══════════════════════════════════════════
+
+const BARBER_ROWS = [
+    '##################', //  0  skylt
+    '##################', //  1  speglar
+    '##################', //  2
+    '#.mmm..mmm..mmm.x#', //  3  verktygsbänkar under speglarna
+    '#..J....J....J...#', //  4  frisörstolarna (J)
+    '#x...............#', //  5  frisörerna står bakom stolarna
+    '#................#', //  6
+    '#S...............#', //  7  väntsoffa längs vänstra väggen
+    '#S...............#', //  8
+    '#S.V........CCCCC#', //  9  soffbord, kassadisken
+    '#...........C....#', // 10  kassören står i hörnet bakom disken
+    '#.SSS.......C....#', // 11  mer soffa
+    '########ee########'  // 12  ingång
+];
+
+const BARBER = {
+    id: 'barber', name: 'Frisören på hörnet', theme: 'biz-barber', w: 18, h: 13,
+    rows: BARBER_ROWS,
+    legend: { J: { name: 'frisörstol', solid: true } },
+    spawn: { x: 288, y: tc(10) },
+    exit: { x: 288, y: 12 * TS + 24, r: 22 },
+    door: { x: 288, y: 12 * TS + 10 },
+    counter: { x: tc(14), y: 8 * TS + 15 },
+    interactions: [{ id: 'counter', label: 'E — Disken: köp stället, kassan, råna', x: 432, y: 8 * TS + 20, r: 62 }],
+    music: null,
+    zones: [{ x: 1, y: 7, w: 5, h: 5, kind: 'rug' }, { x: 13, y: 10, w: 4, h: 2, kind: 'desk' }]
+};
+
+const CHAIRS = [3, 8, 13];
+const BARBER_SEATS = [
+    // soffan på vänsterkanten (blick österut) och den längs nedre väggen (blick norrut)
+    ...[7, 8, 9].map(ty => ({ x: tc(1), y: tc(ty), ax: tc(2), ay: tc(ty), ang: 0, pose: 'sit', act: 'read', rate: 1.2 })),
+    ...[2, 3, 4].map(tx => ({ x: tc(tx), y: tc(11), ax: tc(tx), ay: tc(10), ang: -PI / 2, pose: 'sit', act: 'read', rate: 1.2 }))
+];
+const BARBER_CHAIRS = CHAIRS.map((cx, i) => ({ x: tc(cx), y: tc(4), ax: tc(cx + 1), ay: tc(4), ang: -PI / 2, pose: 'sit', act: 'cut', rate: 1.2, i }));
+
+function barberScript(rnd) {
+    return [
+        { k: 'use', pool: 'sofa', dur: [1.5, 4], until: 'chairFree', skipIf: 'chairFree', full: 'skip' },
+        { k: 'use', pool: 'chair', dur: [13, 21], needs: true, full: 'wait' },
+        { k: 'queue', q: 'main' },
+        { k: 'leave' }
+    ];
+}
+
+function chairsFree(st) { let f = 0; for (let i = 0; i < BARBER_CHAIRS.length; i++) if (!holder(st, 'chair:' + i)) f++; return f; }
+
+const BARBER_R = {
+    maxCust: 7, gap: [5, 10],
+    at: {},
+    queues: {
+        main: {
+            slots: [0, 1, 2, 3, 4].map(k => ({ x: tc(14) - k * 36, y: 8 * TS + 15 + (k % 2 ? 3 : -2) })),
+            face: PI / 2, pay: [2.4, 4],
+            orders: ['Hur mycket blir det?', 'Swish går bra?', 'Tack, grymt!', 'Fräscht, bram!'],
+            thanks: ['Tack!', 'Vi ses!', 'Grymt jobbat!']
+        }
+    },
+    pools: { sofa: BARBER_SEATS, chair: BARBER_CHAIRS },
+    until: {
+        // någon får ta en ledig stol först när de som väntat längre fått sin
+        chairFree(st, n) {
+            const free = chairsFree(st);
+            let ahead = 0;
+            for (const m of st.npcs) {
+                const ms = m.c && m.c.s;
+                if (m === n || !live(m) || !ms || ms.k !== 'use' || ms.pool !== 'sofa' || ms.ph < 1 || m.c.flee) continue;
+                const mine = n.c && n.c.s && n.c.s.since;
+                if (mine == null || (ms.since != null && ms.since < mine)) ahead++;
+            }
+            return free > ahead;
+        }
+    },
+    serving: (st, n, s) => st.npcs.some(m => m.staff && live(m) && m.staff.chair === s.i && m.staff.atWork),
+    lines: { read: ['Hmm, nästa blir jag.', 'Ska ha en fade.', 'Fin frisyr, bram.'], cut: ['Lite kortare på sidorna.', 'Perfekt!', 'Skägget också.', 'Snyggt, bram!'] },
+    panicLines: ['Ta det lugnt!', 'Ta pengarna!', 'Jag har familj!', 'Ta kassan!'],
+    fleeLines: ['Hjälp!', 'Spring!', 'Rån!', 'Aaah!'],
+    script: barberScript,
+    staff(def, rnd) {
+        const looks = [
+            { shirt: '#111827', skin: '#c68642', hair: '#111111', cap: '#111827' },
+            { shirt: '#f8fafc', skin: '#e0ac69', hair: '#3f2a14' },
+            { shirt: '#7f1d1d', skin: '#8d5524', hair: '#111111' }
+        ];
+        const out = [];
+        CHAIRS.forEach((cx, i) => {
+            const x = tc(cx);
+            const spots = [
+                { x, y: 5 * TS + 12, a: -PI / 2, pose: 'idle', w: [5, 10] },
+                { x: x - 34, y: 4 * TS + 16, a: -PI / 2, pose: 'work', w: [3, 6], tool: 'comb' },
+                { x: x + 40, y: 5 * TS + 14, a: PI / 2, pose: 'idle', w: [3, 6] }
+            ];
+            const b = makeStaff('barber', spots, rnd, {
+                speed: 36, look: looks[i], order: 'ping',
+                lines: ['Fade eller klassiskt?', 'Skägget också?', 'Lite gel?', 'Nästa, tack!', 'Bram, vi fixar det.'],
+                extra: { chair: i, work: { x: x + (i % 2 ? -8 : 8), y: 5 * TS + 11 }, atWork: false }
+            });
+            out.push(b);
+        });
+        const kassor = makeStaff('cashier', [
+            { x: tc(14), y: 10 * TS + 15, a: -PI / 2, pose: 'work', w: [3, 6] },
+            { x: tc(16), y: 10 * TS + 15, a: -PI / 2, pose: 'idle', w: [2, 5] }
+        ], rnd, { speed: 30, look: { shirt: '#a21caf', skin: '#f1c27d', hair: '#7c2d12', dress: '#a21caf' }, lines: ['Betalning, tack!', 'Swish eller kort?', 'Välkommen!'] });
+        out.push(kassor);
+        return out;
+    },
+    act: null
+};
+BARBER_R.act = (() => {
+    const desk = deskAct('main', { x: tc(14), y: 10 * TS + 15 });
+    return (n, st, dt, rnd, s) => {
+        if (desk(n, st, dt, rnd, s)) return true;
+        if (s.role !== 'barber') return false;
+        const cust = holder(st, 'chair:' + s.chair);
+        const ready = cust && cust.c.s && cust.c.s.k === 'use' && cust.c.s.ph === 3;
+        if (!ready) {
+            if (s.atWork) { s.atWork = false; s.walking = false; s.wait = rand(rnd, 1.5, 3.5); n.pose = 'idle'; }
+            return false;
+        }
+        s.walking = false;
+        if (goStep(n, st, dt, s.work.x, s.work.y, 44)) {
+            s.atWork = true;
+            stand(n, dt, -PI / 2, 'work');
+            s.t = (s.t || 0) + dt;
+        } else s.atWork = false;
+        return true;
+    };
+})();
+
+// ── Frisörens statiska lager ──
+const B_WALL = { wall: '#15213a', face: '#2a4068', hi: '#43629c', line: '#080d1a' };
+
+function barberFloor(g, def, tx, ty, ch) {
+    const x = tx * TS, y = ty * TS, zone = KIT.zoneAt(def, tx, ty);
+    if (ch === 'e') { box(g, x, y, TS, TS, '#1a1a1f'); return; }
+    if (zone === 'desk') {
+        box(g, x, y, TS, TS, '#3b2a1d'); g.fillStyle = 'rgba(255,255,255,0.05)'; for (let i = 0; i < 4; i++) g.fillRect(x, y + i * 8, TS, 1);
+        g.fillStyle = 'rgba(0,0,0,0.25)'; g.fillRect(x, y + 7, TS, 1); g.fillRect(x, y + 23, TS, 1);
+        return;
+    }
+    if (zone === 'rug') {
+        box(g, x, y, TS, TS, '#1d3557');
+        g.fillStyle = 'rgba(255,255,255,0.05)'; for (let i = 0; i < 4; i++) g.fillRect(x, y + i * 8, TS, 1);
+        g.strokeStyle = 'rgba(232,185,35,0.55)'; g.lineWidth = 1.2;
+        const l = KIT.zoneAt(def, tx - 1, ty) !== 'rug', r = KIT.zoneAt(def, tx + 1, ty) !== 'rug', t = KIT.zoneAt(def, tx, ty - 1) !== 'rug', b = KIT.zoneAt(def, tx, ty + 1) !== 'rug';
+        g.beginPath();
+        if (l) { g.moveTo(x + 3, y); g.lineTo(x + 3, y + TS); } if (r) { g.moveTo(x + TS - 3, y); g.lineTo(x + TS - 3, y + TS); }
+        if (t) { g.moveTo(x, y + 3); g.lineTo(x + TS, y + 3); } if (b) { g.moveTo(x, y + TS - 3); g.lineTo(x + TS, y + TS - 3); }
+        g.stroke();
+        return;
+    }
+    // svartvitt rutgolv, 16 px rutor
+    for (let i = 0; i < 2; i++) for (let j = 0; j < 2; j++) box(g, x + i * 16, y + j * 16, 16, 16, (i + j + tx + ty) & 1 ? '#1c1d22' : '#e8e5dc');
+    g.fillStyle = 'rgba(255,255,255,0.05)'; g.beginPath(); g.moveTo(x + 4, y + TS); g.lineTo(x + 18, y); g.lineTo(x + 24, y); g.lineTo(x + 10, y + TS); g.fill();
+    g.strokeStyle = 'rgba(0,0,0,0.25)'; g.lineWidth = 1; g.strokeRect(x + 0.5, y + 0.5, TS - 1, TS - 1);
+}
+
+function mirrorAt(g, cx, y, w, h) {
+    g.fillStyle = 'rgba(0,0,0,0.4)'; g.fillRect(cx - w / 2 + 2, y + 3, w, h);
+    box(g, cx - w / 2, y, w, h, '#a87a2e'); box(g, cx - w / 2, y, w, 2, '#e1b559'); box(g, cx - w / 2, y + h - 2, w, 2, '#6e4d18');
+    const gx = cx - w / 2 + 4, gy = y + 4, gw = w - 8, gh = h - 8;
+    const gr = g.createLinearGradient(gx, gy, gx, gy + gh);
+    gr.addColorStop(0, '#9fb7c9'); gr.addColorStop(0.55, '#6f8aa0'); gr.addColorStop(1, '#4a647c');
+    g.fillStyle = gr; g.fillRect(gx, gy, gw, gh);
+    // skarpa reflexer och facetterad kant
+    g.fillStyle = 'rgba(255,255,255,0.22)';
+    g.beginPath(); g.moveTo(gx + 8, gy + gh); g.lineTo(gx + 30, gy); g.lineTo(gx + 44, gy); g.lineTo(gx + 22, gy + gh); g.fill();
+    g.beginPath(); g.moveTo(gx + 52, gy + gh); g.lineTo(gx + 62, gy); g.lineTo(gx + 67, gy); g.lineTo(gx + 57, gy + gh); g.fill();
+    g.strokeStyle = 'rgba(255,255,255,0.4)'; g.lineWidth = 1; g.strokeRect(gx + 0.5, gy + 0.5, gw - 1, gh - 1);
+    // lampor i ramen
+    for (let i = 0; i < 8; i++) { const bx = cx - w / 2 + 6 + i * ((w - 12) / 7); disc(g, bx, y + 2, 1.6, '#fff4c2'); }
+}
+
+function barberTopWall(g) {
+    const yb = 3 * TS - 10;
+    // panel under spegelhöjd
+    box(g, TS, 0, 16 * TS, yb, '#15213a');
+    for (let i = 0; i < 32; i++) box(g, TS + i * 16, 0, 1, yb, 'rgba(255,255,255,0.025)');
+    // wainscot i valnöt
+    box(g, TS, 72, 16 * TS, 14, '#5b3a1f'); box(g, TS, 72, 16 * TS, 2, '#8a5f33'); box(g, TS, 84, 16 * TS, 2, '#2d1b0c');
+    // skylt
+    g.fillStyle = 'rgba(6,8,18,0.92)'; rr(g, 148, 3, 280, 24, 6); g.fill();
+    g.strokeStyle = 'rgba(255,70,100,0.85)'; g.lineWidth = 1.3; rr(g, 149, 4, 278, 22, 5); g.stroke();
+    neonText(g, 'FRISÖREN PÅ HÖRNET', 288, 15, 15, '#ffd0d8', '#ff2d55');
+    // sax-ikoner
+    for (const sx of [128, 448]) {
+        g.save(); g.translate(sx, 15); g.strokeStyle = '#dbe4ee'; g.lineWidth = 1.6; g.lineCap = 'round';
+        g.beginPath(); g.moveTo(-7, -6); g.lineTo(6, 6); g.moveTo(-7, 6); g.lineTo(6, -6); g.stroke();
+        g.strokeStyle = '#ff2d55'; g.beginPath(); g.arc(-8, -7, 2.4, 0, TAU); g.moveTo(-5.6, 7); g.arc(-8, 7, 2.4, 0, TAU); g.stroke();
+        g.restore();
+    }
+    label(g, 'Fade · skägg · allt du behöver, bram', 288, 34, 7, '#e9c46a');
+    // speglar över stolarna
+    for (const cx of CHAIRS) mirrorAt(g, tc(cx), 40, 108, 40);
+    // inramade frisyrer mellan speglarna
+    for (const px of [192, 352]) {
+        box(g, px - 14, 38, 28, 24, '#a87a2e'); box(g, px - 12, 40, 24, 20, '#efe8d6');
+        g.fillStyle = '#2a2a30'; g.beginPath(); g.arc(px, 55, 7, PI, 0); g.fill(); g.fillRect(px - 5, 50, 10, 10);
+        g.fillStyle = '#e0ac69'; g.beginPath(); g.ellipse(px, 54, 4.6, 5.2, 0, 0, TAU); g.fill();
+        g.fillStyle = '#1c1c20'; g.beginPath(); g.arc(px, 51, 5.2, PI * 1.05, PI * 1.95); g.fill();
+    }
+    wallLip(g, TS, 17 * TS, 3, B_WALL);
+}
+
+function barberChairs(g, def) {
+    for (const cx of CHAIRS) {
+        const x = tc(cx), y = tc(4);
+        // gummimatta och hårtussar
+        g.fillStyle = 'rgba(0,0,0,0.3)'; g.beginPath(); g.ellipse(x + 2, y + 4, 24, 21, 0, 0, TAU); g.fill();
+        g.fillStyle = '#23242a'; g.beginPath(); g.ellipse(x, y + 2, 23, 20, 0, 0, TAU); g.fill();
+        g.strokeStyle = 'rgba(255,255,255,0.12)'; g.lineWidth = 1; g.beginPath(); g.ellipse(x, y + 2, 20, 17, 0, 0, TAU); g.stroke();
+        g.fillStyle = 'rgba(15,10,6,0.7)';
+        for (let i = 0; i < 12; i++) { const r = tileHash(cx, i); g.fillRect(x - 21 + (r % 42), y - 14 + ((r >> 8) % 34), 2 + (r >> 20) % 2, 1); }
+        // stolens fot, sits, ryggstöd och armstöd i krom
+        softShadow(g, x, y, 15, 15, 0.3);
+        disc(g, x, y, 14, '#b8bfc9'); disc(g, x, y, 12, '#d9dee5');
+        g.fillStyle = '#7d1520'; rr(g, x - 11, y - 10, 22, 21, 6); g.fill();
+        g.fillStyle = 'rgba(255,255,255,0.18)'; rr(g, x - 8, y - 8, 16, 5, 2); g.fill();
+        g.strokeStyle = 'rgba(0,0,0,0.5)'; g.lineWidth = 1; rr(g, x - 11, y - 10, 22, 21, 6); g.stroke();
+        g.fillStyle = '#5e0f18'; rr(g, x - 12, y + 6, 24, 9, 4); g.fill();   // ryggstöd (sydsidan: kunden vänder sig mot spegeln)
+        g.fillStyle = 'rgba(255,255,255,0.14)'; g.fillRect(x - 9, y + 7, 18, 1.4);
+        for (const sx of [-14, 12]) { box(g, x + sx, y - 8, 3, 16, '#aeb6c2'); box(g, x + sx, y - 8, 1, 16, '#f2f5f8'); }
+        box(g, x - 9, y - 16, 18, 4, '#aeb6c2'); box(g, x - 9, y - 16, 18, 1, '#fff');    // fotstöd
+    }
+}
+
+function barberBenches(g, def) {
+    slabGroup(g, def, 'm', { side: '#3a2412', top: '#c8a06a', hi: 'rgba(255,240,200,0.5)', ins: 2 });
+    CHAIRS.forEach((cx, i) => {
+        const x = tc(cx) - 44, y = 3 * TS;
+        // kam, sax, maskin, sprayflaska, handduk
+        box(g, x + 7, y + 6, 16, 3, '#1c1d22'); for (let k = 0; k < 8; k++) box(g, x + 7 + k * 2, y + 9, 1, 3, '#1c1d22');
+        g.strokeStyle = '#cfd6df'; g.lineWidth = 1.2; g.beginPath(); g.moveTo(x + 30, y + 8); g.lineTo(x + 40, y + 18); g.moveTo(x + 40, y + 8); g.lineTo(x + 30, y + 18); g.stroke();
+        box(g, x + 48, y + 5, 8, 14, '#222'); box(g, x + 49, y + 6, 6, 4, '#7dd3fc'); box(g, x + 49, y + 12, 6, 6, '#e11d48');
+        softShadow(g, x + 66, y + 14, 4, 4, 0.3); disc(g, x + 66, y + 14, 4, '#2563eb'); disc(g, x + 66, y + 14, 2, '#bfdbfe');
+        box(g, x + 74, y + 5, 12, 20, i % 2 ? '#f4efe2' : '#e8e2d2'); box(g, x + 74, y + 5, 12, 2, '#fff'); box(g, x + 74, y + 12, 12, 2, '#dc2626');
+    });
+}
+
+function barberDesk(g, def) {
+    slabGroup(g, def, 'C', { side: '#3d2210', top: '#e6e0d0', hi: 'rgba(255,255,255,0.6)', ins: 3 });
+    const y = 9 * TS;
+    // kassa, kortterminal, dricksburk, visitkort
+    box(g, 13 * TS + 4, y + 6, 24, 20, '#1b2230'); box(g, 13 * TS + 6, y + 7, 20, 8, '#86efac'); box(g, 13 * TS + 6, y + 7, 20, 2, 'rgba(255,255,255,0.4)');
+    for (let i = 0; i < 4; i++) box(g, 13 * TS + 8 + i * 4.5, y + 18, 3, 3, '#5b6577');
+    box(g, 14 * TS + 10, y + 8, 8, 14, '#2a2a30'); box(g, 14 * TS + 11, y + 9, 6, 4, '#7dd3fc');
+    disc(g, 15 * TS + 8, y + 16, 5, 'rgba(255,255,255,0.55)'); disc(g, 15 * TS + 8, y + 17, 3.2, '#d4a72c'); disc(g, 15 * TS + 7, y + 16, 1.4, '#f7da7a');
+    box(g, 15 * TS + 18, y + 8, 10, 8, '#a87a2e'); box(g, 15 * TS + 19, y + 9, 8, 6, '#f6f1e2');
+    box(g, 16 * TS + 4, y + 18, 3, 8, '#16a34a');
+    box(g, 12 * TS, y, 5 * TS, 3, '#a87a2e');
+    // produkthylla på högra väggen
+    const sx = 17 * TS;
+    for (let r = 0; r < 3; r++) {
+        const yy = y + 4 + r * 32 + 2;
+        box(g, sx + 2, yy, 28, 26, '#2a1a0c'); box(g, sx + 2, yy + 24, 28, 2, '#8a5f33');
+        ['#2563eb', '#e11d48', '#eab308', '#16a34a', '#f8fafc'].forEach((c, k) => { box(g, sx + 4 + k * 5.4, yy + 6 + (k % 2) * 2, 4, 18 - (k % 2) * 2, c); box(g, sx + 4 + k * 5.4, yy + 6 + (k % 2) * 2, 4, 2, '#d1d5db'); });
+    }
+}
+
+function barberDecor(g, def) {
+    sofaPaint(g, def, { base: '#2d1a12', seat: '#8e2b2b', back: '#6b1d1d' });
+    coffeeTable(g, def, { side: '#3a2412', top: '#2a2d36' });
+    // tidningar på soffbordet
+    box(g, 3 * TS + 5, 9 * TS + 7, 12, 9, '#e5e7eb'); box(g, 3 * TS + 6, 9 * TS + 8, 10, 3, '#dc2626'); box(g, 3 * TS + 15, 9 * TS + 14, 11, 9, '#f6f1e2'); box(g, 3 * TS + 17, 9 * TS + 16, 7, 2, '#2563eb');
+    eachTile(def, 'x', (tx, ty) => plantAt(g, tc(tx), tc(ty), tileHash(tx, ty) % 7));
+    // dörrmatta
+    const x = 8 * TS, y = 12 * TS;
+    box(g, x, y, 2 * TS, TS, '#16161a');
+    box(g, x + 3, y + 2, 2 * TS - 6, 16, '#1c3a6b'); box(g, x + 3, y + 2, 2 * TS - 6, 1.5, '#e8e5dc'); box(g, x + 3, y + 16, 2 * TS - 6, 1.5, '#e8e5dc');
+    label(g, 'VÄLKOMMEN', x + TS, y + 10, 6, '#e8e5dc', { font: SIGN_FONT, weight: 400 });
+    box(g, x, y + 20, 2 * TS, 12, '#1b2747'); box(g, x, y + 28, 2 * TS, 4, '#2d4474');
+    box(g, x - 3, y + 1, 5, 18, '#4b2a1a'); box(g, x + 2 * TS - 2, y + 1, 5, 18, '#4b2a1a');
+    // prislista på nedre väggen
+    g.fillStyle = 'rgba(6,8,18,0.92)'; rr(g, 2 * TS + 6, 12 * TS + 5, 5 * TS + 8, 22, 4); g.fill();
+    g.strokeStyle = 'rgba(233,196,106,0.8)'; g.lineWidth = 1; rr(g, 2 * TS + 7, 12 * TS + 6, 5 * TS + 6, 20, 3); g.stroke();
+    label(g, 'PRISLISTA', 4 * TS + 26, 12 * TS + 11, 6.4, '#e9c46a', { font: SIGN_FONT, weight: 400 });
+    label(g, 'FADE 250 · SKÄGG 150 · BARN 150', 4 * TS + 26, 12 * TS + 21, 5.6, '#f6f1e2');
+    exitSign(g, 11 * TS + 10, 12 * TS + 8);
+    neonText(g, 'ÖPPET', 15 * TS + 10, 12 * TS + 16, 12, '#8cf3ff', '#22d3ee');
+}
+
+function paintBarber(g, def) {
+    for (let ty = 0; ty < def.h; ty++) for (let tx = 0; tx < def.w; tx++) {
+        const ch = def.rows[ty][tx];
+        if (ch !== '#') barberFloor(g, def, tx, ty, ch);
+    }
+    wallPass(g, def, B_WALL);
+    aoPass(g, def);
+    barberTopWall(g);
+    barberBenches(g, def);
+    barberChairs(g, def);
+    barberDesk(g, def);
+    barberDecor(g, def);
+}
+
+// ── Frisörens rörliga lager ──
+function poleAt(ctx, cx, y0, h, t, w = 12) {
+    ctx.save();
+    ctx.beginPath(); rr(ctx, cx - w / 2, y0, w, h, w / 2); ctx.clip();
+    ctx.fillStyle = '#f4f4f6'; ctx.fillRect(cx - w / 2, y0, w, h);
+    const per = 22, off = (t * 16) % per;
+    for (let yy = y0 - per * 2 + off; yy < y0 + h + per; yy += per) {
+        for (const [c, o] of [['#d92b3a', 0], ['#2457c5', per / 2]]) {
+            ctx.fillStyle = c; ctx.beginPath();
+            ctx.moveTo(cx - w / 2, yy + o + w * 0.9); ctx.lineTo(cx + w / 2, yy + o); ctx.lineTo(cx + w / 2, yy + o + 6); ctx.lineTo(cx - w / 2, yy + o + w * 0.9 + 6); ctx.closePath(); ctx.fill();
+        }
+    }
+    const gr = ctx.createLinearGradient(cx - w / 2, 0, cx + w / 2, 0);
+    gr.addColorStop(0, 'rgba(0,0,0,0.45)'); gr.addColorStop(0.3, 'rgba(255,255,255,0.35)'); gr.addColorStop(0.6, 'rgba(255,255,255,0)'); gr.addColorStop(1, 'rgba(0,0,0,0.5)');
+    ctx.fillStyle = gr; ctx.fillRect(cx - w / 2, y0, w, h);
+    ctx.restore();
+    ctx.strokeStyle = 'rgba(0,0,0,0.5)'; ctx.lineWidth = 1; ctx.beginPath(); rr(ctx, cx - w / 2, y0, w, h, w / 2); ctx.stroke();
+    // kromade ändar
+    for (const yy of [y0 - 3, y0 + h - 2]) { ctx.fillStyle = '#aab3c0'; ctx.fillRect(cx - w / 2 - 1.5, yy, w + 3, 5); ctx.fillStyle = '#eef2f6'; ctx.fillRect(cx - w / 2 - 1.5, yy, w + 3, 1.4); }
+}
+
+function dynBarber(ctx, st, v, t) {
+    const def = st.def;
+    poleAt(ctx, 192, 32, 52, t);
+    poleAt(ctx, 352, 32, 52, t);
+    // glans som sveper över speglarna
+    const k = (t * 0.22) % 1.6;
+    for (const cx of CHAIRS) {
+        const mx = tc(cx) - 50 + 4, gx = mx + (k - 0.2) * 110;
+        ctx.save(); ctx.beginPath(); ctx.rect(mx, 44, 92, 32); ctx.clip();
+        ctx.fillStyle = 'rgba(255,255,255,0.22)'; ctx.beginPath(); ctx.moveTo(gx, 76); ctx.lineTo(gx + 14, 44); ctx.lineTo(gx + 24, 44); ctx.lineTo(gx + 10, 76); ctx.fill();
+        ctx.restore();
+    }
+    // spegellampor blinkar lugnt
+    for (const cx of CHAIRS) for (let i = 0; i < 8; i++) {
+        const bx = tc(cx) - 54 + 6 + i * (96 / 7);
+        ctx.fillStyle = `rgba(255,244,194,${0.55 + 0.45 * Math.sin(t * 2 + i + cx)})`; ctx.beginPath(); ctx.arc(bx, 42, 2.2, 0, TAU); ctx.fill();
+    }
+    // kassaskärmen
+    if (Math.floor(t * 2) % 5 === 0) { ctx.fillStyle = 'rgba(255,255,255,0.5)'; ctx.fillRect(13 * TS + 6, 9 * TS + 7, 20, 8); }
+    exitArrow(ctx, def, t);
+}
+
+// Cape, sax och kam; läsmaterial i soffan
+function accessoryBarber(ctx, n, t, st) {
+    if (n.act === 'cut') {
+        // frisörens cape: en ring runt huvudet så att ansiktet syns
+        const L = n.look || {}, p = at(n, 0, 0);
+        ctx.fillStyle = '#20232b'; ctx.beginPath(); ctx.ellipse(p.x, p.y, 11.6, 13.6, 0, 0, TAU); ctx.ellipse(p.x + p.c * 0.8, p.y + p.s * 0.8, 5.7, 5.7, 0, 0, TAU); ctx.fill('evenodd');
+        ctx.strokeStyle = 'rgba(255,255,255,0.2)'; ctx.lineWidth = 1; ctx.beginPath(); ctx.ellipse(p.x, p.y, 10.8, 12.8, 0, 0, TAU); ctx.stroke();
+        ctx.strokeStyle = '#f2f2f4'; ctx.lineWidth = 1.8; ctx.beginPath(); ctx.arc(p.x + p.c * 0.8, p.y + p.s * 0.8, 6.3, 0, TAU); ctx.stroke();
+        void L;
+    }
+    if (n.act === 'read') {
+        const a = n.angle, p = at(n, 9, 0), cols = ['#dc2626', '#2563eb', '#f59e0b', '#16a34a'];
+        armTo(ctx, n, 1, p.x - Math.sin(a) * 4, p.y + Math.cos(a) * 4); armTo(ctx, n, -1, p.x + Math.sin(a) * 4, p.y - Math.cos(a) * 4);
+        ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(a);
+        ctx.fillStyle = cols[(n.look.shirt.charCodeAt(2) || 0) % 4]; ctx.fillRect(-3, -5.5, 6, 11);
+        ctx.fillStyle = '#f6f1e2'; ctx.fillRect(-2, -4.5, 4.4, 9); ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.fillRect(-0.4, -4.5, 0.8, 9);
+        ctx.restore();
+    }
+    if (n.staff && n.staff.role === 'barber') {
+        const s = n.staff;
+        if (s.atWork) {
+            // sax i ena handen, kam i den andra: arbetar vid huvudet
+            const cx = tc(CHAIRS[s.chair]), cy = tc(4), k = Math.sin(t * 5 + s.chair);
+            const side = Math.sin(t * 0.7 + s.chair * 2) > 0 ? 1 : -1;
+            const hx = cx + side * (6 + 1.5 * Math.sin(t * 2)), hy = cy - 5 + 3 * Math.sin(t * 1.3);
+            const h1 = at(n, 8.8, 5.6), h2 = at(n, 8.8, -5.6);
+            ctx.lineCap = 'round'; ctx.strokeStyle = n.look.shirt; ctx.lineWidth = 3.2;
+            ctx.beginPath(); ctx.moveTo(h1.x, h1.y); ctx.lineTo(hx, hy + 3); ctx.moveTo(h2.x, h2.y); ctx.lineTo(cx - side * 7, cy + 1); ctx.stroke(); ctx.lineCap = 'butt';
+            ctx.fillStyle = n.look.skin; ctx.beginPath(); ctx.arc(hx, hy + 3, 2.2, 0, TAU); ctx.arc(cx - side * 7, cy + 1, 2.2, 0, TAU); ctx.fill();
+            // saxen öppnar och stänger
+            const open = 0.25 + 0.35 * (0.5 + 0.5 * k);
+            ctx.save(); ctx.translate(hx, hy); ctx.rotate(-PI / 2 + (side > 0 ? 0.5 : -0.5));
+            ctx.strokeStyle = '#f4f8fc'; ctx.lineWidth = 2; ctx.lineCap = 'round';
+            ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(11, -9 * open); ctx.moveTo(0, 0); ctx.lineTo(11, 9 * open); ctx.stroke();
+            ctx.strokeStyle = '#ef4444'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(-2.4, -1.8, 2, 0, TAU); ctx.arc(-2.4, 1.8, 2, 0, TAU); ctx.stroke();
+            ctx.restore();
+            // kam
+            ctx.save(); ctx.translate(cx - side * 7, cy); ctx.fillStyle = '#1c1d22'; ctx.fillRect(-5, -1, 10, 2.4); for (let i = 0; i < 6; i++) ctx.fillRect(-5 + i * 1.8, 1.4, 0.8, 2); ctx.restore();
+            // hårtussar som faller
+            ctx.fillStyle = 'rgba(30,20,12,0.9)';
+            for (let i = 0; i < 4; i++) { const f = (t * 0.9 + i / 4) % 1; ctx.globalAlpha = 1 - f; ctx.fillRect(cx + side * (8 + i * 2) - f * 4 * side, cy - 4 + f * 18, 1.6, 1); }
+            ctx.globalAlpha = 1;
+        } else if (n.pose === 'work' && s.spots[s.si] && s.spots[s.si].tool === 'comb') {
+            const p = at(n, 11, 4); ctx.fillStyle = '#1c1d22'; ctx.fillRect(p.x - 4, p.y - 1, 8, 2);
+        }
+    }
+}
+
+function lightsBarber(ctx, st, v, t, glow) {
+    for (const cx of CHAIRS) glow(tc(cx), 64, 62, '#fff1c9', 0.16);
+    glow(192, 58, 44, '#ff4d6a', 0.2 + 0.05 * Math.sin(t * 3)); glow(352, 58, 44, '#4d7dff', 0.2 + 0.05 * Math.sin(t * 3 + 1));
+}
+
+registerBarber();
+function registerBarber() {
+    room(BARBER_R, BARBER, {
+        paint: paintBarber, dyn: dynBarber, lights: lightsBarber,
+        accessory: (ctx, n, t) => { accessoryA(ctx, n, t); accessoryBarber(ctx, n, t); },
+        glows: [
+            [288, 14, 170, '#ff2d55', 0.28, 0],
+            [112, 150, 100, '#fff1c9', 0.1, 0], [272, 150, 100, '#fff1c9', 0.1, 0], [432, 150, 100, '#fff1c9', 0.1, 0],
+            [464, 300, 90, '#86efac', 0.12, 2.5],
+            [100, 290, 120, '#ffb45a', 0.1, 0],
+            [366, 400, 70, '#22d3ee', 0.25, 3.1]
+        ]
+    });
+}
+
+// ═══════════════════════════════════════════
+//  🏋️ HUSTLE GYM
+//  Löpband längs speglarna, hantelställ, bänkpressar, lyftplattformar,
+//  reception vid ingången. Gummigolv. 20 × 15 rutor.
+// ═══════════════════════════════════════════
+
+const GYM_ROWS = [
+    '####################', //  0  skylt
+    '####################', //  1  speglar
+    '####################', //  2
+    '#.Y..Y..Y...HHHH...#', //  3  löpbandens konsoler (Y), hantelställ (H)
+    '#..................#', //  4  löpbanden ligger på golvet (rad 4–5)
+    '#..................#', //  5
+    '#............N...N.#', //  6  bänkpressarnas ställ
+    '#............N...N.#', //  7  bänkarna
+    '#............N...N.#', //  8
+    '#..................#', //  9  lyftplattformar (ritade på golvet, rad 8–9)
+    '#................L.#', // 10
+    '#CCCCCC...........L#', // 11  receptionens disk
+    '#.....C...........L#', // 12  receptionisten bakom disken
+    '#.....C.....FF....L#', // 13  automat med proteinshakes
+    '#########ee#########'  // 14  ingång
+];
+
+const GYM = {
+    id: 'gym', name: 'Hustle Gym', theme: 'biz-gym', w: 20, h: 15,
+    rows: GYM_ROWS,
+    legend: {
+        Y: { name: 'löpband', solid: true }, N: { name: 'bänkpress', solid: true }, H: { name: 'hantelställ', solid: true },
+        L: { name: 'skåp', solid: true }, F: { name: 'kyl', solid: true }
+    },
+    spawn: { x: 320, y: tc(12) },
+    exit: { x: 320, y: 14 * TS + 24, r: 22 },
+    door: { x: 320, y: 14 * TS + 10 },
+    counter: { x: tc(3), y: 10 * TS + 15 },
+    interactions: [{ id: 'counter', label: 'E — Receptionen: köp stället, kassan, råna', x: 160, y: 10 * TS + 20, r: 62 }],
+    music: null,
+    zones: [
+        { x: 2, y: 4, w: 1, h: 2, kind: 'belt' }, { x: 5, y: 4, w: 1, h: 2, kind: 'belt' }, { x: 8, y: 4, w: 1, h: 2, kind: 'belt' },
+        { x: 5, y: 8, w: 2, h: 2, kind: 'lift' }, { x: 9, y: 8, w: 2, h: 2, kind: 'lift' },
+        { x: 1, y: 12, w: 5, h: 2, kind: 'desk' }
+    ]
+};
+
+const TREADS = [2, 5, 8];
+const GYM_STATIONS = [
+    ...TREADS.map(tx => ({ x: tc(tx), y: 5 * TS + 6, ang: -PI / 2, pose: 'walk', act: 'run', rate: 9, kind: 'tread', tx })),
+    ...[396, 444, 492].map(x => ({ x, y: 4 * TS + 14, ang: -PI / 2, pose: 'work', act: 'curl', rate: 3.3, kind: 'db' })),
+    ...[13, 17].map(tx => ({ x: tc(tx), y: 7 * TS + 16, ax: tc(tx - 1), ay: 7 * TS + 16, ang: -PI / 2, pose: 'sit', act: 'press', rate: 2.2, kind: 'bench', tx })),
+    { x: 192, y: 9 * TS, ang: -PI / 2, pose: 'work', act: 'lift', rate: 2.2, kind: 'plat', tx: 5 },
+    { x: 320, y: 9 * TS, ang: -PI / 2, pose: 'work', act: 'lift', rate: 2.2, kind: 'plat', tx: 9 }
+];
+
+function gymScript(rnd) {
+    const s = [{ k: 'queue', q: 'main' }, { k: 'use', pool: 'gym', dur: [14, 24], full: 'wait' }];
+    if (rnd() < 0.55) s.push({ k: 'use', pool: 'gym', dur: [11, 19], full: 'skip', fresh: true });
+    if (rnd() < 0.35) s.push({ k: 'go', to: 'vend' }, { k: 'stay', dur: [1.4, 2.4], face: PI / 2, item: 'shake' });
+    s.push({ k: 'leave' });
+    return s;
+}
+
+const GYM_R = {
+    maxCust: 8, gap: [4.5, 9],
+    at: { vend: { x: 13 * TS, y: 12 * TS + 16, a: PI / 2 } },
+    queues: {
+        main: {
+            slots: [0, 1, 2, 3, 4].map(k => ({ x: tc(3) + k * 34, y: 10 * TS + 15 + (k % 2 ? 3 : -2) })),
+            face: PI / 2, pay: [2.4, 4],
+            orders: ['Ett månadskort, tack.', 'Dagspass, tack!', 'Är det PT idag?', 'Swish går bra?'],
+            thanks: ['Tack!', 'Nu kör vi!', 'Ses!']
+        }
+    },
+    pools: { gym: GYM_STATIONS },
+    until: {},
+    lines: { run: ['Pust...', 'Fem minuter till.'], curl: ['Ännu en!', 'Gains!', 'Känn pumpen.'], press: ['Spotta mig!', 'Tre till!', 'Tungt!'], lift: ['Hustle!', 'Upp med den!', 'Ännu ett set.'] },
+    panicLines: ['Ta det lugnt!', 'Ta pengarna!', 'Jag är bara PT!', 'Ta kassan!'],
+    fleeLines: ['Hjälp!', 'Spring!', 'Rån!', 'Aaah!'],
+    script: gymScript,
+    staff(def, rnd) {
+        const recep = makeStaff('cashier', [
+            { x: tc(3), y: 12 * TS + 16, a: -PI / 2, pose: 'work', w: [3, 6] },
+            { x: tc(1) + 4, y: 12 * TS + 16, a: -PI / 2, pose: 'idle', w: [2, 5] },
+            { x: tc(5), y: 13 * TS + 8, a: -PI / 2, pose: 'idle', w: [2, 5] }
+        ], rnd, { speed: 30, look: { shirt: '#ea580c', skin: '#e0ac69', hair: '#111111', dress: '#ea580c' }, lines: ['Välkommen!', 'Kortet piper in.', 'Glöm inte handduken!', 'Månadskort eller dagspass?'] });
+        const pt = makeStaff('trainer', [
+            { x: tc(4), y: 6 * TS + 8, a: -PI / 2, pose: 'idle', w: [2, 5] },
+            { x: 368, y: 4 * TS + 16, a: 0, pose: 'idle', w: [3, 5] },
+            { x: tc(15), y: 7 * TS + 16, a: 0, pose: 'work', w: [4, 8] },
+            { x: tc(11), y: 9 * TS + 16, a: PI / 2, pose: 'idle', w: [2, 4] },
+            { x: 256, y: 9 * TS + 16, a: -PI / 2, pose: 'work', w: [3, 6] },
+            { x: tc(8) + 20, y: 6 * TS + 20, a: -PI / 2, pose: 'idle', w: [2, 4] }
+        ], rnd, {
+            speed: 44, look: { shirt: '#111827', skin: '#8d5524', hair: '#111111', cap: '#ea580c' },
+            lines: ['Rak rygg!', 'Andas ut!', 'Bra jobbat!', 'Ett set till!', 'Inga ursäkter!', 'Gains!']
+        });
+        return [recep, pt];
+    },
+    act: null
+};
+GYM_R.act = deskAct('main', { x: tc(3), y: 12 * TS + 16 });
+
+// ── Gymmets statiska lager ──
+const G_WALL = { wall: '#25282e', face: '#454b55', hi: '#5f6774', line: '#0e1014' };
+
+function gymFloor(g, def, tx, ty, ch) {
+    const x = tx * TS, y = ty * TS, h = tileHash(tx, ty), zone = KIT.zoneAt(def, tx, ty);
+    if (ch === 'e') {
+        box(g, x, y, TS, TS, '#6c727c');
+        g.strokeStyle = 'rgba(255,255,255,0.2)'; g.lineWidth = 1.2;
+        for (let i = 0; i < 4; i++) for (let j = 0; j < 4; j++) { const px = x + 4 + i * 8, py = y + 4 + j * 8; g.beginPath(); if ((i + j) & 1) { g.moveTo(px - 2, py - 2); g.lineTo(px + 2, py + 2); } else { g.moveTo(px + 2, py - 2); g.lineTo(px - 2, py + 2); } g.stroke(); }
+        return;
+    }
+    if (zone === 'desk') {
+        box(g, x, y, TS, TS, '#2f3238'); g.fillStyle = 'rgba(255,255,255,0.05)';
+        for (let i = 0; i < 4; i++) for (let j = 0; j < 4; j++) g.fillRect(x + 3 + i * 8, y + 3 + j * 8, 4, 4);
+        return;
+    }
+    if (zone === 'lift') {
+        // lyftplattform av trä med gummikant
+        for (let i = 0; i < 4; i++) box(g, x, y + i * 8, TS, 8, ['#a97c4a', '#9c7041', '#b08350', '#a27545'][(h >> i) & 3]);
+        g.fillStyle = 'rgba(0,0,0,0.22)'; for (let i = 0; i < 4; i++) g.fillRect(x, y + i * 8 + 7, TS, 1);
+        return;
+    }
+    // svart gummigolv med fina korn och skarvar
+    box(g, x, y, TS, TS, (tx + ty) & 1 ? '#27292e' : '#24262b');
+    g.fillStyle = 'rgba(255,255,255,0.05)';
+    for (let i = 0; i < 9; i++) { const r = tileHash(h, i); g.fillRect(x + (r % 30), y + ((r >> 8) % 30), 1.4, 1.4); }
+    g.fillStyle = 'rgba(255,120,30,0.05)';
+    for (let i = 0; i < 3; i++) { const r = tileHash(h, i + 20); g.fillRect(x + (r % 28), y + ((r >> 8) % 28), 2, 2); }
+    g.strokeStyle = 'rgba(0,0,0,0.5)'; g.lineWidth = 1; g.strokeRect(x + 0.5, y + 0.5, TS - 1, TS - 1);
+}
+
+function gymTopWall(g) {
+    const yb = 3 * TS - 10, x0 = TS, x1 = 19 * TS;
+    box(g, x0, 0, x1 - x0, yb, '#25282e');
+    // spegelväggen: fem paneler med kromlister
+    for (let i = 0; i < 5; i++) {
+        const px = x0 + 6 + i * 113, pw = 106;
+        box(g, px - 2, 32, pw + 4, 40, '#9aa3af'); box(g, px, 34, pw, 36, '#5d7388');
+        const gr = g.createLinearGradient(px, 34, px, 70);
+        gr.addColorStop(0, '#9ab3c7'); gr.addColorStop(0.6, '#5f788e'); gr.addColorStop(1, '#3d5368');
+        g.fillStyle = gr; g.fillRect(px, 34, pw, 36);
+        g.fillStyle = 'rgba(255,255,255,0.2)'; g.beginPath(); g.moveTo(px + 14, 70); g.lineTo(px + 40, 34); g.lineTo(px + 56, 34); g.lineTo(px + 30, 70); g.fill();
+        g.beginPath(); g.moveTo(px + 70, 70); g.lineTo(px + 80, 34); g.lineTo(px + 86, 34); g.lineTo(px + 76, 70); g.fill();
+        g.strokeStyle = 'rgba(255,255,255,0.35)'; g.lineWidth = 1; g.strokeRect(px + 0.5, 34.5, pw - 1, 35);
+    }
+    // orange band med slogan
+    box(g, x0, 72, x1 - x0, 14, '#d9570f'); box(g, x0, 72, x1 - x0, 2, '#ff9a4a'); box(g, x0, 84, x1 - x0, 2, '#7a2f06');
+    label(g, 'NO PAIN · NO GAIN · NO EXCUSES · HUSTLE HARD · NO PAIN · NO GAIN · NO EXCUSES · HUSTLE HARD', 320, 79.5, 6.6, '#1a0d04', { font: SIGN_FONT, weight: 400 });
+    // skylt
+    g.fillStyle = 'rgba(8,8,10,0.94)'; rr(g, 192, 3, 256, 25, 6); g.fill();
+    g.strokeStyle = 'rgba(255,140,40,0.9)'; g.lineWidth = 1.4; rr(g, 193, 4, 254, 23, 5); g.stroke();
+    neonText(g, 'HUSTLE GYM', 320, 16, 17, '#ffcf8a', '#ff6a00');
+    // hantlar som ikoner
+    for (const sx of [168, 472]) {
+        g.save(); g.translate(sx, 16); g.fillStyle = '#dfe4ea';
+        g.fillRect(-9, -1.4, 18, 2.8); g.fillRect(-12, -7, 4, 14); g.fillRect(8, -7, 4, 14); g.fillRect(-15, -4.5, 3, 9); g.fillRect(12, -4.5, 3, 9);
+        g.fillStyle = '#ff6a00'; g.fillRect(-12, -7, 4, 2); g.fillRect(8, -7, 4, 2);
+        g.restore();
+    }
+    wallLip(g, x0, x1, 3, G_WALL);
+}
+
+function dumbbell(g, cx, cy, r, col) {
+    g.fillStyle = '#0d0e11'; g.beginPath(); g.arc(cx, cy - 10, r + 0.8, 0, TAU); g.arc(cx, cy + 10, r + 0.8, 0, TAU); g.fill();
+    box(g, cx - 1.3, cy - 10, 2.6, 20, '#9aa3af');
+    for (const yy of [cy - 10, cy + 10]) {
+        g.fillStyle = col; g.beginPath(); for (let i = 0; i < 6; i++) { const a = i * PI / 3 + PI / 6; g.lineTo(cx + Math.cos(a) * r, yy + Math.sin(a) * r); } g.closePath(); g.fill();
+        g.fillStyle = 'rgba(255,255,255,0.4)'; g.beginPath(); g.arc(cx - r * 0.3, yy - r * 0.3, r * 0.35, 0, TAU); g.fill();
+    }
+}
+
+function gymEquipment(g, def) {
+    // löpband: konsol vid väggen, band på golvet
+    TREADS.forEach(tx => {
+        const cx = tc(tx), y0 = 4 * TS;
+        softShadow(g, cx, y0 + 30, 18, 33, 0.28);
+        box(g, cx - 17, y0 + 1, 34, 62, '#16171b');                  // ram
+        box(g, cx - 14, y0 + 3, 28, 58, '#2b2d33');                  // band
+        g.fillStyle = 'rgba(255,255,255,0.05)'; for (let i = 0; i < 12; i++) g.fillRect(cx - 14, y0 + 6 + i * 4.6, 28, 1);
+        box(g, cx - 17, y0 + 1, 3, 62, '#3b3e46'); box(g, cx + 14, y0 + 1, 3, 62, '#3b3e46');
+        box(g, cx - 17, y0 + 1, 3, 62, '#d9570f'); box(g, cx + 14, y0 + 1, 3, 62, '#d9570f');
+        box(g, cx - 14, y0 + 3, 28, 4, 'rgba(0,0,0,0.5)');
+        // konsol (solid rutan i rad 3)
+        const yc = 3 * TS;
+        box(g, cx - 18, yc + 1, 36, 30, '#1b1c20'); box(g, cx - 16, yc + 3, 32, 26, '#3a3d45'); box(g, cx - 16, yc + 3, 32, 2, 'rgba(255,255,255,0.3)');
+        box(g, cx - 11, yc + 6, 22, 11, '#0c1b22');
+        for (let i = 0; i < 4; i++) box(g, cx - 10 + i * 5, yc + 21, 3, 4, i === 3 ? '#ef4444' : '#8a919c');
+        // handtag
+        g.strokeStyle = '#b8bfca'; g.lineWidth = 2.4; g.lineCap = 'round';
+        g.beginPath(); g.moveTo(cx - 17, yc + 28); g.lineTo(cx - 17, y0 + 18); g.moveTo(cx + 17, yc + 28); g.lineTo(cx + 17, y0 + 18); g.stroke(); g.lineCap = 'butt';
+    });
+    // hantelställ
+    eachTile(def, 'H', (tx, ty) => { if (chAt(def, tx - 1, ty) === 'H') return; });
+    {
+        const x0 = 12 * TS, y0 = 3 * TS, w = 4 * TS;
+        g.fillStyle = 'rgba(0,0,0,0.3)'; g.fillRect(x0 + 2, y0 + 4, w, TS);
+        box(g, x0, y0, w, TS, '#15171b'); box(g, x0 + 2, y0 + 2, w - 4, TS - 4, '#2a2d33'); box(g, x0 + 2, y0 + 2, w - 4, 1.5, 'rgba(255,255,255,0.18)');
+        const cols = ['#a7b0bb', '#a7b0bb', '#8a94a1', '#8a94a1', '#6f7a88', '#6f7a88', '#5a6472', '#d9570f'];
+        for (let i = 0; i < 8; i++) dumbbell(g, x0 + 11 + i * 15.2, y0 + 16, 3.4 + i * 0.35, cols[i]);
+    }
+    // bänkpress: ställ (rad 6) och bänk (rad 7–8)
+    for (const tx of [13, 17]) {
+        const cx = tc(tx), y0 = 6 * TS;
+        softShadow(g, cx, y0 + 48, 18, 48, 0.28);
+        box(g, cx - 12, y0 + 34, 24, 58, '#15171b');                // bänkpad
+        g.fillStyle = '#2f3138'; rr(g, cx - 10, y0 + 36, 20, 54, 5); g.fill();
+        g.fillStyle = 'rgba(255,255,255,0.1)'; rr(g, cx - 8, y0 + 38, 5, 50, 2); g.fill();
+        box(g, cx - 20, y0 + 60, 4, 4, '#aeb6c2'); box(g, cx + 16, y0 + 60, 4, 4, '#aeb6c2');
+        // ställningen vid huvudändan
+        for (const sx of [-17, 17]) { disc(g, cx + sx, y0 + 12, 4.4, '#0f1013'); disc(g, cx + sx, y0 + 12, 2.8, '#9aa3af'); box(g, cx + sx - 1.5, y0 + 12, 3, 20, '#16181c'); }
+        box(g, cx - 17, y0 + 30, 34, 3, '#16181c');
+    }
+    // lyftplattformar: gummiramar, brickor och krita
+    for (const px of [5, 9]) {
+        const x = px * TS, y = 8 * TS;
+        g.fillStyle = 'rgba(0,0,0,0.3)'; g.fillRect(x + 2, y + 3, 2 * TS, 2 * TS);
+        box(g, x - 3, y - 3, 2 * TS + 6, 3, '#101114'); box(g, x - 3, y + 2 * TS, 2 * TS + 6, 3, '#101114');
+        box(g, x - 3, y - 3, 3, 2 * TS + 6, '#101114'); box(g, x + 2 * TS, y - 3, 3, 2 * TS + 6, '#101114');
+        // viktskivor i travar vid sidan
+        for (let k = 0; k < 3; k++) { disc(g, x + 2 * TS + 11, y + 12 + k * 3, 8 - k, ['#c2261b', '#1f56c4', '#e8b923'][k]); disc(g, x + 2 * TS + 11, y + 12 + k * 3, 1.6, '#0b0b0e'); }
+    }
+}
+
+function gymReception(g, def) {
+    slabGroup(g, def, 'C', { side: '#1f2228', top: '#d8dce2', hi: 'rgba(255,255,255,0.7)', ins: 3 });
+    const y = 11 * TS;
+    // LED-list i framkanten
+    box(g, TS, y + TS - 4, 6 * TS, 2.5, '#38bdf8'); box(g, TS, y + TS - 4, 6 * TS, 0.8, '#e0f7ff');
+    // datorskärm, incheckningsplatta, shakers, handdukar
+    box(g, TS + 8, y + 6, 24, 18, '#101318'); box(g, TS + 10, y + 8, 20, 12, '#0e7490'); box(g, TS + 10, y + 8, 20, 3, 'rgba(255,255,255,0.35)'); box(g, TS + 18, y + 24, 8, 3, '#2a2d33');
+    box(g, 3 * TS + 4, y + 6, 24, 20, '#1b2230'); box(g, 3 * TS + 6, y + 7, 20, 8, '#86efac'); box(g, 3 * TS + 6, y + 7, 20, 2, 'rgba(255,255,255,0.4)');
+    for (let i = 0; i < 4; i++) box(g, 3 * TS + 8 + i * 4.5, y + 18, 3, 3, '#5b6577');
+    for (const [sx, c] of [[4 * TS + 8, '#2563eb'], [4 * TS + 17, '#ea580c']]) { softShadow(g, sx, y + 14, 3.6, 3.6, 0.3); disc(g, sx, y + 14, 3.8, c); disc(g, sx, y + 14, 2, 'rgba(255,255,255,0.7)'); }
+    for (let i = 0; i < 4; i++) { box(g, 5 * TS + 3, y + 6 + i * 4.4, 22, 3.8, i & 1 ? '#f4f4f6' : '#e2e5ea'); }
+    box(g, 5 * TS + 3, y + 6, 22, 1, 'rgba(255,255,255,0.8)');
+    box(g, 6 * TS + 2, y, 3, TS, '#a8b0bb'); // kant mot personalrummet
+    // skåp (lockers) längs högra väggen
+    eachTile(def, 'L', (tx, ty) => {
+        const x = tx * TS, yy = ty * TS;
+        g.fillStyle = 'rgba(0,0,0,0.3)'; g.fillRect(x + 2, yy + 3, TS, TS);
+        box(g, x, yy, TS, TS, '#1f3b66'); box(g, x + 2, yy + 2, TS - 4, TS - 4, '#2f5a99');
+        for (let i = 0; i < 2; i++) { box(g, x + 4, yy + 3 + i * 13, 24, 11, '#3b6bb5'); box(g, x + 4, yy + 3 + i * 13, 24, 1.2, 'rgba(255,255,255,0.35)'); for (let k = 0; k < 3; k++) box(g, x + 7 + k * 2.6, yy + 5 + i * 13, 1.2, 4, 'rgba(0,0,0,0.4)'); box(g, x + 21, yy + 8 + i * 13, 4, 2.4, '#d1d6dd'); }
+    });
+    // automat med proteinshakes
+    {
+        const x = 12 * TS, yy = 13 * TS;
+        softShadow(g, x + 32, yy + 16, 32, 16, 0.3);
+        box(g, x, yy, 2 * TS, TS, '#15171b'); box(g, x + 2, yy + 2, 2 * TS - 4, TS - 4, '#2a2d33');
+        box(g, x + 3, yy + 3, 2 * TS - 6, 13, '#0e1a22');
+        const cols = ['#2563eb', '#ea580c', '#16a34a', '#e11d48', '#a855f7', '#facc15'];
+        for (let i = 0; i < 6; i++) { box(g, x + 5 + i * 9, yy + 5, 6, 9, cols[i]); box(g, x + 5 + i * 9, yy + 5, 6, 2, 'rgba(255,255,255,0.5)'); }
+        box(g, x + 3, yy + 3, 2 * TS - 6, 13, 'rgba(160,215,240,0.14)');
+        box(g, x + 18, yy + 19, 28, 8, '#0b0b0e'); label(g, 'PROTEIN', x + 32, yy + 23.3, 5.6, '#ff9a4a', { font: SIGN_FONT, weight: 400 });
+    }
+}
+
+function gymDecor(g, def) {
+    // logga på golvet
+    g.save(); g.globalAlpha = 0.16; label(g, 'HUSTLE', 14 * TS, 11 * TS, 22, '#ff7a1a', { font: SIGN_FONT, weight: 400 }); g.restore();
+    // stretchmattor, kettlebells och skumrulle
+    for (const [mx, my] of [[1, 8], [2, 8]]) {
+        box(g, mx * TS + 4, my * TS + 2, 24, 60, '#0e7490'); box(g, mx * TS + 4, my * TS + 2, 24, 2, 'rgba(255,255,255,0.3)');
+        g.strokeStyle = 'rgba(0,0,0,0.3)'; g.lineWidth = 1; g.strokeRect(mx * TS + 4.5, my * TS + 2.5, 23, 59);
+    }
+    for (const [kx, ky, r] of [[3 * TS + 10, 8 * TS + 12, 6], [3 * TS + 24, 8 * TS + 12, 5], [3 * TS + 16, 8 * TS + 26, 7]]) {
+        softShadow(g, kx, ky, r, r, 0.3); disc(g, kx, ky, r, '#1c1d22'); disc(g, kx, ky, r * 0.55, '#2e3037'); disc(g, kx - r * 0.3, ky - r * 0.3, r * 0.25, 'rgba(255,255,255,0.5)');
+    }
+    box(g, 3 * TS + 3, 9 * TS + 14, 26, 9, '#ea580c'); box(g, 3 * TS + 3, 9 * TS + 14, 26, 2, 'rgba(255,255,255,0.3)');
+    // dörr
+    const x = 9 * TS, y = 14 * TS;
+    box(g, x, y, 2 * TS, TS, '#4a5058');
+    box(g, x + 2, y + 2, 2 * TS - 4, 14, '#101114'); box(g, x + 2, y + 2, 2 * TS - 4, 1.5, '#ff9a4a'); box(g, x + 2, y + 15, 2 * TS - 4, 1.5, '#ff9a4a');
+    label(g, 'VÄLKOMMEN', x + TS, y + 9, 6, '#ffcf8a', { font: SIGN_FONT, weight: 400 });
+    box(g, x, y + 20, 2 * TS, 12, '#1b2747'); box(g, x, y + 28, 2 * TS, 4, '#2d4474');
+    exitSign(g, 12 * TS + 10, 14 * TS + 8);
+    neonText(g, 'ÖPPET', 16 * TS + 6, 14 * TS + 16, 12, '#8cf3ff', '#22d3ee');
+    label(g, 'RECEPTION', 3 * TS + 16, 14 * TS + 16, 8, '#ffb870', { font: SIGN_FONT, weight: 400 });
+    // omklädningsskylt över skåpen
+    g.save(); g.translate(19 * TS + 16, 12 * TS); g.rotate(-PI / 2); label(g, 'OMKLÄDNING', 0, 0, 7, '#8ab4f8', { font: SIGN_FONT, weight: 400 }); g.restore();
+}
+
+function paintGym(g, def) {
+    for (let ty = 0; ty < def.h; ty++) for (let tx = 0; tx < def.w; tx++) {
+        const ch = def.rows[ty][tx];
+        if (ch !== '#') gymFloor(g, def, tx, ty, ch);
+    }
+    wallPass(g, def, G_WALL);
+    aoPass(g, def);
+    gymTopWall(g);
+    gymEquipment(g, def);
+    gymReception(g, def);
+    gymDecor(g, def);
+}
+
+// ── Gymmets rörliga lager ──
+function dynGym(ctx, st, v, t) {
+    const def = st.def;
+    const use = {};
+    for (const m of st.npcs) if (m.c && m.c.hold && m.c.hold.startsWith('gym:') && m.c.s && m.c.s.ph === 3) use[m.c.hold] = m;
+    // löpbanden: ränder glider när någon springer, konsolen lyser
+    TREADS.forEach((tx, i) => {
+        const cx = tc(tx), y0 = 4 * TS, on = !!use['gym:' + i];
+        ctx.save(); ctx.beginPath(); ctx.rect(cx - 14, y0 + 7, 28, 54); ctx.clip();
+        if (on) {
+            ctx.fillStyle = 'rgba(255,255,255,0.12)';
+            for (let k = -1; k < 14; k++) ctx.fillRect(cx - 14, y0 + 7 + ((k * 4.6 + t * 34) % 62), 28, 1.2);
+        }
+        ctx.restore();
+        ctx.fillStyle = on ? (Math.floor(t * 2) % 2 ? '#22d3ee' : '#67e8f9') : '#0e3a44';
+        ctx.fillRect(cx - 11, 3 * TS + 6, 22, 11);
+        if (on) { ctx.fillStyle = 'rgba(0,0,0,0.65)'; for (let k = 0; k < 4; k++) ctx.fillRect(cx - 9 + k * 5, 3 * TS + 10, 3, 4 - (k + Math.floor(t * 3)) % 3); }
+    });
+    // stången ligger i ställningen när ingen pressar
+    [13, 17].forEach((tx, i) => {
+        if (use['gym:' + (6 + i)]) return;
+        const cx = tc(tx), y = 6 * TS + 12;
+        ctx.fillStyle = '#c3c9d1'; ctx.fillRect(cx - 24, y - 1.2, 48, 2.4);
+        for (const sx of [-1, 1]) { ctx.fillStyle = '#0f1013'; ctx.fillRect(cx + sx * 22 - 2, y - 7, 4, 14); ctx.fillStyle = '#c2261b'; ctx.fillRect(cx + sx * 22 - 2, y - 7, 4, 3); }
+    });
+    // stången på lyftplattformen när ingen lyfter
+    [[5, 8], [9, 9]].forEach(([tx, idx]) => {
+        if (use['gym:' + idx]) return;
+        const cx = tx * TS + 32, y = 9 * TS + 14;
+        ctx.fillStyle = '#c3c9d1'; ctx.fillRect(cx - 24, y - 1.2, 48, 2.4);
+        for (const sx of [-1, 1]) { ctx.fillStyle = '#0f1013'; ctx.fillRect(cx + sx * 22 - 2.5, y - 8, 5, 16); ctx.fillStyle = '#1f56c4'; ctx.fillRect(cx + sx * 22 - 2.5, y - 8, 5, 3); }
+    });
+    // skyltens flimmer och incheckningsskärmen
+    if (Math.floor(t * 2) % 5 === 0) { ctx.fillStyle = 'rgba(255,255,255,0.5)'; ctx.fillRect(3 * TS + 6, 11 * TS + 7, 20, 8); }
+    const f = (t * 0.27) % 1;
+    if (f < 0.02 || (f > 0.05 && f < 0.065)) { ctx.fillStyle = 'rgba(8,8,10,0.6)'; rr(ctx, 195, 6, 250, 19, 4); ctx.fill(); }
+    exitArrow(ctx, def, t);
+}
+
+function lineBar(ctx, n, lx, lift, plateCols, w = 22) {
+    // stången sedd uppifrån: tvärs över kroppen, skivorna blir större när den lyfts (närmare kameran)
+    const c = at(n, lx, 0), sc = 1 + 0.28 * lift, ax = -Math.sin(n.angle), ay = Math.cos(n.angle);
+    ctx.fillStyle = 'rgba(0,0,0,0.25)'; ctx.fillRect(c.x - w * ax - 1 + 3, c.y - w * ay + 3 - 1, 2, 2);
+    ctx.save(); ctx.translate(c.x, c.y); ctx.rotate(n.angle);
+    ctx.fillStyle = 'rgba(0,0,0,0.22)'; ctx.fillRect(-1 + 3 * lift, -w * sc + 2, 2.4, w * 2 * sc);
+    ctx.fillStyle = '#d3d9e0'; ctx.fillRect(-1.2 * sc, -w * sc, 2.4 * sc, w * 2 * sc);
+    for (const sd of [-1, 1]) {
+        ctx.fillStyle = '#0f1013'; ctx.fillRect(-3.4 * sc, sd * (w - 1) * sc - (sd > 0 ? 0 : 5.5 * sc), 6.8 * sc, 6.5 * sc);
+        ctx.fillStyle = plateCols[0]; ctx.fillRect(-3 * sc, sd * (w - 1) * sc - (sd > 0 ? 0 : 5 * sc), 6 * sc, 2.4 * sc);
+    }
+    ctx.restore();
+    return c;
+}
+
+function accessoryGym(ctx, n, t) {
+    if (n.act === 'curl') {
+        // två hantlar som lyfts om vartannat
+        for (const side of [-1, 1]) {
+            const lift = 0.5 + 0.5 * Math.sin(n.phase + (side > 0 ? 0 : PI)), p = at(n, 8.8 + 4 * lift, side * 5.6);
+            armTo(ctx, n, side, p.x, p.y);
+            const r = 3.2 + 1.6 * lift;
+            ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.beginPath(); ctx.arc(p.x + 1.4, p.y + 1.6, r, 0, TAU); ctx.fill();
+            ctx.fillStyle = '#16171b'; ctx.beginPath(); for (let i = 0; i < 6; i++) ctx.lineTo(p.x + Math.cos(i * PI / 3) * r, p.y + Math.sin(i * PI / 3) * r); ctx.closePath(); ctx.fill();
+            ctx.fillStyle = side > 0 ? '#d9570f' : '#8a94a1'; ctx.beginPath(); ctx.arc(p.x, p.y, r * 0.55, 0, TAU); ctx.fill();
+        }
+    } else if (n.act === 'lift') {
+        const lift = 0.5 + 0.5 * Math.sin(n.phase), c = lineBar(ctx, n, 11 + 5 * lift, lift, ['#c2261b'], 23);
+        for (const side of [-1, 1]) { const h = at(n, 9 + 4 * lift, side * 5.6); armTo(ctx, n, side, h.x, h.y); }
+        void c;
+    } else if (n.act === 'press') {
+        const lift = 0.5 + 0.5 * Math.sin(n.phase);
+        for (const side of [-1, 1]) { const h = at(n, 5 + 2 * lift, side * 8); armTo(ctx, n, side, h.x, h.y); }
+        lineBar(ctx, n, 1 + 2 * lift, lift, ['#1f56c4'], 24);
+    } else if (n.act === 'run') {
+        // svettdroppar
+        ctx.fillStyle = 'rgba(180,230,255,0.9)';
+        for (let i = 0; i < 2; i++) { const f = (t * 1.6 + i * 0.5 + n.phase * 0.02) % 1, p = at(n, 2 - f * 6, (i ? 7 : -7) + (i ? f : -f) * 5); ctx.globalAlpha = 1 - f; ctx.beginPath(); ctx.arc(p.x, p.y, 1.1, 0, TAU); ctx.fill(); }
+        ctx.globalAlpha = 1;
+        // pannband
+        const p = at(n, 0.8, 0); ctx.strokeStyle = '#ea580c'; ctx.lineWidth = 1.6; ctx.beginPath(); ctx.arc(p.x, p.y, 3.5, n.angle - 1.7, n.angle + 1.7); ctx.stroke();
+    }
+    if (n.item === 'shake' && n.pose !== 'sit') {
+        const p = at(n, 9.5, 8);
+        armTo(ctx, n, 1, p.x, p.y);
+        ctx.fillStyle = 'rgba(0,0,0,0.25)'; ctx.beginPath(); ctx.arc(p.x + 1, p.y + 1.2, 3.2, 0, TAU); ctx.fill();
+        ctx.fillStyle = '#2563eb'; ctx.beginPath(); ctx.arc(p.x, p.y, 3.1, 0, TAU); ctx.fill();
+        ctx.fillStyle = '#e5e7eb'; ctx.beginPath(); ctx.arc(p.x, p.y, 1.7, 0, TAU); ctx.fill();
+        ctx.fillStyle = '#ea580c'; ctx.fillRect(p.x - 0.5, p.y - 3.4, 1, 1.4);
+    }
+}
+
+function lightsGym(ctx, st, v, t, glow) {
+    glow(320, 16, 120, '#ff6a00', 0.22 + 0.04 * Math.sin(t * 2));
+    for (let i = 0; i < 4; i++) glow(100 + i * 150, 62, 90, '#cfe8ff', 0.07);
+    glow(432, 428, 66, '#ffb870', 0.14);
+}
+
+registerGym();
+function registerGym() {
+    room(GYM_R, GYM, {
+        paint: paintGym, dyn: dynGym, lights: lightsGym,
+        accessory: (ctx, n, t) => { accessoryA(ctx, n, t); accessoryGym(ctx, n, t); },
+        glows: [
+            [320, 14, 190, '#ff6a00', 0.24, 0],
+            [140, 150, 120, '#22d3ee', 0.09, 0],
+            [112, 400, 100, '#38bdf8', 0.16, 2.4],
+            [320, 262, 130, '#fff1c9', 0.07, 0],
+            [432, 438, 60, '#ffb870', 0.16, 0],
+            [320, 470, 70, '#22c55e', 0.12, 3.2]
+        ]
+    });
+}
+
+// ═══════════════════════════════════════════
+//  🎵 BEAT STUDIO
+//  Två sångbås bakom glas, kontrollrum med mixerbord och reception/lounge.
+//  22 × 15 rutor.
+// ═══════════════════════════════════════════
+
+const STUDIO_ROWS = [
+    '######################', //  0  skylt
+    '######################', //  1  akustikpaneler, guldskivor
+    '######################', //  2
+    '#....g....gkSSSSSk..x#', //  3  sångbås A (x 1–4) och B (x 6–9), lounge med soffa och högtalare
+    '#....g....g.........S#', //  4
+    '#....g....g..VVV....S#', //  5
+    '#....g....g.........S#', //  6
+    '#g+gggg+ggg..........#', //  7  glasfronten med dörrar till båsen (x 2 och 7)
+    '#....................#', //  8  gången mellan glaset och mixerbordet (två rader bred)
+    '#....................#', //  9
+    '#kDDDDDDDk........C..#', // 10  mixerbordet, högtalare, receptionens disk
+    '#L................C..#', // 11  utrustningsrack
+    '#L.VVV............C..#', // 12  producentens soffbord
+    '#.SSSSS...........C..#', // 13  klientsoffa
+    '##########ee##########'  // 14  ingång
+];
+
+const STUDIO = {
+    id: 'studio', name: 'Beat Studio', theme: 'biz-studio', w: 22, h: 15,
+    rows: STUDIO_ROWS,
+    legend: { g: { name: 'glasvägg', solid: true }, L: { name: 'skåp', solid: true } },
+    spawn: { x: 352, y: tc(12) },
+    exit: { x: 352, y: 14 * TS + 24, r: 22 },
+    door: { x: 352, y: 14 * TS + 10 },
+    counter: { x: 17 * TS + 16, y: 10 * TS + 16 },
+    interactions: [{ id: 'counter', label: 'E — Receptionen: köp stället, kassan, råna', x: 16 * TS + 20, y: 10 * TS + 22, r: 62 }],
+    music: null,
+    zones: [
+        { x: 1, y: 3, w: 4, h: 4, kind: 'booth' }, { x: 6, y: 3, w: 4, h: 4, kind: 'booth' },
+        { x: 1, y: 8, w: 9, h: 6, kind: 'ctrl' }, { x: 19, y: 10, w: 2, h: 4, kind: 'desk' }
+    ]
+};
+
+const BOOTHS = [96, 256];
+const STUDIO_LINES = ['Yeah!', 'Check, check...', 'Hustle, hustle, varje dag', 'Ta det från början!', 'Mer bas i hörlurarna!', 'Det här blir en hit!', 'Skrrt skrrt!', 'En take till!', 'Jag kallar den Hustle City', 'Brrra!'];
+const STUDIO_BOOTH = BOOTHS.map(x => ({
+    x, y: 168, ang: -PI / 2, pose: 'cheer', act: 'rec', rate: 2.4, lines: STUDIO_LINES, sayGap: [2.5, 5],
+    cycle: { pose: 'work', dur: [1.4, 3] }
+}));
+const STUDIO_LOUNGE = [
+    ...[12, 13, 14, 15, 16].map(tx => ({ x: tc(tx), y: tc(3), ax: tc(tx), ay: tc(4), ang: PI / 2, pose: 'sit', act: 'phone', rate: 1.2 })),
+    ...[4, 5, 6].map(ty => ({ x: tc(20), y: tc(ty), ax: tc(19), ay: tc(ty), ang: PI, pose: 'sit', act: 'phone', rate: 1.2 }))
+];
+
+function boothsFree(st) { let f = 0; for (let i = 0; i < STUDIO_BOOTH.length; i++) if (!holder(st, 'booth:' + i)) f++; return f; }
+
+function studioScript(rnd) {
+    return [
+        { k: 'queue', q: 'main' },
+        { k: 'use', pool: 'lounge', dur: [2, 6], until: 'boothFree', skipIf: 'boothFree', full: 'skip' },
+        { k: 'use', pool: 'booth', dur: [12, 20], full: 'wait' },
+        { k: 'leave' }
+    ];
+}
+
+const STUDIO_R = {
+    maxCust: 7, gap: [5, 10],
+    at: {},
+    queues: {
+        main: {
+            slots: [0, 1, 2, 3].map(k => ({ x: 17 * TS + 16 + (k % 2 ? 3 : -2), y: 10 * TS + 16 + k * 34 })),
+            face: 0, pay: [2.6, 4.4],
+            orders: ['En timme i studion.', 'Jag har en beat.', 'Studio A, tack!', 'Swish går bra?'],
+            thanks: ['Tack!', 'Nu kör vi!', 'Det blir en hit.']
+        }
+    },
+    pools: { lounge: STUDIO_LOUNGE, booth: STUDIO_BOOTH },
+    until: {
+        boothFree(st, n) {
+            const free = boothsFree(st);
+            let ahead = 0;
+            for (const m of st.npcs) {
+                const ms = m.c && m.c.s;
+                if (m === n || !live(m) || !ms || ms.k !== 'use' || ms.pool !== 'lounge' || ms.ph < 1 || m.c.flee) continue;
+                const mine = n.c && n.c.s && n.c.s.since;
+                if (mine == null || (ms.since != null && ms.since < mine)) ahead++;
+            }
+            return free > ahead;
+        }
+    },
+    lines: { phone: ['Nytt spår på gång.', 'Fan vad bra det blir.', 'Lyssna på den här.'] },
+    panicLines: ['Ta det lugnt!', 'Ta pengarna!', 'Inte masterbanden!', 'Ta kassan!'],
+    fleeLines: ['Hjälp!', 'Spring!', 'Rån!', 'Aaah!'],
+    script: studioScript,
+    staff(def, rnd) {
+        const mix = x => ({ x, y: 11 * TS + 12, a: -PI / 2, pose: 'work', w: [4, 8] });
+        const producer = makeStaff('producer', [
+            mix(112), mix(176), mix(240), { x: 240, y: 12 * TS + 16, a: -PI / 2, pose: 'idle', w: [2, 4] }
+        ], rnd, {
+            speed: 34, look: { shirt: '#18181b', skin: '#8d5524', hair: '#111111', cap: '#7c3aed' }, start: 1,
+            lines: ['Ta det en gång till.', 'Mer bas!', 'Det där satt!', 'Sänk hörlurarna.', 'Hit, hit, hit.', 'Lägg en trumloop.']
+        });
+        const recep = makeStaff('cashier', [
+            { x: 19 * TS + 16, y: 10 * TS + 16, a: PI, pose: 'work', w: [3, 6] },
+            { x: 20 * TS + 16, y: 12 * TS, a: PI, pose: 'idle', w: [2, 5] },
+            { x: 19 * TS + 16, y: 12 * TS + 16, a: PI, pose: 'idle', w: [2, 5] }
+        ], rnd, {
+            speed: 30, look: { shirt: '#be185d', skin: '#f1c27d', hair: '#7c2d12', dress: '#be185d' },
+            lines: ['Välkommen till Beat Studio!', 'Sessionen kostar 600.', 'Studio A är ledigt.', 'Skriv på kontraktet här.']
+        });
+        return [producer, recep];
+    },
+    act: null
+};
+STUDIO_R.act = deskAct('main', { x: 19 * TS + 16, y: 10 * TS + 16 });
+
+// ── Studions statiska lager ──
+const S_WALL = { wall: '#150f1d', face: '#33254b', hi: '#523e7c', line: '#07040b' };
+
+function studioFloor(g, def, tx, ty, ch) {
+    const x = tx * TS, y = ty * TS, h = tileHash(tx, ty), zone = KIT.zoneAt(def, tx, ty);
+    if (ch === 'e') { box(g, x, y, TS, TS, '#17101f'); return; }
+    if (zone === 'booth') {
+        box(g, x, y, TS, TS, '#231d2d');
+        g.fillStyle = 'rgba(255,255,255,0.04)'; for (let i = 0; i < 8; i++) { const r = tileHash(h, i); g.fillRect(x + (r % 30), y + ((r >> 8) % 30), 1.6, 1.6); }
+        return;
+    }
+    if (zone === 'ctrl') {
+        box(g, x, y, TS, TS, (tx + ty) & 1 ? '#2a2540' : '#272239');
+        g.strokeStyle = 'rgba(160,140,255,0.10)'; g.lineWidth = 1; g.strokeRect(x + 0.5, y + 0.5, TS - 1, TS - 1);
+        g.fillStyle = 'rgba(255,255,255,0.03)'; for (let i = 0; i < 6; i++) { const r = tileHash(h, i); g.fillRect(x + (r % 30), y + ((r >> 8) % 30), 1.6, 1.6); }
+        return;
+    }
+    if (zone === 'desk') {
+        box(g, x, y, TS, TS, '#1b1626'); g.fillStyle = 'rgba(255,255,255,0.05)';
+        for (let i = 0; i < 4; i++) for (let j = 0; j < 4; j++) g.fillRect(x + 3 + i * 8, y + 3 + j * 8, 4, 4);
+        return;
+    }
+    plankFloor(g, tx, ty, ['#3a2a30', '#37272d', '#3d2d33', '#34252b']);
+}
+
+// Akustikpanel: skumpyramider sedda uppifrån
+function foam(g, x, y, w, h, c1, c2) {
+    box(g, x, y, w, h, c1);
+    const s = 8;
+    for (let i = 0; i < w / s; i++) for (let j = 0; j < h / s; j++) {
+        const px = x + i * s, py = y + j * s;
+        g.fillStyle = (i + j) & 1 ? c2 : c1; g.fillRect(px, py, s, s);
+        g.fillStyle = 'rgba(255,255,255,0.1)'; g.beginPath(); g.moveTo(px, py + s); g.lineTo(px + s / 2, py); g.lineTo(px + s, py + s); g.fill();
+        g.fillStyle = 'rgba(0,0,0,0.3)'; g.beginPath(); g.moveTo(px + s / 2, py); g.lineTo(px + s, py + s); g.lineTo(px + s / 2, py + s); g.fill();
+    }
+    g.strokeStyle = 'rgba(0,0,0,0.5)'; g.lineWidth = 1; g.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
+}
+
+function goldRecord(g, cx, cy, plat) {
+    box(g, cx - 15, cy - 15, 30, 30, '#2a1d0c'); box(g, cx - 13, cy - 13, 26, 26, '#15100a');
+    disc(g, cx, cy, 11, plat ? '#cfd6e0' : '#e8b923'); disc(g, cx, cy, 8, plat ? '#aeb8c5' : '#c99710');
+    g.strokeStyle = 'rgba(0,0,0,0.25)'; g.lineWidth = 0.6; for (const r of [9.4, 7, 5.4]) { g.beginPath(); g.arc(cx, cy, r, 0, TAU); g.stroke(); }
+    disc(g, cx, cy, 3, '#b91c1c'); disc(g, cx, cy, 0.9, '#15100a');
+    g.fillStyle = 'rgba(255,255,255,0.35)'; g.beginPath(); g.arc(cx, cy, 10.5, PI * 1.15, PI * 1.45); g.lineTo(cx, cy); g.fill();
+}
+
+function studioTopWall(g) {
+    const yb = 3 * TS - 10, x0 = TS, x1 = 21 * TS;
+    box(g, x0, 0, x1 - x0, yb, '#18101f');
+    // akustikpaneler längs hela väggen under skylten
+    for (let i = 0; i < 10; i++) foam(g, x0 + 2 + i * 64, 34, 60, 44, i & 1 ? '#3b2a57' : '#2a2038', i & 1 ? '#2d2142' : '#3f2f5e');
+    box(g, x0, 78, x1 - x0, 8, '#0d0912'); box(g, x0, 78, x1 - x0, 1.5, 'rgba(160,140,255,0.4)');
+    // guldskivor över loungen
+    goldRecord(g, 13 * TS + 16, 56, false); goldRecord(g, 14 * TS + 16 + 12, 56, true); goldRecord(g, 16 * TS + 8, 56, false);
+    // skylt
+    g.fillStyle = 'rgba(6,4,12,0.94)'; rr(g, 232, 3, 240, 25, 6); g.fill();
+    g.strokeStyle = 'rgba(255,60,200,0.9)'; g.lineWidth = 1.4; rr(g, 233, 4, 238, 23, 5); g.stroke();
+    neonText(g, 'BEAT STUDIO', 352, 16, 17, '#ffb3f0', '#ff2bd6');
+    // ljudvåg som ikon
+    for (const [sx, dir] of [[210, -1], [494, 1]]) {
+        g.strokeStyle = '#22e5ff'; g.lineWidth = 2; g.lineCap = 'round'; g.beginPath();
+        for (let i = 0; i < 5; i++) { const hh = [3, 8, 12, 7, 4][i]; g.moveTo(sx + dir * i * 5, 16 - hh); g.lineTo(sx + dir * i * 5, 16 + hh); }
+        g.stroke(); g.lineCap = 'butt';
+    }
+    label(g, 'Producera hits · sälj beats', 352, 33, 7, '#d9b8ff');
+    // båsens skyltar
+    for (const [i, cx] of BOOTHS.entries()) { box(g, cx - 14, 8 * 0 + 38, 0, 0, '#000'); label(g, i ? 'STUDIO B' : 'STUDIO A', cx, 86 - 6, 6, '#c4a1ff', { font: SIGN_FONT, weight: 400 }); }
+    wallLip(g, x0, x1, 3, S_WALL);
+}
+
+function studioGlass(g, def) {
+    eachTile(def, 'g', (tx, ty) => {
+        const x = tx * TS, y = ty * TS;
+        const gl = (dx, dy) => chAt(def, tx + dx, ty + dy) === 'g' || chAt(def, tx + dx, ty + dy) === '+';
+        const hz = gl(-1, 0) || gl(1, 0), vt = gl(0, -1) || gl(0, 1);
+        const T = 7;
+        g.fillStyle = 'rgba(0,0,0,0.3)';
+        if (hz) g.fillRect(x, y + 16 - T / 2 + 3, TS, T);
+        if (vt) g.fillRect(x + 16 - T / 2 + 3, y, T, TS);
+        const strip = (sx, sy, w, h) => {
+            box(g, sx, sy, w, h, '#1b2a36'); box(g, sx + 1, sy + 1, w - 2, h - 2, 'rgba(120,205,230,0.55)');
+            box(g, sx + 1, sy + 1, w - 2, 1.2, 'rgba(255,255,255,0.55)');
+        };
+        if (hz) strip(x, y + 16 - T / 2, TS, T);
+        if (vt) strip(x + 16 - T / 2, y, T, TS);
+        // kromlist där glaspartier möts
+        if (hz && vt) box(g, x + 16 - 4, y + 16 - 4, 8, 8, '#aeb6c2');
+        // reflexer
+        g.fillStyle = 'rgba(255,255,255,0.35)';
+        if (hz) { g.beginPath(); g.moveTo(x + 6, y + 16 + 3); g.lineTo(x + 12, y + 16 - 3); g.lineTo(x + 16, y + 16 - 3); g.lineTo(x + 10, y + 16 + 3); g.fill(); }
+        if (vt && !hz) { g.beginPath(); g.moveTo(x + 16 - 3, y + 6); g.lineTo(x + 16 + 3, y + 10); g.lineTo(x + 16 + 3, y + 14); g.lineTo(x + 16 - 3, y + 10); g.fill(); }
+    });
+    // glasdörrarna
+    eachTile(def, '+', (tx, ty) => {
+        const x = tx * TS, y = ty * TS;
+        box(g, x, y + 12, 5, 8, '#aeb6c2'); box(g, x + TS - 5, y + 12, 5, 8, '#aeb6c2');
+        box(g, x, y + 12, 5, 2, '#f2f5f8'); box(g, x + TS - 5, y + 12, 5, 2, '#f2f5f8');
+        box(g, x + 5, y + 15, TS - 10, 2, 'rgba(255,255,255,0.18)');
+        g.strokeStyle = 'rgba(120,205,230,0.5)'; g.lineWidth = 3; g.beginPath(); g.moveTo(x + 4, y + 14); g.lineTo(x + 4, y - 2); g.stroke();
+    });
+}
+
+function studioBooths(g, def) {
+    for (const cx of BOOTHS) {
+        // matta under mikrofonen
+        g.fillStyle = 'rgba(0,0,0,0.25)'; rr(g, cx - 36, 4 * TS + 2, 76, 70, 8); g.fill();
+        g.fillStyle = '#4a1d5e'; rr(g, cx - 38, 4 * TS, 76, 70, 8); g.fill();
+        g.strokeStyle = 'rgba(255,200,255,0.3)'; g.lineWidth = 1.2; rr(g, cx - 34, 4 * TS + 4, 68, 62, 6); g.stroke();
+        for (let k = 0; k < 4; k++) { g.beginPath(); g.moveTo(cx - 28 + k * 18, 4 * TS + 10); g.lineTo(cx - 19 + k * 18, 4 * TS + 35); g.lineTo(cx - 28 + k * 18, 4 * TS + 60); g.lineTo(cx - 37 + k * 18, 4 * TS + 35); g.closePath(); g.stroke(); }
+        // mikrofonställ med popfilter, notställ
+        const my = 4 * TS + 12;
+        softShadow(g, cx, my + 4, 7, 7, 0.4);
+        disc(g, cx, my, 6, '#0d0b12'); disc(g, cx, my, 3.4, '#9aa3af');
+        g.strokeStyle = '#aab3be'; g.lineWidth = 1.4; g.beginPath(); g.moveTo(cx, my); g.lineTo(cx, my + 12); g.stroke();
+        g.strokeStyle = 'rgba(255,255,255,0.7)'; g.lineWidth = 1; g.beginPath(); g.arc(cx, my + 13, 6.4, 0, TAU); g.stroke();
+        g.fillStyle = 'rgba(255,255,255,0.1)'; g.beginPath(); g.arc(cx, my + 13, 6.4, 0, TAU); g.fill();
+        disc(g, cx, my + 13, 2, '#1c1c22');
+        box(g, cx + 26, 5 * TS + 12, 3, 16, '#aab3be'); box(g, cx + 22, 5 * TS + 8, 11, 10, '#f6f1e2'); box(g, cx + 24, 5 * TS + 10, 7, 1, '#444'); box(g, cx + 24, 5 * TS + 13, 7, 1, '#444');
+        // pall
+        softShadow(g, cx - 28, 6 * TS + 6, 8, 8, 0.3); disc(g, cx - 28, 6 * TS + 6, 7.4, '#15131c'); disc(g, cx - 28, 6 * TS + 6, 5.8, '#7c3aed');
+    }
+    // akustikpaneler på båsens vänstervägg
+    foam(g, 2, 3 * TS + 2, 8, 4 * TS - 4, '#3b2a57', '#2d2142');
+}
+
+function studioConsole(g, def) {
+    slabGroup(g, def, 'D', { side: '#08070c', top: '#17141f', hi: 'rgba(160,140,255,0.35)', ins: 2 });
+    const x0 = 2 * TS, y0 = 10 * TS;
+    // kanalremsor: fader, rattar, knappar
+    for (let i = 0; i < 16; i++) {
+        const cx = x0 + 7 + i * 13.75;
+        box(g, cx - 5, y0 + 3, 10, 26, '#222030'); box(g, cx - 5, y0 + 3, 10, 1, 'rgba(255,255,255,0.15)');
+        disc(g, cx, y0 + 8, 1.7, ['#ef4444', '#22c55e', '#3b82f6', '#eab308'][i & 3]);
+        box(g, cx - 0.7, y0 + 13, 1.4, 11, '#050408');
+        box(g, cx - 3, y0 + 14 + (i * 7) % 8, 6, 3, '#d7dce3'); box(g, cx - 3, y0 + 14 + (i * 7) % 8, 6, 1, '#fff');
+    }
+    // skärmar och MIDI-klaviatur ovanpå
+    for (const sx of [3 * TS + 8, 6 * TS + 4]) { box(g, sx, y0 - 5, 28, 10, '#0b0b10'); box(g, sx + 1, y0 - 4, 26, 8, '#14323f'); box(g, sx + 1, y0 - 4, 26, 2, 'rgba(255,255,255,0.3)'); }
+    // högtalare (monitorer)
+    eachTile(def, 'k', (tx, ty) => {
+        const x = tx * TS, y = ty * TS;
+        box(g, x, y, TS, TS, '#08070c'); box(g, x + 2, y + 2, TS - 4, TS - 4, '#17151f');
+        disc(g, x + 16, y + 20, 9, '#07060a'); disc(g, x + 16, y + 20, 7.2, '#2a2833'); disc(g, x + 16, y + 20, 3, '#0c0b10');
+        disc(g, x + 16, y + 8, 2.8, '#2a2833');
+        g.strokeStyle = 'rgba(255,255,255,0.15)'; g.lineWidth = 1; g.beginPath(); g.arc(x + 16, y + 20, 9, 0, TAU); g.stroke();
+    });
+    // utrustningsrack (L)
+    eachTile(def, 'L', (tx, ty) => {
+        const x = tx * TS, y = ty * TS;
+        g.fillStyle = 'rgba(0,0,0,0.3)'; g.fillRect(x + 2, y + 3, TS, TS);
+        box(g, x, y, TS, TS, '#101015'); box(g, x + 2, y + 2, TS - 4, TS - 4, '#22222c');
+        for (let i = 0; i < 4; i++) { box(g, x + 4, y + 4 + i * 6.5, 24, 5, '#14141b'); disc(g, x + 8, y + 6.5 + i * 6.5, 1.1, '#6b7280'); disc(g, x + 12, y + 6.5 + i * 6.5, 1.1, '#6b7280'); }
+    });
+    // producentens stol (rullstol) vid bordet
+    {
+        const cx = 5 * TS + 16, cy = 11 * TS + 20;
+        softShadow(g, cx, cy, 11, 11, 0.3);
+        disc(g, cx, cy, 11, '#0e0d13'); disc(g, cx, cy, 9, '#2f2745'); box(g, cx - 8, cy + 6, 16, 4, '#1a1627');
+        for (let i = 0; i < 5; i++) { const a = i * TAU / 5 + 0.4; g.strokeStyle = '#0a0a0e'; g.lineWidth = 1.6; g.beginPath(); g.moveTo(cx, cy); g.lineTo(cx + Math.cos(a) * 13, cy + Math.sin(a) * 13); g.stroke(); }
+    }
+}
+
+function studioLounge(g, def) {
+    sofaPaint(g, def, { base: '#1e1230', seat: '#6d28d9', back: '#4c1d95' });
+    // soffbord: ett i loungen, ett i kontrollrummet
+    coffeeTable(g, def, { side: '#0b0912', top: '#241c33' });
+    box(g, 13 * TS + 6, 5 * TS + 8, 14, 10, '#f6f1e2'); box(g, 13 * TS + 8, 5 * TS + 10, 10, 2, '#7c3aed');
+    disc(g, 14 * TS + 22, 5 * TS + 16, 6.5, '#15131c'); disc(g, 14 * TS + 22, 5 * TS + 16, 4.8, '#7c3aed'); disc(g, 14 * TS + 22, 5 * TS + 16, 1.6, '#e5e7eb'); // hörlurar
+    disc(g, 15 * TS + 12, 5 * TS + 14, 3.4, 'rgba(255,255,255,0.8)'); disc(g, 15 * TS + 12, 5 * TS + 14, 2.2, '#22e5ff');
+    box(g, 3 * TS + 6, 12 * TS + 8, 18, 10, '#e8e0d0'); box(g, 4 * TS + 16, 12 * TS + 10, 8, 14, '#1f2937'); box(g, 4 * TS + 17, 12 * TS + 11, 6, 6, '#3b82f6');
+    eachTile(def, 'x', (tx, ty) => plantAt(g, tc(tx), tc(ty), tileHash(tx, ty) % 7));
+    // golvlampa i loungehörnet
+    softShadow(g, 19 * TS + 16, 7 * TS + 18, 6, 6, 0.3); disc(g, 19 * TS + 16, 7 * TS + 18, 5.2, '#1a1424'); disc(g, 19 * TS + 16, 7 * TS + 18, 3.2, '#ffd9a0');
+}
+
+function studioDesk(g, def) {
+    slabGroup(g, def, 'C', { side: '#0e0a15', top: '#2c2540', hi: 'rgba(160,140,255,0.45)', ins: 3 });
+    const x = 18 * TS;
+    neonLine(g, [[x + 1.5, 10 * TS + 3], [x + 1.5, 14 * TS - 3]], '#ff2bd6', 2.2);
+    // kortterminal vid betalplatsen, dator, mikrofon och kontraktsblock
+    box(g, x + 8, 10 * TS + 6, 18, 20, '#1b2230'); box(g, x + 10, 10 * TS + 8, 14, 7, '#86efac'); box(g, x + 10, 10 * TS + 8, 14, 2, 'rgba(255,255,255,0.4)');
+    for (let i = 0; i < 3; i++) box(g, x + 11 + i * 4.4, 10 * TS + 18, 3, 3, '#5b6577');
+    box(g, x + 8, 11 * TS + 4, 18, 22, '#0b0b10'); box(g, x + 10, 11 * TS + 6, 14, 18, '#0e7490'); box(g, x + 10, 11 * TS + 6, 14, 3, 'rgba(255,255,255,0.3)');
+    disc(g, x + 16, 12 * TS + 16, 5, '#15131c'); disc(g, x + 16, 12 * TS + 16, 3.4, '#9aa3af'); box(g, x + 15, 12 * TS + 8, 2, 8, '#9aa3af');
+    box(g, x + 8, 13 * TS + 6, 16, 20, '#f6f1e2'); box(g, x + 10, 13 * TS + 9, 12, 1.4, '#444'); box(g, x + 10, 13 * TS + 13, 12, 1.4, '#444'); box(g, x + 10, 13 * TS + 17, 8, 1.4, '#444');
+    g.save(); g.translate(x + 28, 12 * TS + 20); g.rotate(PI / 2); label(g, 'BEAT', 0, 0, 7, 'rgba(255,255,255,0.35)', { font: SIGN_FONT, weight: 400 }); g.restore();
+}
+
+function studioEntrance(g, def) {
+    const x = 10 * TS, y = 14 * TS;
+    box(g, x, y, 2 * TS, TS, '#17101f');
+    box(g, x + 3, y + 2, 2 * TS - 6, 15, '#3a1a56'); box(g, x + 3, y + 2, 2 * TS - 6, 1.5, '#ff2bd6'); box(g, x + 3, y + 16, 2 * TS - 6, 1.5, '#ff2bd6');
+    label(g, 'VÄLKOMMEN', x + TS, y + 10, 6, '#ffb3f0', { font: SIGN_FONT, weight: 400 });
+    box(g, x, y + 20, 2 * TS, 12, '#1b2747'); box(g, x, y + 28, 2 * TS, 4, '#2d4474');
+    box(g, x - 3, y + 1, 5, 18, '#33254b'); box(g, x + 2 * TS - 2, y + 1, 5, 18, '#33254b');
+    exitSign(g, 13 * TS + 6, 14 * TS + 8);
+    // prislista och affisch på nedre väggen
+    g.fillStyle = 'rgba(6,4,12,0.92)'; rr(g, 2 * TS + 6, 14 * TS + 5, 5 * TS + 8, 22, 4); g.fill();
+    g.strokeStyle = 'rgba(196,161,255,0.8)'; g.lineWidth = 1; rr(g, 2 * TS + 7, 14 * TS + 6, 5 * TS + 6, 20, 3); g.stroke();
+    label(g, 'SESSION 600 kr', 4 * TS + 26, 14 * TS + 12, 6.4, '#c4a1ff', { font: SIGN_FONT, weight: 400 });
+    label(g, 'Inspelning · mix · master', 4 * TS + 26, 14 * TS + 21, 5.6, '#f6f1e2');
+    box(g, 15 * TS + 8, 14 * TS + 4, 22, 24, '#f3ead2'); box(g, 15 * TS + 10, 14 * TS + 6, 18, 20, '#2a1a4a');
+    g.strokeStyle = '#22e5ff'; g.lineWidth = 1.4; g.beginPath(); for (let i = 0; i <= 14; i++) { const yy = 14 * TS + 16 + Math.sin(i * 0.9) * (i % 3 ? 5 : 2); if (i) g.lineTo(15 * TS + 12 + i, yy); else g.moveTo(15 * TS + 12, yy); } g.stroke();
+    neonText(g, 'ÖPPET', 18 * TS + 6, 14 * TS + 16, 12, '#ffb3f0', '#ff2bd6');
+}
+
+function paintStudio(g, def) {
+    for (let ty = 0; ty < def.h; ty++) for (let tx = 0; tx < def.w; tx++) {
+        const ch = def.rows[ty][tx];
+        if (ch !== '#') studioFloor(g, def, tx, ty, ch);
+    }
+    wallPass(g, def, S_WALL);
+    aoPass(g, def);
+    studioTopWall(g);
+    studioBooths(g, def);
+    studioGlass(g, def);
+    studioConsole(g, def);
+    studioLounge(g, def);
+    studioDesk(g, def);
+    studioEntrance(g, def);
+}
+
+// ── Studions rörliga lager ──
+function dynStudio(ctx, st, v, t) {
+    const def = st.def;
+    const rec = BOOTHS.map((_, i) => { const m = holder(st, 'booth:' + i); return !!(m && m.c.s && m.c.s.ph === 3); });
+    const lvl = rec.some(Boolean) ? 1 : 0.35;
+    // VU-mätarna på mixerbordet: 16 kanaler, grönt-gult-rött
+    const x0 = 2 * TS, y0 = 10 * TS;
+    for (let i = 0; i < 16; i++) {
+        const cx = x0 + 7 + i * 13.75;
+        const lv = Math.max(0, Math.min(1, lvl * (0.25 + 0.75 * Math.abs(Math.sin(t * (3.1 + (i % 5) * 0.9) + i * 1.7)) * (0.6 + 0.4 * Math.sin(t * 1.3 + i)))));
+        const n = Math.round(lv * 6);
+        for (let k = 0; k < 6; k++) {
+            ctx.fillStyle = k < n ? (k > 4 ? '#ef4444' : k > 2 ? '#facc15' : '#22c55e') : 'rgba(255,255,255,0.07)';
+            ctx.fillRect(cx - 5 + (k % 2) * 5.2, y0 + 28 - (k >> 1) * 0 - 0, 0, 0);
+        }
+        // sex LED i en kolumn längs remsans nederkant (mot producenten)
+        for (let k = 0; k < 6; k++) {
+            ctx.fillStyle = k < n ? (k > 4 ? '#ef4444' : k > 2 ? '#facc15' : '#22c55e') : 'rgba(255,255,255,0.08)';
+            ctx.fillRect(cx - 4.5 + k * 1.6, y0 + 26.5, 1.3, 2.4);
+        }
+        // toppmätare: liten stapel överst
+        ctx.fillStyle = n > 4 ? '#ef4444' : '#22c55e'; ctx.fillRect(cx - 4, y0 + 4.4, Math.max(1, lv * 8), 1.3);
+    }
+    // skärmarnas vågformer
+    for (const sx of [3 * TS + 8, 6 * TS + 4]) {
+        ctx.strokeStyle = '#4ade80'; ctx.lineWidth = 1; ctx.beginPath();
+        for (let i = 0; i <= 24; i++) { const yy = y0 - 0.5 + Math.sin(t * 5 + i * 0.7 + sx) * 2.4 * lvl; if (i) ctx.lineTo(sx + 1 + i, yy); else ctx.moveTo(sx + 1, yy); }
+        ctx.stroke();
+    }
+    // högtalarna pumpar (monitorerna vid mixerbordet och de i loungen)
+    for (const [sx, sy] of [[1 * TS, 10 * TS], [9 * TS, 10 * TS], [11 * TS, 3 * TS], [17 * TS, 3 * TS]]) {
+        const k = lvl * (0.5 + 0.5 * Math.sin(t * 9));
+        ctx.strokeStyle = `rgba(255,255,255,${0.1 + 0.2 * k})`; ctx.lineWidth = 1.2; ctx.beginPath(); ctx.arc(sx + 16, sy + 20, 9 + k * 1.6, 0, TAU); ctx.stroke();
+    }
+    // rackens lampor
+    for (let r = 0; r < 2; r++) for (let i = 0; i < 4; i++) for (let j = 0; j < 3; j++) {
+        if ((Math.floor(t * (1.5 + j * 0.7)) + i + r) % 3 === 0) { ctx.fillStyle = ['#22c55e', '#ef4444', '#22e5ff'][j]; ctx.fillRect(1 * TS + 18 + j * 3, (11 + r) * TS + 5.5 + i * 6.5, 2, 2); }
+    }
+    // REC-lamporna över båsens dörrar
+    [2, 7].forEach((tx, i) => {
+        const on = rec[i];
+        ctx.fillStyle = on ? (Math.floor(t * 2) % 2 ? '#ff3b3b' : '#ff7a7a') : '#4a1212';
+        rr(ctx, tx * TS + 6, 7 * TS - 1, 20, 7, 2); ctx.fill();
+        label(ctx, 'REC', tx * TS + 16, 7 * TS + 2.6, 5, on ? '#fff' : '#7a2a2a', { font: SIGN_FONT, weight: 400 });
+    });
+    // skylten flimrar
+    const f = (t * 0.29) % 1;
+    if (f < 0.02 || (f > 0.05 && f < 0.065)) { ctx.fillStyle = 'rgba(6,4,12,0.6)'; rr(ctx, 236, 6, 232, 19, 4); ctx.fill(); }
+    if (Math.floor(t * 2) % 5 === 0) { ctx.fillStyle = 'rgba(255,255,255,0.5)'; ctx.fillRect(18 * TS + 10, 10 * TS + 8, 14, 7); }
+    exitArrow(ctx, def, t);
+}
+
+function accessoryStudio(ctx, n, t) {
+    if (n.act === 'rec') {
+        // hörlurar, och en handhållen mikrofon när artisten jublar
+        const p = at(n, 0.4, 0);
+        ctx.strokeStyle = '#111827'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(p.x, p.y, 5.2, n.angle + PI / 2 - 1.2, n.angle + PI / 2 + 1.2); ctx.arc(p.x, p.y, 5.2, n.angle - PI / 2 - 1.2, n.angle - PI / 2 + 1.2); ctx.stroke();
+        ctx.fillStyle = '#7c3aed'; for (const sd of [-1, 1]) { const e = at(n, 0.4, sd * 5.4); ctx.beginPath(); ctx.arc(e.x, e.y, 2.4, 0, TAU); ctx.fill(); }
+        const hand = n.pose === 'cheer' ? at(n, 3.6 + 3.2 * Math.abs(Math.sin(n.phase * 3)), 13.6) : at(n, 9, 5.6);
+        const m = at(n, 0, 0);
+        ctx.save(); ctx.translate(hand.x, hand.y); ctx.rotate(Math.atan2(m.y - hand.y, m.x - hand.x));
+        ctx.fillStyle = '#15131c'; ctx.fillRect(-1, -1.3, 7, 2.6); ctx.fillStyle = '#9aa3af'; ctx.beginPath(); ctx.arc(7, 0, 2.6, 0, TAU); ctx.fill();
+        ctx.fillStyle = 'rgba(255,255,255,0.5)'; ctx.beginPath(); ctx.arc(6.4, -0.8, 0.9, 0, TAU); ctx.fill();
+        ctx.restore();
+        // ljudvågor från munnen
+        ctx.strokeStyle = `rgba(255,210,255,${0.35 + 0.25 * Math.sin(t * 8)})`; ctx.lineWidth = 1;
+        const w = (t * 1.5 + n.phase) % 1;
+        for (let k = 0; k < 2; k++) { const f = (w + k * 0.5) % 1; ctx.globalAlpha = 1 - f; ctx.beginPath(); ctx.arc(p.x, p.y, 7 + f * 9, n.angle - 0.6, n.angle + 0.6); ctx.stroke(); }
+        ctx.globalAlpha = 1;
+    } else if (n.act === 'phone') {
+        const a = n.angle, p = at(n, 8, 3);
+        armTo(ctx, n, 1, p.x, p.y);
+        ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(a);
+        ctx.fillStyle = '#0b0b10'; rr(ctx, -2.2, -3.4, 4.4, 6.8, 1); ctx.fill();
+        ctx.fillStyle = `rgba(120,200,255,${0.6 + 0.3 * Math.sin(t * 3 + n.phase)})`; ctx.fillRect(-1.5, -2.8, 3, 5.4);
+        ctx.restore();
+    } else if (n.kind === 'producer' && n.pose === 'work') {
+        // hörlurar runt halsen och en hand på ett reglage
+        const p = at(n, 0.4, 0);
+        ctx.strokeStyle = '#7c3aed'; ctx.lineWidth = 1.8; ctx.beginPath(); ctx.arc(p.x, p.y, 5.2, n.angle + PI / 2 - 1.1, n.angle + PI / 2 + 1.1); ctx.arc(p.x, p.y, 5.2, n.angle - PI / 2 - 1.1, n.angle - PI / 2 + 1.1); ctx.stroke();
+    }
+}
+
+function lightsStudio(ctx, st, v, t, glow) {
+    [2, 7].forEach((tx, i) => { const m = holder(st, 'booth:' + i); if (m && m.c.s && m.c.s.ph === 3) glow(tx * TS + 16, 7 * TS + 2, 54, '#ff2a2a', 0.3 + 0.12 * Math.sin(t * 6)); });
+    for (let i = 0; i < 6; i++) glow(2 * TS + 14 + i * 30, 10 * TS + 14, 24, ['#22e5ff', '#ff2bd6', '#a855f7'][i % 3], 0.1 + 0.05 * Math.sin(t * 3 + i));
+}
+
+registerStudio();
+function registerStudio() {
+    room(STUDIO_R, STUDIO, {
+        paint: paintStudio, dyn: dynStudio, lights: lightsStudio, accessory: (ctx, n, t) => { accessoryA(ctx, n, t); accessoryStudio(ctx, n, t); },
+        glows: [
+            [352, 14, 190, '#ff2bd6', 0.3, 0],
+            [210, 60, 120, '#7c3aed', 0.14, 2.1],
+            [500, 60, 120, '#22e5ff', 0.1, 1.8],
+            [128, 130, 90, '#a855f7', 0.1, 0], [288, 130, 90, '#a855f7', 0.1, 0],
+            [160, 336, 150, '#7c3aed', 0.12, 0],
+            [624, 330, 90, '#ff2bd6', 0.14, 2.6],
+            [640, 250, 80, '#ffd9a0', 0.14, 0],
+            [352, 466, 80, '#22c55e', 0.12, 3.2]
+        ]
+    });
 }
