@@ -224,6 +224,8 @@ describe('World simulation', () => {
 function enterDoor(w, d) {
     w.player.x = d.door.x; w.player.y = d.door.y;
     w.update(DT, IDLE);
+    // Företag med eget rum: man går in och pratar med disken (E) — där finns menyn
+    if (!w.place && w.interior?.biz === d) w.enterPlace(d);
 }
 
 // Ställ spelaren på en trottoar i ett visst turf
@@ -822,7 +824,9 @@ describe('Gå in med E', () => {
         expect(w.place).toBe(null); // inte ända fram — ingen automatisk dörr
         expect(w.hint).toContain('E — Gå in');
         w.update(DT, { ...IDLE, action: true });
-        expect(w.place?.pl).toBe(shop);
+        // Har butiken ett eget rum går man in i det (menyn finns vid disken), annars menyn direkt
+        if (w.interior) expect(w.interior.biz).toBe(shop);
+        else expect(w.place?.pl).toBe(shop);
     });
 
     it('E vid Club Diamant går in i klubben, i bil säger tipset kliv ur', () => {
