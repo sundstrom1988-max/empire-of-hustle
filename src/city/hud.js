@@ -77,7 +77,10 @@ export class Hud {
                 break;
             }
             case 'radio':
-                this.radio = { text: e.name, sub: e.tag || '', life: 3 };
+                this.radio = { text: e.name, sub: e.tag || '', life: 3, icon: '📻' };
+                break;
+            case 'view':
+                this.radio = { text: e.name, sub: e.tag || '', life: 2, icon: '🔍' };
                 break;
             case 'interior':
                 this.banner = null; // turf-skylten hör till gatan
@@ -218,7 +221,7 @@ export class Hud {
         }
         if (this.radio) {
             ctx.globalAlpha = Math.min(1, this.radio.life);
-            outlined(ctx, `📻 ${this.radio.text}`, W / 2, H * 0.6, narrow ? 15 : 19, '#7dd3fc', 'center', BIG_FONT, 4);
+            outlined(ctx, `${this.radio.icon || '📻'} ${this.radio.text}`, W / 2, H * 0.6, narrow ? 15 : 19, '#7dd3fc', 'center', BIG_FONT, 4);
             if (this.radio.sub) outlined(ctx, this.radio.sub, W / 2, H * 0.6 + 22, 12, '#e5e7eb', 'center', BIG_FONT, 3);
             ctx.globalAlpha = 1;
         }

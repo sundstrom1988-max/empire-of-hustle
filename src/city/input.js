@@ -14,6 +14,7 @@ const MAP = {
     KeyQ: 'weapon',
     KeyM: 'map',
     KeyT: 'phone',
+    KeyV: 'zoom',
     Digit1: 'c1', Digit2: 'c2', Digit3: 'c3',
     ShiftLeft: 'run', ShiftRight: 'run',
     KeyP: 'pause',
@@ -47,6 +48,38 @@ export class Input {
         window.addEventListener('keydown', this.onKeyDown);
         window.addEventListener('keyup', this.onKeyUp);
         window.addEventListener('blur', this.onBlur);
+
+        // Mus (dator): sikta med pekaren, vänsterklick slår/skjuter, hjulet zoomar.
+        // ignoreMouse(x, y) låter staden säga "det här klicket var på kartan".
+        this.mouse = { x: 0, y: 0, t: -1e9, inside: false };
+        this.wheel = 0;
+        this.ignoreMouse = null;
+        this.canvas = root.querySelector('canvas');
+        if (this.canvas) {
+            const pos = (e) => { const b = this.canvas.getBoundingClientRect(); return { x: e.clientX - b.left, y: e.clientY - b.top }; };
+            this.onMouseMove = (e) => {
+                if (e.pointerType && e.pointerType !== 'mouse') return;
+                Object.assign(this.mouse, pos(e), { t: performance.now(), inside: true });
+            };
+            this.onMouseDown = (e) => {
+                if ((e.pointerType && e.pointerType !== 'mouse') || e.button !== 0) return;
+                const p = pos(e);
+                Object.assign(this.mouse, p, { t: performance.now(), inside: true });
+                if (this.ignoreMouse && this.ignoreMouse(p.x, p.y)) return;
+                if (!this.held.has('fire')) this.edges.add('fire');
+                this.held.add('fire');
+            };
+            this.onMouseUp = (e) => { if (e.button === 0) this.held.delete('fire'); };
+            this.onMouseLeave = () => { this.mouse.inside = false; this.held.delete('fire'); };
+            this.onWheel = (e) => { e.preventDefault(); this.wheel += Math.sign(e.deltaY); };
+            this.onContext = (e) => e.preventDefault();
+            this.canvas.addEventListener('pointermove', this.onMouseMove);
+            this.canvas.addEventListener('pointerdown', this.onMouseDown);
+            window.addEventListener('pointerup', this.onMouseUp);
+            this.canvas.addEventListener('pointerleave', this.onMouseLeave);
+            this.canvas.addEventListener('wheel', this.onWheel, { passive: false });
+            this.canvas.addEventListener('contextmenu', this.onContext);
+        }
 
         // Touchknappar: <button data-key="up"> osv.
         this.buttons = [...root.querySelectorAll('[data-key]')];
@@ -92,12 +125,18 @@ export class Input {
             run: this.has('run'),
             horn: this.has('horn'),
             action: this.pressed('act'),
-            punch: this.pressed('hb'),   // Space till fots = slag/skott
-            attack: this.has('hb'),      // hålls inne = automateld (Uzi)
+            punch: this.pressed('hb') || this.pressed('fire'),   // Space eller vänsterklick till fots = slag/skott
+            attack: this.has('hb') || this.has('fire'),          // hålls inne = automateld (Uzi)
             rob: this.pressed('r'),
             weapon: this.pressed('weapon')
         };
     }
+
+    // Musen siktar om den rört sig nyligen (eller en knapp hålls inne). Annars tittar gubben dit han går.
+    aimActive(now = performance.now()) { return this.mouse.inside && (now - this.mouse.t < 4000 || this.held.has('fire')); }
+
+    // Hjulet sedan förra gången: -1 = in, +1 = ut, 0 = inget
+    takeWheel() { const w = Math.sign(this.wheel); this.wheel = 0; return w; }
 
     endFrame() { this.edges.clear(); }
 
@@ -105,6 +144,14 @@ export class Input {
         window.removeEventListener('keydown', this.onKeyDown);
         window.removeEventListener('keyup', this.onKeyUp);
         window.removeEventListener('blur', this.onBlur);
+        if (this.canvas) {
+            this.canvas.removeEventListener('pointermove', this.onMouseMove);
+            this.canvas.removeEventListener('pointerdown', this.onMouseDown);
+            window.removeEventListener('pointerup', this.onMouseUp);
+            this.canvas.removeEventListener('pointerleave', this.onMouseLeave);
+            this.canvas.removeEventListener('wheel', this.onWheel);
+            this.canvas.removeEventListener('contextmenu', this.onContext);
+        }
         this.buttons.forEach(btn => {
             const h = btn._handlers;
             if (!h) return;

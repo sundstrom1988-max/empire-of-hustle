@@ -38,6 +38,7 @@ function buildOverlay(touch) {
         <canvas class="city-canvas"></canvas>
         <div class="city-topbar">
             <button class="city-btn" data-cmd="phone" title="Telefon: SMS, taxi, doktor, crew (T)">📱</button>
+            <button class="city-btn" data-cmd="zoom" title="Byt vy: zooma in och ut (V)">🔍</button>
             <button class="city-btn" data-cmd="radio" title="Byt radiokanal (R)">📻</button>
             <button class="city-btn" data-cmd="pause" title="Paus (P)">⏸</button>
             <button class="city-btn city-home" data-cmd="home" title="Åk hem (Esc)">🏠 HEM</button>
@@ -65,8 +66,8 @@ function buildOverlay(touch) {
 
 function controlsHelp(touch) {
     return touch
-        ? `<div class="city-help"><b>▲▼◀▶</b> kör / gå · <b>👊</b> slå / skjut (blir <b>⤵</b> handbroms i bilen) · <b>E</b> gå in genom dörrar, in/ur bil, plocka upp · <b>💰</b> råna · <b>🔫</b> byt vapen · <b>👥</b> crew-order · <b>📯</b> tuta · <b>📱</b> telefon<br><small>Version ${escapeHtml(BUILD)}</small></div>`
-        : `<div class="city-help"><b>WASD/Pilar</b> kör/gå · <b>Shift</b> spring · <b>E</b> gå in genom dörrar, in/ur bil, plocka upp · <b>Space</b> handbroms / slå / skjut · <b>R</b> råna (till fots) / radio (i bil) · <b>Q</b> byt vapen · <b>M</b> karta · <b>T</b> telefon · <b>1 2 3</b> crew: följ / stanna / anfall · <b>H</b> tuta · <b>P</b> paus · <b>Esc</b> hem<br><small>Version ${escapeHtml(BUILD)}</small></div>`;
+        ? `<div class="city-help"><b>▲▼◀▶</b> kör / gå · <b>👊</b> slå / skjut (blir <b>⤵</b> handbroms i bilen) · <b>E</b> gå in genom dörrar, in/ur bil, plocka upp · <b>💰</b> råna · <b>🔫</b> byt vapen · <b>👥</b> crew-order · <b>📯</b> tuta · <b>📱</b> telefon · <b>🔍</b> byt vy<br><small>Version ${escapeHtml(BUILD)}</small></div>`
+        : `<div class="city-help"><b>WASD/Pilar</b> kör/gå · <b>Musen</b> siktar, <b>vänsterklick</b> slår/skjuter, <b>hjulet</b> zoomar · <b>Shift</b> spring · <b>E</b> gå in genom dörrar, in/ur bil, plocka upp · <b>Space</b> handbroms / slå / skjut · <b>R</b> råna (till fots) / radio (i bil) · <b>Q</b> byt vapen · <b>M</b> karta · <b>T</b> telefon · <b>V</b> byt vy · <b>1 2 3</b> crew: följ / stanna / anfall · <b>H</b> tuta · <b>P</b> paus · <b>Esc</b> hem<br><small>Version ${escapeHtml(BUILD)}</small></div>`;
 }
 
 export function openCity(profile, opts = {}) {
@@ -85,8 +86,14 @@ export function openCity(profile, opts = {}) {
     world.nameOf = id => gameState.players.find(pl => pl.charKey === id)?.char?.name || id;
     cityEnter(profile.charKey);
     const renderer = new Renderer(canvas);
+    renderer.zoomMul = ZOOMS[loadZoom()].mul;
     const hud = new Hud();
     const input = new Input(overlay);
+    // Klick på minikartan/helkartan (eller bakom en meny) är inte ett slag
+    input.ignoreMouse = (x, y) => {
+        const r = session?.hud.mapRect;
+        return !session || !!session.modalType || world.showMap || (!!r && x >= r.x && x <= r.x + r.size && y >= r.y && y <= r.y + r.size);
+    };
     const modal = overlay.querySelector('.city-modal');
 
     session = {
@@ -124,7 +131,8 @@ export function openCity(profile, opts = {}) {
 
     overlay.querySelector('.city-topbar').addEventListener('click', (e) => {
         const cmd = e.target.closest('[data-cmd]')?.dataset.cmd;
-        if (cmd === 'radio') cycleRadio();
+        if (cmd === 'zoom') cycleZoom();
+        else if (cmd === 'radio') cycleRadio();
         else if (cmd === 'phone') { if (!session.modalType) showCityPhone(); }
         else if (cmd === 'pause') session.paused ? resume() : showPause();
         else if (cmd === 'home') tryGoHome();
@@ -464,6 +472,32 @@ function cycleRadio() {
     s.hud.onEvent({ type: 'radio', name: STATIONS[v.radio].name, tag: STATIONS[v.radio].tag });
 }
 
+// ── Vy: hur nära kameran är (sparas i webbläsaren) ──
+const ZOOMS = [
+    { name: 'NORMAL', mul: 1 },
+    { name: 'LÅNGT', mul: 0.66 },
+    { name: 'NÄRA', mul: 1.35 }
+];
+const ZOOM_KEY = 'hustle_city_zoom';
+function loadZoom() {
+    try { const i = Number(localStorage.getItem(ZOOM_KEY)); return Number.isInteger(i) && ZOOMS[i] ? i : 0; } catch (e) { return 0; }
+}
+function setZoom(i) {
+    const s = session;
+    try { localStorage.setItem(ZOOM_KEY, String(i)); } catch (e) { /* privat läge: gäller bara nu */ }
+    s.zoomIdx = i;
+    s.renderer.zoomMul = ZOOMS[i].mul;
+    s.hud.onEvent({ type: 'view', name: `VY: ${ZOOMS[i].name}`, tag: s.touch ? '🔍 byter' : 'V / 🔍 / scrollhjulet' });
+}
+function cycleZoom() { setZoom(((session.zoomIdx ?? loadZoom()) + 1) % ZOOMS.length); }
+// Scrollhjulet: ett steg närmare (-1) eller längre ut (+1), utan att gå runt
+function zoomStep(dir) {
+    const order = [1, 0, 2]; // LÅNGT, NORMAL, NÄRA
+    const at = order.indexOf(session.zoomIdx ?? loadZoom());
+    const next = order[Math.max(0, Math.min(order.length - 1, at - dir))];
+    if (next !== (session.zoomIdx ?? loadZoom())) setZoom(next);
+}
+
 // Touch: samma knapp är slag/skott till fots och handbroms i bilen — visa vilket just nu
 function updateTouchLabels() {
     const s = session, w = s.world;
@@ -542,12 +576,17 @@ function frame(ts) {
             if (inp.pressed('c3')) s.world.orderCrew('attack');
             if (inp.pressed('crew')) { const cur = s.world.crew[0]?.order; s.world.orderCrew(cur === 'follow' ? 'attack' : cur === 'attack' ? 'hold' : 'follow'); }
             if (inp.pressed('phone')) showCityPhone();
+            if (inp.pressed('zoom')) cycleZoom();
+            const wheel = inp.takeWheel();
+            if (wheel) zoomStep(wheel);
             if (s.world.player.vehicle && inp.pressed('r')) cycleRadio(); // till fots betyder R rån
         }
         if (s.closing) return;
         if (!s.paused) {
             s.acc += dt;
             const state = inp.state();
+            // Musen siktar (dator): världskoordinaten under pekaren
+            state.aim = !s.touch && inp.aimActive() ? s.renderer.screenToWorld(inp.mouse.x, inp.mouse.y) : null;
             let steps = 0;
             while (s.acc >= STEP && steps < 5) {
                 s.world.update(STEP, steps === 0 ? state : { ...state, action: false, punch: false, rob: false, weapon: false });
@@ -572,6 +611,12 @@ function frame(ts) {
         }
         if (s.touch) updateTouchLabels();
         s.renderer.updateCamera(s.world, s.paused ? 0 : dt);
+        // Utzoomat ser man längre: folk och bilar ska dyka upp utanför bild (world.manageSpawns)
+        const zm = s.renderer.zoomMul || 1;
+        const viewR = Math.hypot(s.renderer.w, s.renderer.h) / 2 / Math.min(s.renderer.cam.zoom, s.renderer.zTarget || 9);
+        // (fotgängare skapas 520 px bort i normalvyn — utzoomat ska det vara bortom skärmens hörn)
+        s.world.viewExtra = zm < 1 ? Math.max(viewR * (1 - zm), viewR + 40 - 520) : 0;
+        s.world.viewDense = zm < 1 ? Math.min(1.6, 1 / (zm * zm)) : 1;
         s.renderer.draw(s.world, s.paused ? 0 : dt);
         s.hud.draw(s.renderer.ctx, s.world, s.renderer, { touch: s.touch });
         inp.endFrame();

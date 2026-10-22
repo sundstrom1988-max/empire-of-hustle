@@ -391,6 +391,9 @@ export class World {
             const speed = input.run ? 175 : 115;
             stepWalker(p, input.mx, input.my, speed, dt, this.city);
             if (Math.hypot(input.mx, input.my) > 0.1) p.walkPhase += dt * speed * 0.12;
+            // Musen siktar: gubben tittar mot pekaren och kan gå åt ett annat håll
+            this.mouseAim = !!input.aim;
+            if (input.aim) p.angle = Math.atan2(input.aim.y - p.y, input.aim.x - p.x);
             p.punchT = Math.max(0, p.punchT - dt);
             p.muzzle = Math.max(0, (p.muzzle || 0) - dt);
             if (input.weapon) this.cycleWeapon();
@@ -611,24 +614,28 @@ export class World {
         this.spawnT = 0.25;
         const p = this.player;
         const dist = e => Math.hypot(e.x - p.x, e.y - p.y);
+        // Zoomar man ut (🔍) ser man längre: då ska folk och bilar dyka upp utanför bild, inte mitt i den
+        const ex = this.viewExtra || 0;
+        const far = base => base + ex;
+        const dense = this.viewDense || 1;
 
         // Städa bort det som är långt borta
         for (let i = this.vehicles.length - 1; i >= 0; i--) {
             const v = this.vehicles[i];
             if (v === p.vehicle || v.persistent) continue;
             const d = dist(v);
-            if (d > 1900 || (v.exploded && v.hulkT > 30 && d > 700) || (v.ai && v.ai.lost && d > 900)) this.removeVehicle(v);
+            if (d > far(1900) || (v.exploded && v.hulkT > 30 && d > far(700)) || (v.ai && v.ai.lost && d > far(900))) this.removeVehicle(v);
         }
-        for (let i = this.peds.length - 1; i >= 0; i--) if (dist(this.peds[i]) > 1250) this.peds.splice(i, 1);
+        for (let i = this.peds.length - 1; i >= 0; i--) if (dist(this.peds[i]) > far(1250)) this.peds.splice(i, 1);
 
         const district = this.district || 'orten';
         const s = stars(this.wanted);
 
         // Trafik
-        const traffic = this.vehicles.filter(v => (v.driver === 'traffic' || v.driver === 'gang') && dist(v) < 1500).length;
-        const want = district === 'centrum' ? 20 : 16;
+        const traffic = this.vehicles.filter(v => (v.driver === 'traffic' || v.driver === 'gang') && dist(v) < far(1500)).length;
+        const want = Math.round((district === 'centrum' ? 20 : 16) * dense);
         if (traffic < want) {
-            const spot = this.findSpot(p.x, p.y, 760, 1350);
+            const spot = this.findSpot(p.x, p.y, far(760), far(1350));
             if (spot) {
                 const turf = districtAt(this.city, spot.x, spot.y);
                 const gang = DISTRICTS[turf].gang;
@@ -651,7 +658,7 @@ export class World {
         const search = lost && ls && Math.hypot(ls.x - p.x, ls.y - p.y) < 1500 ? ls : null;
         const cops = this.vehicles.filter(v => v.driver === 'cop' && !v.wrecked && dist(v) < (search ? 2400 : 1800)).length;
         if (cops < (lost ? Math.max(2, Math.ceil(copTarget(s) / 2)) : Math.max(2, copTarget(s)))) {
-            const spot = search ? this.findSpot(search.x, search.y, 150, 700) : this.findSpot(p.x, p.y, s > 0 ? 650 : 800, s > 0 ? 1150 : 1400);
+            const spot = search ? this.findSpot(search.x, search.y, 150, 700) : this.findSpot(p.x, p.y, far(s > 0 ? 650 : 800), far(s > 0 ? 1150 : 1400));
             if (spot) {
                 const v = createVehicle('police', spot.x, spot.y, spot.angle, { rnd: this.rnd });
                 v.driver = 'cop';
@@ -667,7 +674,7 @@ export class World {
             this.city.lotSpots.forEach((spot, i) => {
                 if (this.parkedSpots.has(i) || (i * 37 + this.round) % 3 === 0) return;
                 const d = Math.hypot(spot.x - p.x, spot.y - p.y);
-                if (d < 700 || d > 1300) return;
+                if (d < far(700) || d > far(1300)) return;
                 const v = createVehicle(pickTrafficType(districtAt(this.city, spot.x, spot.y), this.rnd), spot.x, spot.y, spot.angle, { parked: true, rnd: this.rnd });
                 v.spotKey = i;
                 this.parkedSpots.set(i, v);
@@ -676,15 +683,16 @@ export class World {
         }
 
         // Fotgängare
-        const peds = this.peds.filter(e => dist(e) < 1000).length;
-        const wantPeds = district === 'centrum' ? 34 : 26;
+        const peds = this.peds.filter(e => dist(e) < far(1000)).length;
+        const wantPeds = Math.round((district === 'centrum' ? 34 : 26) * dense);
+        const pedIn = far(520), pedOut = far(980);
         for (let k = 0; k < 2 && peds + k < wantPeds; k++) {
             const sw = this.city.sidewalkTiles;
             for (let tries = 0; tries < 12; tries++) {
                 const [tx, ty] = sw[Math.floor(this.rnd() * sw.length)];
                 const x = center(tx) + (this.rnd() - 0.5) * 30, y = center(ty) + (this.rnd() - 0.5) * 30;
                 const d = Math.hypot(x - p.x, y - p.y);
-                if (d < 520 || d > 980) continue;
+                if (d < pedIn || d > pedOut) continue;
                 const dId = districtAt(this.city, x, y);
                 const r = this.rnd();
                 const metroShare = { centrum: 0.3, skogsbacken: 0.25 }[dId] ?? 0.12;
@@ -941,7 +949,7 @@ export class World {
     shoot(id, w) {
         const p = this.player, prof = this.profile;
         prof.ammo[id] = (prof.ammo[id] || 0) - 1;
-        const aim = this.autoAim(p.x, p.y, p.angle, w.range);
+        const aim = this.autoAim(p.x, p.y, p.angle, w.range, this.mouseAim ? 0.22 : 0.5);
         if (aim !== null) p.angle = aim;
         const sx = p.x + Math.cos(p.angle) * 12, sy = p.y + Math.sin(p.angle) * 12;
         for (let i = 0; i < w.pellets; i++) {
@@ -958,7 +966,8 @@ export class World {
     }
 
     // Sikta åt rätt håll: närmaste mål i en kon framför dig (opps först)
-    autoAim(x, y, angle, range) {
+    // cone: hur mycket hjälp man får (smalare när man siktar med musen)
+    autoAim(x, y, angle, range, cone = 0.5) {
         let best = null, bs = Infinity;
         for (const ped of this.peds) {
             if (ped.down > 0 || (ped.gang && ped.gang === this.profile.gang && !ped.attack)) continue;
@@ -966,7 +975,7 @@ export class World {
             if (d > range || d < 4) continue;
             const a = Math.atan2(dy, dx);
             const diff = Math.abs(angleDiff(angle, a));
-            if (diff > 0.5) continue;
+            if (diff > cone) continue;
             const score = d * (1 + diff * 3) * (ped.attack ? 0.4 : 1);
             if (score < bs && lineClear(this.city, x, y, ped.x, ped.y)) { bs = score; best = a; }
         }
@@ -2145,6 +2154,7 @@ export class World {
         const len = Math.hypot(input.mx, input.my);
         if (len > 0.1) { p.vx = input.mx / len * speed; p.vy = input.my / len * speed; p.angle = Math.atan2(input.my, input.mx); p.walkPhase += dt * speed * 0.12; }
         else { p.vx *= Math.max(0, 1 - 10 * dt); p.vy *= Math.max(0, 1 - 10 * dt); }
+        if (input.aim) p.angle = Math.atan2(input.aim.y - p.y, input.aim.x - p.x);
         p.x += p.vx * dt; p.y += p.vy * dt;
         INT.collideInterior(def, p, p.r);
         p.hurtT = Math.max(0, (p.hurtT || 0) - dt);

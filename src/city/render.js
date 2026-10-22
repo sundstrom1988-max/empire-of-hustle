@@ -79,7 +79,7 @@ export class Renderer {
         if (world.interior) {
             // Inomhus: följ spelaren men håll kameran inom rummet
             const def = world.interior.def, p = world.player;
-            const z = clamp(Math.min(this.w, this.h) / 760, 0.6, 1.25);
+            const z = clamp(Math.min(this.w, this.h) / 760, 0.6, 1.25) * (this.zoomMul || 1);
             const W = def.w * (INT.IN_TILE || 32), H = def.h * (INT.IN_TILE || 32);
             const hw = this.w / 2 / z, hh = this.h / 2 / z;
             // Knappraden ligger överst på bredare skärmar — låt rummet börja under den
@@ -102,7 +102,9 @@ export class Renderer {
         const tx = p.x + vx * 0.4, ty = p.y + vy * 0.4;
         const base = clamp(Math.min(this.w, this.h) / 900, 0.55, 1);
         const speed = Math.hypot(vx, vy);
-        const zTarget = base * (v ? 1 - Math.min(0.3, speed / 1700) : 1.06);
+        // zoomMul: spelarens val av vy (🔍 / V)
+        const zTarget = Math.max(0.3, base * (v ? 1 - Math.min(0.3, speed / 1700) : 1.06) * (this.zoomMul || 1));
+        this.zTarget = zTarget;
         if (!this.cam) this.cam = { x: tx, y: ty, zoom: zTarget };
         const k = Math.min(1, dt * 4);
         this.cam.x += (tx - this.cam.x) * k;
@@ -111,6 +113,12 @@ export class Renderer {
         const sh = dt > 0 ? world.shake * 9 : 0; // ingen skakning när spelet står pausat
         this.cam.sx = (Math.random() - 0.5) * sh;
         this.cam.sy = (Math.random() - 0.5) * sh;
+    }
+
+    screenToWorld(x, y) {
+        const c = this.cam;
+        if (!c) return null;
+        return { x: (x - this.w / 2) / c.zoom + c.x, y: (y - this.h / 2) / c.zoom + c.y };
     }
 
     worldToScreen(x, y) {

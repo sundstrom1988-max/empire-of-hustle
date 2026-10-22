@@ -355,3 +355,6 @@ body.city-open .cbd-leaf {
     font-size: 11px;
     opacity: 0.75;
 }
+
+/* Mus: sikte i stan (inte på mobil) */
+.city-overlay:not(.touch) .city-canvas { cursor: crosshair; }

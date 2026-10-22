@@ -700,6 +700,38 @@ describe('Slagsmål', () => {
     });
 });
 
+describe('Mus och vy', () => {
+    it('gubben tittar mot muspekaren och kan gå åt ett annat håll', () => {
+        const w = makeWorld(75);
+        w.player.x = 8 * TILE + 32; w.player.y = 3 * TILE + 32;
+        w.manageSpawns = () => { }; w.peds = [];
+        w.update(DT, { ...IDLE, mx: 1, aim: { x: w.player.x, y: w.player.y + 100 } }); // går höger, siktar nedåt
+        expect(w.player.angle).toBeCloseTo(Math.PI / 2, 1);
+        expect(w.player.vx).toBeGreaterThan(0);
+    });
+
+    it('klick slår den man siktar på', () => {
+        const w = makeWorld(76);
+        w.player.x = 8 * TILE + 32; w.player.y = 3 * TILE + 32;
+        w.manageSpawns = () => { };
+        const g = createPed(w.player.x - 16, w.player.y, w.rnd, { type: 'gang', gang: 'dods', attack: true, attackT: 60 });
+        w.peds = [g];
+        const hp0 = g.hp;
+        w.update(DT, { ...IDLE, punch: true, aim: { x: g.x, y: g.y } });
+        expect(g.hp).toBeLessThan(hp0);
+    });
+
+    it('utzoomat: folk dyker upp utanför bild, inte mitt i den', () => {
+        const w = makeWorld(77);
+        w.peds = [];
+        w.viewExtra = 600; w.viewDense = 1.5;
+        for (let i = 0; i < 40; i++) w.manageSpawns();
+        const near = w.peds.filter(p => Math.hypot(p.x - w.player.x, p.y - w.player.y) < 520 + 600);
+        expect(w.peds.length).toBeGreaterThan(0);
+        expect(near).toHaveLength(0);
+    });
+});
+
 describe('Slagsmål mot andra spelare', () => {
     // Ett låtsasnät: en annan spelare står bredvid, värdens beslut kommer inte (vi tittar bara på förfrågan)
     const withRemote = (prot, dist = 30) => {
