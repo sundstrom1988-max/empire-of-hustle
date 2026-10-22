@@ -16,6 +16,7 @@ import { WEAPONS, WEAPON_ORDER, ownsWeapon } from './weapons.js';
 import { ROLES, CREW_MAX } from './crew.js';
 import { sfx, playStation, stopRadio, STATIONS, engineStart, engineSet, engineStop, sirenSet, sirenStop, unlockAudio } from '../utils/audio.js';
 import { escapeHtml } from '../utils/html.js';
+import { BUILD } from '../utils/version.js';
 import { cityEnter, cityExit, cityPublish, cityRemotes, cityTaken, cityRequest, onCityNet, cityNetActive } from '../multiplayer/citynet.js';
 import { syncMe, syncState } from '../multiplayer/sync.js';
 import { gameState, isMyTurn } from '../game/state.js';
@@ -64,8 +65,8 @@ function buildOverlay(touch) {
 
 function controlsHelp(touch) {
     return touch
-        ? `<div class="city-help"><b>▲▼◀▶</b> kör / gå · <b>👊</b> slå / skjut (blir <b>⤵</b> handbroms i bilen) · <b>E</b> in/ur bil, plocka upp · <b>💰</b> råna · <b>🔫</b> byt vapen · <b>👥</b> crew-order · <b>📯</b> tuta · <b>📱</b> telefon</div>`
-        : `<div class="city-help"><b>WASD/Pilar</b> kör/gå · <b>Shift</b> spring · <b>E</b> in/ur bil, plocka upp · <b>Space</b> handbroms / slå / skjut · <b>R</b> råna (till fots) / radio (i bil) · <b>Q</b> byt vapen · <b>M</b> karta · <b>T</b> telefon · <b>1 2 3</b> crew: följ / stanna / anfall · <b>H</b> tuta · <b>P</b> paus · <b>Esc</b> hem</div>`;
+        ? `<div class="city-help"><b>▲▼◀▶</b> kör / gå · <b>👊</b> slå / skjut (blir <b>⤵</b> handbroms i bilen) · <b>E</b> gå in genom dörrar, in/ur bil, plocka upp · <b>💰</b> råna · <b>🔫</b> byt vapen · <b>👥</b> crew-order · <b>📯</b> tuta · <b>📱</b> telefon<br><small>Version ${escapeHtml(BUILD)}</small></div>`
+        : `<div class="city-help"><b>WASD/Pilar</b> kör/gå · <b>Shift</b> spring · <b>E</b> gå in genom dörrar, in/ur bil, plocka upp · <b>Space</b> handbroms / slå / skjut · <b>R</b> råna (till fots) / radio (i bil) · <b>Q</b> byt vapen · <b>M</b> karta · <b>T</b> telefon · <b>1 2 3</b> crew: följ / stanna / anfall · <b>H</b> tuta · <b>P</b> paus · <b>Esc</b> hem<br><small>Version ${escapeHtml(BUILD)}</small></div>`;
 }
 
 export function openCity(profile, opts = {}) {

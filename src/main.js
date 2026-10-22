@@ -23,6 +23,7 @@ import { renderGarage, buyGarageCar, pimpCar } from './features/garage.js';
 import { renderStanPanel, goToCity } from './features/stan.js';
 import { isCityOpen } from './city/index.js';
 import { escapeHtml } from './utils/html.js';
+import { BUILD, watchForUpdates } from './utils/version.js';
 
 // ── Åtgärder som ändrar spelet kräver att det är din tur ──
 function guarded(fn) {
@@ -89,6 +90,7 @@ function renderApp() {
             <button class="btn-guest" id="btn-guest-play" style="max-width:200px;">🎮 Gäst-läge</button>
             <button class="btn-guest" id="btn-join-room" style="max-width:200px;">🌐 Gå med i Rum</button>
         </div>
+        <p class="app-version">Version ${BUILD}</p>
     </div>
     <div class="login-modal" id="login-modal"></div>
 
@@ -112,6 +114,7 @@ function renderApp() {
             </div>
         </div>
         <button class="btn-start" id="btn-start">⚡ STARTA</button>
+        <p class="app-version">Version ${BUILD}</p>
     </div>
 
     <!-- GAME -->
@@ -570,8 +573,20 @@ window.addEventListener('unhandledrejection', (e) => reportError(e.reason));
 // Stängs fliken: skicka det senaste (t.ex. köp i stan) till värden innan vi säger hejdå
 window.addEventListener('pagehide', () => { if (gameState.isOnline) { closeSmsOverlay(); syncMe(); sayGoodbye(); leaveRoom(); } });
 
+// En nyare version har publicerats: erbjud omladdning (onlinerummet går att gå med i igen med samma kod)
+function showUpdateBanner() {
+    if (document.getElementById('update-banner')) return;
+    const b = document.createElement('button');
+    b.id = 'update-banner';
+    b.className = 'update-banner';
+    b.textContent = '🔄 Ny version av spelet — tryck här för att ladda om';
+    b.addEventListener('click', () => location.reload());
+    document.body.appendChild(b);
+}
+
 // ── Init ──
 renderApp();
+watchForUpdates(showUpdateBanner);
 const hasAccounts = Object.keys(getAccounts()).length > 0;
 if (hasAccounts) {
     document.getElementById('screen-login').style.display = 'flex';
