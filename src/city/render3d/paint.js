@@ -104,19 +104,23 @@ export function paintFacade(style, lit) {
             if (lit) {
                 // Tända fönster: varmt, kallt eller tv-blått. Butiker på bottenvåningen lyser oftare.
                 const on = rnd01(col + 31, row * 3 + salt);
-                const p = row === 0 ? (style === 'ind' ? 0.25 : 0.85) : style === 'office' ? 0.5 : 0.45;
+                const p = row === 0 ? (style === 'ind' ? 0.2 : 0.8) : style === 'office' ? 0.4 : 0.36;
                 if (on > p) continue;
                 const k = rnd01(col * 5, row + salt * 3);
-                const col1 = k < 0.62 ? [255, 206, 120] : k < 0.85 ? [235, 240, 255] : [120, 160, 255];
-                const dim = 0.55 + 0.45 * rnd01(row, col + 99);
+                const c = k < 0.66 ? [255, 196, 112] : k < 0.88 ? [226, 234, 255] : [110, 150, 255];
+                const dim = 0.4 + 0.6 * rnd01(row, col + 99);
+                const rgb = (f) => `rgb(${c.map(v => Math.round(v * dim * f)).join(',')})`;
+                // rummet innanför: ljusare upptill (taklampa), mörkare golv
                 const grd = g.createLinearGradient(0, y, 0, y + h);
-                grd.addColorStop(0, `rgb(${col1.map(c => Math.round(c * dim * 0.75)).join(',')})`);
-                grd.addColorStop(1, `rgb(${col1.map(c => Math.round(c * dim)).join(',')})`);
+                grd.addColorStop(0, rgb(1)); grd.addColorStop(0.6, rgb(0.8)); grd.addColorStop(1, rgb(0.45));
                 g.fillStyle = grd; g.fillRect(x, y, w, h);
-                // Gardiner och karmar
-                g.fillStyle = 'rgba(0,0,0,0.35)';
-                if (style !== 'office') { g.fillRect(x + w / 2 - 1, y, 2, h); g.fillRect(x, y + h * 0.45, w, 2); }
-                if (rnd01(col, row + 7) < 0.4) { g.fillStyle = 'rgba(0,0,0,0.45)'; g.fillRect(x, y, w * 0.3, h); }
+                // gardin på ena sidan, ibland en siluett, alltid spröjs
+                const cur = rnd01(col, row + 7);
+                if (cur < 0.5) { g.fillStyle = `rgba(0,0,0,${0.35 + cur * 0.4})`; g.fillRect(cur < 0.25 ? x : x + w * 0.62, y, w * 0.38, h); }
+                if (rnd01(col + 9, row + 11) < 0.15 && style !== 'ind') { g.fillStyle = 'rgba(0,0,0,0.55)'; g.beginPath(); g.arc(x + w * 0.45, y + h * 0.42, w * 0.14, 0, Math.PI * 2); g.fill(); g.fillRect(x + w * 0.3, y + h * 0.55, w * 0.3, h * 0.45); }
+                g.fillStyle = 'rgba(0,0,0,0.6)';
+                if (style === 'office') { for (let xx = x + 15; xx < x + w; xx += 16) g.fillRect(xx, y, 1.5, h); }
+                else { g.fillRect(x + w / 2 - 1, y, 2, h); g.fillRect(x, y + h * 0.42, w, 2); }
                 continue;
             }
             if (style === 'ind' && row === 0) {
@@ -132,7 +136,7 @@ export function paintFacade(style, lit) {
             g.fillStyle = '#f4f2ee'; g.fillRect(x - 1, y - 1, w + 2, h + 2);
             // Glas med himmelsreflex
             const grd = g.createLinearGradient(x, y, x + w * 0.6, y + h);
-            grd.addColorStop(0, '#5d7591'); grd.addColorStop(0.45, '#2b3a4f'); grd.addColorStop(1, '#16202d');
+            grd.addColorStop(0, '#9ab3cc'); grd.addColorStop(0.45, '#4a627c'); grd.addColorStop(1, '#202d3c');
             g.fillStyle = grd; g.fillRect(x, y, w, h);
             g.fillStyle = 'rgba(255,255,255,0.10)';
             g.beginPath(); g.moveTo(x, y + h * 0.7); g.lineTo(x + w * 0.7, y); g.lineTo(x + w, y); g.lineTo(x, y + h); g.closePath(); g.fill();
@@ -301,7 +305,8 @@ export class LabelAtlas {
         return e;
     }
     // Skylt: text med kontur och valfri neonglöd. Höjden är fast, bredden följer texten.
-    text(str, color = '#fff', opts = {}) {
+    text(str, color = '#fff', opts) {
+        opts = opts || {};
         const key = 't:' + str + '|' + color + '|' + (opts.glow || '') + '|' + (opts.size || 28) + '|' + (opts.bg || '');
         let e = this.map.get(key);
         if (e) return e;
@@ -331,6 +336,53 @@ export class LabelAtlas {
     }
 }
 
+// ── Inomhus: sidor på hyllor, vapenställ och väggar (tonas med möbelns färg) ──
+export function paintShelf(kind) {
+    const W = 128, H = 128, cv = mk(W, H), g = cv.getContext('2d');
+    if (kind === 'rack') {
+        // Perforerad skiva med vapen
+        g.fillStyle = '#b9b4ac'; g.fillRect(0, 0, W, H);
+        g.fillStyle = 'rgba(0,0,0,0.25)';
+        for (let y = 4; y < H; y += 8) for (let x = 4; x < W; x += 8) g.fillRect(x, y, 2, 2);
+        const gun = (x, y, w, long) => {
+            g.fillStyle = '#1b1d21';
+            g.fillRect(x, y, w, 6); g.fillRect(x + w * 0.62, y + 5, 6, 12);
+            if (long) { g.fillStyle = '#6b4423'; g.fillRect(x - 14, y + 1, 16, 8); }
+        };
+        gun(20, 16, 70, true); gun(14, 48, 44, false); gun(70, 52, 40, false); gun(24, 84, 84, true); gun(30, 112, 34, false);
+        g.fillStyle = 'rgba(0,0,0,0.35)'; g.fillRect(0, H - 6, W, 6);
+        return cv;
+    }
+    g.fillStyle = '#9a9690'; g.fillRect(0, 0, W, H);
+    const cols = ['#ef4444', '#f59e0b', '#22c55e', '#3b82f6', '#a855f7', '#e5e7eb', '#111827', '#f97316', '#14b8a6'];
+    for (let s = 0; s < 4; s++) {
+        const y0 = s * 32;
+        g.fillStyle = 'rgba(0,0,0,0.25)'; g.fillRect(0, y0, W, 32);
+        let x = 2;
+        while (x < W - 6) {
+            const w = 6 + Math.floor(rnd01(x, s) * 12), h = 10 + Math.floor(rnd01(s, x) * 16);
+            g.fillStyle = cols[Math.floor(rnd01(x * 3, s * 7) * cols.length)];
+            g.fillRect(x, y0 + 28 - h, w, h);
+            g.fillStyle = 'rgba(255,255,255,0.25)'; g.fillRect(x, y0 + 28 - h, 2, h);
+            x += w + 2;
+        }
+        g.fillStyle = '#5b5148'; g.fillRect(0, y0 + 28, W, 4);
+    }
+    return cv;
+}
+export function paintWall() {
+    const W = 128, H = 128, cv = mk(W, H), g = cv.getContext('2d');
+    g.fillStyle = '#d9d4cc'; g.fillRect(0, 0, W, H);
+    for (let i = 0; i < 900; i++) { const r = rnd01(i, 71); g.fillStyle = r < 0.5 ? 'rgba(0,0,0,0.04)' : 'rgba(255,255,255,0.05)'; g.fillRect(rnd01(i, 3) * W, rnd01(4, i) * H, 2, 2); }
+    // paneler, list upptill, sockel nertill
+    g.fillStyle = 'rgba(0,0,0,0.12)';
+    for (let x = 0; x < W; x += 32) g.fillRect(x, 0, 2, H);
+    g.fillStyle = 'rgba(0,0,0,0.45)'; g.fillRect(0, H - 12, W, 12);
+    g.fillStyle = 'rgba(255,255,255,0.2)'; g.fillRect(0, H - 14, W, 2);
+    g.fillStyle = 'rgba(0,0,0,0.3)'; g.fillRect(0, 0, W, 6);
+    return cv;
+}
+
 // ── Inomhus: rummet målat uppifrån (golv, möbler, skyltar) som golvtextur ──
 export function paintRoom(INT, state, scale) {
     const def = state.def, TS = INT.IN_TILE || 32;
@@ -349,7 +401,7 @@ export function paintRoom(INT, state, scale) {
 // Rummets ljus (additivt sken på golvet) i låg upplösning — uppdateras några gånger i sekunden
 export function paintRoomLight(INT, state, canvas, scale, t) {
     const def = state.def, TS = INT.IN_TILE || 32;
-    const g = canvas.getContext('2d', { willReadFrequently: true });
+    const g = canvas.getContext('2d');
     g.setTransform(1, 0, 0, 1, 0, 0);
     g.globalCompositeOperation = 'source-over';
     g.fillStyle = '#000'; g.fillRect(0, 0, canvas.width, canvas.height);

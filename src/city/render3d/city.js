@@ -243,7 +243,7 @@ export function createCity3D(THREE, { city, scene, anisotropy = 4, nearPx = 512,
         const g = STYLE_G[style];
         const roof = lin(b.roof), roofDark = lin(b.roofDark);
         let col = style === 'office' ? mix3(lin(b.roof, 1.05), lin('#a9b8c8'), 0.45) : style === 'ind' ? mix3(lin(b.roof, 0.95), lin('#9a958c'), 0.35) : mix3(lin(b.roof, 1.1), lin('#d9cbb6'), 0.4);
-        if (b.hq) col = lin('#3b4a57');
+        if (b.hq) col = lin('#5a6d80');
         // fyra väggar (normaler utåt)
         // fyra väggar; ordningen (moturs sett utifrån) ger normal utåt och fönster som läses vänster→höger
         wall(b, x1, z0, x0, z0, [0, 0, -1], Hb, col, g, 1);  // norr
@@ -289,7 +289,7 @@ export function createCity3D(THREE, { city, scene, anisotropy = 4, nearPx = 512,
         const tuv = (x, z) => [x / 96, -z / 96];
         B.quad([x0, Hb, z1], [x1, Hb, z1], [x1, Hb, z0], [x0, Hb, z0], [0, 1, 0], [...tuv(x0, z1), ...tuv(x1, z1), ...tuv(x1, z0), ...tuv(x0, z0)], roof, 3);
         const pt = 4.5, ph = 7, ov = 1.6;
-        const pcol = mul(roofDark, 0.92);
+        const pcol = b.hq ? lin('#e8b923') : mul(roofDark, 0.92); // HQ: gul kant som i 2D
         B.box(x0 - ov, Hb, z0 - ov, x1 + ov, Hb + ph, z0 + pt, pcol, 4, { ao: 0.85 });
         B.box(x0 - ov, Hb, z1 - pt, x1 + ov, Hb + ph, z1 + ov, pcol, 4, { ao: 0.85 });
         B.box(x0 - ov, Hb, z0 + pt, x0 + pt, Hb + ph, z1 - pt, pcol, 4, { ao: 0.85 });
@@ -388,6 +388,50 @@ export function createCity3D(THREE, { city, scene, anisotropy = 4, nearPx = 512,
         B.box(x - 8, 0, z - 8, x + 8, 3, z + 8, lin('#333'), 4);
         B.box(x - 7, 3, z - 7, x + 7, 36, z + 7, lin('#1f3346'), 4, { ao: 0.9 });
         B.box(x - 8.5, 36, z - 8.5, x + 8.5, 42, z + 8.5, gc, 4, { top: mul(gc, 0.8) });
+    }
+
+    // Gatumöbler längs husväggarna: soptunnor, bänkar, brandposter, planteringar
+    const avoid = [];
+    const addAvoid = o => { if (o) avoid.push(o.door ? o.door : o); };
+    [m.home, m.dealer, m.recruit, m.club, m.guns, m.fence, m.bank, m.stripclub].forEach(addAvoid);
+    [...(m.phones || []), ...(m.sprays || []), ...(m.businesses || []), ...(m.houses || [])].forEach(addAvoid);
+    for (const l of city.lights || []) avoid.push(l);
+    const free = (x, y) => avoid.every(o => Math.hypot(o.x - x, o.y - y) > 46);
+    const binC = lin('#2f5d3a'), lidC = lin('#1f3d27'), woodC = lin('#8a5a33'), ironC = lin('#26282c'), redC = lin('#c0262d'), potC = lin('#6b4a35'), bushC = lin('#2f6b2a');
+    for (let ty = 1; ty < city.h - 1; ty++) for (let tx = 1; tx < city.w - 1; tx++) {
+        if (tileAt(city, tx, ty) !== T.SIDEWALK) continue;
+        const r = H_(tx * 3 + 7, ty * 5 + 1);
+        if (r > 0.2) continue;
+        let d = -1;
+        for (let k = 0; k < 4; k++) if (tileAt(city, tx + DX[k], ty + DY[k]) === T.BUILDING) { d = k; break; }
+        if (d < 0) continue;
+        // mot väggen, lite åt sidan
+        const along = (H_(tx, ty * 9) - 0.5) * 30;
+        const cx = tx * TILE + 32 + DX[d] * 20 + (DX[d] ? 0 : along), cy = ty * TILE + 32 + DY[d] * 20 + (DY[d] ? 0 : along);
+        if (!free(cx, cy)) continue;
+        const kind = Math.floor(H_(tx + 11, ty + 13) * 4);
+        const horiz = DX[d] === 0; // väggen ligger norr/söder → bänken längs x
+        if (kind === 0) {
+            B.cylinder(cx, 0, cy, 5.2, 14, 8, binC, 4);
+            B.cylinder(cx, 14, cy, 5.8, 2, 8, lidC, 4);
+        } else if (kind === 1) {
+            const hw = horiz ? 14 : 4.5, hd = horiz ? 4.5 : 14;
+            B.box(cx - hw, 7, cy - hd, cx + hw, 9, cy + hd, woodC, 4, { ao: 0.9 });
+            for (const s of [-1, 1]) {
+                const lx = cx + (horiz ? s * (hw - 2) : 0), ly = cy + (horiz ? 0 : s * (hd - 2));
+                B.box(lx - 1.2, 0, ly - 1.2, lx + 1.2, 7, ly + 1.2, ironC, 4);
+            }
+            // ryggstöd mot väggen
+            const bx = cx + DX[d] * 4, by = cy + DY[d] * 4;
+            B.box(bx - (horiz ? hw : 0.8), 9, by - (horiz ? 0.8 : hd), bx + (horiz ? hw : 0.8), 17, by + (horiz ? 0.8 : hd), woodC, 4, { ao: 0.85 });
+        } else if (kind === 2) {
+            B.cylinder(cx, 0, cy, 3, 9, 8, redC, 4);
+            B.cylinder(cx, 9, cy, 2, 2.5, 8, mul(redC, 0.8), 4);
+            B.box(cx - 4.5, 4.5, cy - 1, cx + 4.5, 6.5, cy + 1, mul(redC, 0.9), 4);
+        } else {
+            B.box(cx - 8, 0, cy - 8, cx + 8, 9, cy + 8, potC, 4, { top: lin('#3a2a1e') });
+            B.cylinder(cx, 9, cy, 7, 9, 7, bushC, 4, mul(bushC, 1.25));
+        }
     }
 
     const bGeo = keep(B.build(THREE));
@@ -491,7 +535,20 @@ export function createCity3D(THREE, { city, scene, anisotropy = 4, nearPx = 512,
         skB.quad([x0, h, z1], [x1, h, z1], [x1, h, z0], [x0, h, z0], [0, 1, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0.4, 0.4, 0.4]);
     }
     const skGeo = keep(skB.build(THREE));
-    const skyMat = keep(new THREE.MeshLambertMaterial({ vertexColors: true, map: facTex.office, emissiveMap: litTex.office, emissive: new THREE.Color(0xffffff), emissiveIntensity: 0, color: 0x333344, fog: false }));
+    // Egen enkel shader: mörk silhuett i dis, tända fönster på natten, ljusare (disigare) nertill
+    const skyMat = keep(new THREE.ShaderMaterial({
+        uniforms: { map: { value: litTex.res }, base: { value: new THREE.Color(0x222233) }, haze: { value: new THREE.Color(0x888899) }, win: { value: 0 } },
+        vertexShader: `varying vec2 vUv; varying float vH; void main() { vUv = uv; vH = position.y; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+        fragmentShader: `uniform sampler2D map; uniform vec3 base; uniform vec3 haze; uniform float win; varying vec2 vUv; varying float vH;
+            void main() {
+                vec3 lit = texture2D(map, vUv).rgb;
+                vec3 c = base + lit * win * 0.38;
+                c = mix(haze, c, smoothstep(0.0, 320.0, vH) * 0.85);
+                gl_FragColor = vec4(c, 1.0);
+                #include <colorspace_fragment>
+            }`,
+        fog: false
+    }));
     const skylineMesh = new THREE.Mesh(skGeo, skyMat);
     skylineMesh.name = 'skyline';
     skylineMesh.renderOrder = -5;
@@ -514,15 +571,16 @@ export function createCity3D(THREE, { city, scene, anisotropy = 4, nearPx = 512,
         blocked: (x, y, h) => bldAt(x, y) > h - 8,
         updateGround,
         // palett från dayPalette: tända fönster och lampor
-        updateLook(pal, dt, horizonColor) {
+        updateLook(pal, dt, horizonColor, zenithColor) {
             const win = pal.windows;
             for (const mt of facMats) mt.emissiveIntensity = win * 0.95;
             headMat.color.setRGB(0.25 + pal.lamps * 0.75, 0.24 + pal.lamps * 0.7, 0.2 + pal.lamps * 0.5, THREE.SRGBColorSpace);
             seaT += dt;
             seaNorm.offset.set(seaT * 0.004, seaT * 0.0025);
             // silhuetten: tonad mot horisonten (dis), tända fönster på natten
-            skyMat.color.copy(horizonColor).multiplyScalar(0.55);
-            skyMat.emissiveIntensity = win * 0.8;
+            skyMat.uniforms.haze.value.copy(horizonColor);
+            skyMat.uniforms.base.value.copy(horizonColor).multiplyScalar(0.3).lerp(zenithColor, 0.25);
+            skyMat.uniforms.win.value = win;
         },
         dispose() {
             scene.remove(group);
@@ -539,8 +597,8 @@ function norm(v) { const l = Math.hypot(v[0], v[1], v[2]) || 1; return [v[0] / l
 // Trädkrona: tre klumpar i grönskalor (vertexfärg ljusare upptill)
 function mergeCrowns(THREE) {
     const parts = [[0, 40, 0, 20], [-8, 34, 6, 14], [7, 36, -6, 13], [2, 50, 2, 12]];
-    const geos = parts.map(([x, y, z, r]) => {
-        const g = new THREE.IcosahedronGeometry(r, 1).toNonIndexed();
+    const geos = parts.map(([x, y, z, r], i) => {
+        const g = new THREE.IcosahedronGeometry(r, i ? 0 : 1); // stora klumpen rundare, de små kantiga (färre trianglar)
         g.translate(x, y, z);
         const p = g.getAttribute('position'), col = new Float32Array(p.count * 3);
         for (let i = 0; i < p.count; i++) { const k = 0.65 + 0.35 * Math.min(1, Math.max(0, (p.getY(i) - 24) / 36)); col[i * 3] = col[i * 3 + 1] = col[i * 3 + 2] = k; }

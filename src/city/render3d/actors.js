@@ -11,6 +11,36 @@ import { rootMatrix, jointMatrix, figurePose, parseColor, yawOf, CAR_H } from '.
 import { toLinear } from './batch.js';
 
 const MAX_FIG = 200, MAX_CAR = 120;
+// Färger som återanvänds varje bildruta (inga nya arrayer per anrop)
+const K_0p04_0p04_0p05 = [0.04, 0.04, 0.05];
+const K_0p05_0p05_0p06 = [0.05, 0.05, 0.06];
+const K_0p05_0p1_0p35 = [0.05, 0.1, 0.35];
+const K_0p07_0p07_0p08 = [0.07, 0.07, 0.08];
+const K_0p08_0p06_0p05 = [0.08, 0.06, 0.05];
+const K_0p08_0p08_0p08 = [0.08, 0.08, 0.08];
+const K_0p11_0p3_0p85 = [0.11, 0.3, 0.85];
+const K_0p15_0p35_1 = [0.15, 0.35, 1];
+const K_0p16_0p16_0p18 = [0.16, 0.16, 0.18];
+const K_0p1_0p1_0p11 = [0.1, 0.1, 0.11];
+const K_0p1_0p1_0p12 = [0.1, 0.1, 0.12];
+const K_0p35_0p05_0p05 = [0.35, 0.05, 0.05];
+const K_0p42_0p04_0p04 = [0.42, 0.04, 0.04];
+const K_0p45_0p05_0p05 = [0.45, 0.05, 0.05];
+const K_0p55_0p55_0p5 = [0.55, 0.55, 0.5];
+const K_0p63_0p38_0p03 = [0.63, 0.38, 0.03];
+const K_0p75_0p75_0p7 = [0.75, 0.75, 0.7];
+const K_0p75_0p75_0p78 = [0.75, 0.75, 0.78];
+const K_0p82_0p82_0p78 = [0.82, 0.82, 0.78];
+const K_0p85_0p05_0p04 = [0.85, 0.05, 0.04];
+const K_0p8_0p08_0p06 = [0.8, 0.08, 0.06];
+const K_0p99_0p85_0p2 = [0.99, 0.85, 0.2];
+const K_1_0p12_0p1 = [1, 0.12, 0.1];
+const K_1_0p15_0p1 = [1, 0.15, 0.1];
+const K_1_0p1_0p08 = [1, 0.1, 0.08];
+const K_1_0p88_0p25 = [1, 0.88, 0.25];
+const K_1_0p95_0p8 = [1, 0.95, 0.8];
+const K_1_0p96_0p82 = [1, 0.96, 0.82];
+const K_1_1_1 = [1, 1, 1];
 
 // ── Hjälp: geometri med vertexfärger ──
 function paint(THREE, geo, fn) {
@@ -24,10 +54,11 @@ function paint(THREE, geo, fn) {
     return geo;
 }
 const flat = v => () => [v, v, v];
+const ni = g => (g.index ? g.toNonIndexed() : g);
 
 function merge(THREE, list) {
     // Enkel sammanslagning (position, normal, color, ev. uv)
-    const geos = list.map(g => (g.index ? g.toNonIndexed() : g));
+    const geos = list.map(ni);
     let n = 0;
     for (const g of geos) n += g.getAttribute('position').count;
     const pos = new Float32Array(n * 3), nor = new Float32Array(n * 3), col = new Float32Array(n * 3);
@@ -135,7 +166,7 @@ function extrudeProfile(THREE, pts, depth) {
     const g = new THREE.ExtrudeGeometry(s, { depth, bevelEnabled: false, curveSegments: 1 });
     g.translate(0, 0, -depth / 2);
     g.computeVertexNormals();
-    return g.toNonIndexed();
+    return ni(g);
 }
 const GLASS = [0.16, 0.2, 0.26];
 // Färga bilen: lack (1) på plåt, mörkt glas på rutorna, mörkare nertill
@@ -179,7 +210,7 @@ function vehicleGeometries(THREE) {
     carColors(THREE, van, (nx, ny) => nx > 0.3 && ny > 0.2);
     const side = new THREE.BoxGeometry(0.12, 6, 1.0); side.translate(0.17, 18, 0);
     paint(THREE, side, () => GLASS);
-    G.van = merge(THREE, [van, side.toNonIndexed()]);
+    G.van = merge(THREE, [van, ni(side)]);
     // Cykel/moped: ram, sadel, styre, liten tank (lack)
     const frame = new THREE.BoxGeometry(0.62, 2.2, 0.22); frame.translate(0, 9, 0);
     const seat = new THREE.BoxGeometry(0.22, 1.6, 0.42); seat.translate(-0.14, 12.5, 0);
@@ -197,10 +228,10 @@ function vehicleGeometries(THREE) {
     const pipe = new THREE.BoxGeometry(0.42, 1, 0.08); pipe.translate(-0.24, 5.4, 0.42);
     paint(THREE, cframe, flat(0.18)); paint(THREE, ctank, flat(1)); paint(THREE, cseat, flat(0.12));
     paint(THREE, cfork, flat(0.85)); paint(THREE, ape, flat(0.75)); paint(THREE, pipe, flat(0.95));
-    G.chopper = merge(THREE, [cframe, ctank.toNonIndexed(), cseat, cfork, ape, pipe]);
+    G.chopper = merge(THREE, [cframe, ni(ctank), cseat, cfork, ape, pipe]);
     // Hjul (bil): axel längs z
     const wheel = new THREE.CylinderGeometry(4.5, 4.5, 3.4, 10); wheel.rotateX(Math.PI / 2);
-    paint(THREE, wheel, (x, y, z) => (Math.abs(z) > 1.6 && Math.hypot(x, y) < 2.6 ? [0.75, 0.75, 0.78] : [0.1, 0.1, 0.11]));
+    paint(THREE, wheel, (x, y, z) => (Math.abs(z) > 1.6 && Math.hypot(x, y) < 2.6 ? K_0p75_0p75_0p78 : K_0p1_0p1_0p11));
     G.wheel = merge(THREE, [wheel]);
     const bw = new THREE.CylinderGeometry(5, 5, 1.6, 12); bw.rotateX(Math.PI / 2);
     paint(THREE, bw, flat(0.1));
@@ -290,7 +321,7 @@ export function createActors(THREE, scene) {
         m.n++;
         return i;
     }
-    const BLACK = [0.04, 0.04, 0.05], DARK = [0.1, 0.1, 0.12];
+    const BLACK = K_0p04_0p04_0p05, DARK = K_0p1_0p1_0p12;
 
     // Senaste figurens huvud (för t.ex. pratbubblor) — inte behövt av anroparen
     const api = {
@@ -332,7 +363,7 @@ export function createActors(THREE, scene) {
             // Bål
             putJoint(F.torso, 0, 14, 0, 0, 0, dress || shirt);
             if (f.vest) {
-                putJoint(F.vest, 0, 14, 0, 0, 0, [0.07, 0.07, 0.08]);
+                putJoint(F.vest, 0, 14, 0, 0, 0, K_0p07_0p07_0p08);
                 putJoint(F.patch, 0, 14, 0, 0, 0, parseColor(f.vest));
             }
             // Armar: vapen = höger arm rakt fram, slag = utsträckt
@@ -356,27 +387,28 @@ export function createActors(THREE, scene) {
                     if (i < m.cap) {
                         // längre pipa: skala längs armen (−y) kring handen
                         jointMatrix(m.instanceMatrix.array, i * 16, tmp, 0, 0, f.weapon === 'bat' ? 0 : -12.6 * (1 - long), 0, 0, 0, 1, f.weapon === 'bat' ? 1 : long, 1);
-                        setColor(m, i, f.weapon === 'bat' ? [0.63, 0.38, 0.03] : DARK);
+                        setColor(m, i, f.weapon === 'bat' ? K_0p63_0p38_0p03 : DARK);
                         m.n++;
                     }
                 }
             }
             if (f.head !== false) {
                 putJoint(F.head, 0.2, 27.6, 0, 0, 0, skin);
-                putJoint(F.eyes, 0.2, 27.6, 0, 0, 0, f.shades ? BLACK : [0.08, 0.06, 0.05]);
+                putJoint(F.eyes, 0.2, 27.6, 0, 0, 0, f.shades ? BLACK : K_0p08_0p06_0p05);
                 if (f.cap) putJoint(F.cap, 0.2, 27.6, 0, 0, 0, parseColor(f.cap === true ? '#111827' : f.cap));
                 else putJoint(F.hair, 0.2, 27.6, 0, 0, 0, hair, f.hood ? 1.08 : 1, f.hood ? 1.04 : 1, f.hood ? 1.08 : 1);
             }
             if (f.scooter) {
                 rootMatrix(tmp, 0, f.x, f.z || 0, f.y, yaw, 0, s);
-                put(F.scooter, tmp, [0.16, 0.16, 0.18]);
+                put(F.scooter, tmp, K_0p16_0p16_0p18);
             }
         },
-        // v = världens fordon (eller låtsasbil för andra spelare). opts: { night, flash, hidden }
-        vehicle(v, night, flash, t) {
+        // v = världens fordon (eller låtsasbil för andra spelare)
+        // gangColor: gängets färg (rand längs sidan) eller null
+        vehicle(v, night, flash, t, gangColor = null) {
             const spec = v.spec || {}, L = spec.l || 44, W = spec.w || 22;
             const yaw = yawOf(v.angle || 0);
-            const body = v.exploded ? [0.08, 0.08, 0.08] : parseColor(v.color || '#888');
+            const body = v.exploded ? K_0p08_0p08_0p08 : parseColor(v.color || '#888');
             const k = v.wrecked && !v.exploded ? 0.38 : 1;
             if (spec.kind === 'bike') {
                 const chop = !!spec.chopper;
@@ -389,11 +421,11 @@ export function createActors(THREE, scene) {
                     setColor(m, i, body, k); m.n++;
                 }
                 const r = chop ? 6 : spec.engine ? 5.2 : 4.8;
-                putJoint(V.bikeWheel, L * 0.36, r, 0, 0, 0, [1, 1, 1], r / 5, r / 5, chop ? 1.4 : 1);
-                putJoint(V.bikeWheel, -L * 0.36, r, 0, 0, 0, [1, 1, 1], (chop ? 6.8 : r) / 5, (chop ? 6.8 : r) / 5, chop ? 2.4 : 1);
+                putJoint(V.bikeWheel, L * 0.36, r, 0, 0, 0, K_1_1_1, r / 5, r / 5, chop ? 1.4 : 1);
+                putJoint(V.bikeWheel, -L * 0.36, r, 0, 0, 0, K_1_1_1, (chop ? 6.8 : r) / 5, (chop ? 6.8 : r) / 5, chop ? 2.4 : 1);
                 if (!v.wrecked) {
-                    putJoint(V.head, L * 0.42, 14, 0, 0, 0, night ? [1, 0.95, 0.8] : [0.75, 0.75, 0.7], 1.2, 2, 2.4);
-                    putJoint(V.tail, -L * 0.48, 10, 0, 0, 0, v.braking ? [1, 0.15, 0.1] : night ? [0.8, 0.08, 0.06] : [0.45, 0.05, 0.05], 1, 1.4, 2);
+                    putJoint(V.head, L * 0.42, 14, 0, 0, 0, night ? K_1_0p95_0p8 : K_0p75_0p75_0p7, 1.2, 2, 2.4);
+                    putJoint(V.tail, -L * 0.48, 10, 0, 0, 0, v.braking ? K_1_0p15_0p1 : night ? K_0p8_0p08_0p06 : K_0p45_0p05_0p05, 1, 1.4, 2);
                 }
                 return;
             }
@@ -407,12 +439,12 @@ export function createActors(THREE, scene) {
             }
             // Hjul
             const wx = L * 0.31, wz = W / 2 - 1.6, r = v.type === 'van' ? 4.8 : 4.5;
-            for (let a = -1; a <= 1; a += 2) for (let b = -1; b <= 1; b += 2) putJoint(V.wheel, a * wx, r - low, b * wz, 0, 0, [1, 1, 1], r / 4.5, r / 4.5, 1);
+            for (let a = -1; a <= 1; a += 2) for (let b = -1; b <= 1; b += 2) putJoint(V.wheel, a * wx, r - low, b * wz, 0, 0, K_1_1_1, r / 4.5, r / 4.5, 1);
             if (v.exploded) return;
             const roof = shape === V.van ? 24 : shape === V.sport ? 15.4 : 19.2;
             // Strålkastare och baklampor
-            const hl = night && (v.driver || v.parked === false) ? [1, 0.96, 0.82] : night ? [0.55, 0.55, 0.5] : [0.82, 0.82, 0.78];
-            const tl = v.braking ? [1, 0.1, 0.08] : night ? [0.85, 0.05, 0.04] : [0.42, 0.04, 0.04];
+            const hl = night && (v.driver || v.parked === false) ? K_1_0p96_0p82 : night ? K_0p55_0p55_0p5 : K_0p82_0p82_0p78;
+            const tl = v.braking ? K_1_0p1_0p08 : night ? K_0p85_0p05_0p04 : K_0p42_0p04_0p04;
             if (!v.wrecked) {
                 for (let b = -1; b <= 1; b += 2) {
                     putJoint(V.head, L / 2 - 0.3, 8.4, b * (W / 2 - 3.4), 0, 0, hl, 1, 2.2, 4.2);
@@ -422,16 +454,16 @@ export function createActors(THREE, scene) {
             // Polis: blåljusramp, blå rand. Taxi: skylt. Gäng: rand i gängets färg.
             if (spec.police) {
                 const on = v.siren && !v.wrecked;
-                putJoint(V.siren, -L * 0.06, roof + 1.1, -W * 0.18, 0, 0, on && flash ? [1, 0.12, 0.1] : [0.35, 0.05, 0.05], 3.2, 2.2, W * 0.32);
-                putJoint(V.siren, -L * 0.06, roof + 1.1, W * 0.18, 0, 0, on && !flash ? [0.15, 0.35, 1] : [0.05, 0.1, 0.35], 3.2, 2.2, W * 0.32);
-                putJoint(V.stripe, 0, 7.4, 0, 0, 0, [0.11, 0.3, 0.85], L * 0.94, 2.2, W + 0.35);
+                putJoint(V.siren, -L * 0.06, roof + 1.1, -W * 0.18, 0, 0, on && flash ? K_1_0p12_0p1 : K_0p35_0p05_0p05, 3.2, 2.2, W * 0.32);
+                putJoint(V.siren, -L * 0.06, roof + 1.1, W * 0.18, 0, 0, on && !flash ? K_0p15_0p35_1 : K_0p05_0p1_0p35, 3.2, 2.2, W * 0.32);
+                putJoint(V.stripe, 0, 7.4, 0, 0, 0, K_0p11_0p3_0p85, L * 0.94, 2.2, W + 0.35);
             }
-            if (spec.taxi) putJoint(V.sign, -L * 0.08, roof + 1.6, 0, 0, 0, night ? [1, 0.88, 0.25] : [0.99, 0.85, 0.2], 4.5, 3.2, 8);
+            if (spec.taxi) putJoint(V.sign, -L * 0.08, roof + 1.6, 0, 0, 0, night ? K_1_0p88_0p25 : K_0p99_0p85_0p2, 4.5, 3.2, 8);
             if (v.gang && !spec.police) {
-                const g = v.gangColor ? parseColor(v.gangColor) : null;
+                const g = gangColor ? parseColor(gangColor) : null;
                 if (g) putJoint(V.stripe, 0, 7.6, 0, 0, 0, g, L * 0.96, 1.6, W + 0.3);
             }
-            if (spec.sport) putJoint(V.stripe, 0, 9.3, 0, 0, 0, [0.05, 0.05, 0.06], L * 0.9, 0.5, W * 0.18);
+            if (spec.sport) putJoint(V.stripe, 0, 9.3, 0, 0, 0, K_0p05_0p05_0p06, L * 0.9, 0.5, W * 0.18);
         },
         meshes: F,
         vmeshes: V,

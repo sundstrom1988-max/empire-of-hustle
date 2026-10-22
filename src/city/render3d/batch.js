@@ -19,11 +19,13 @@ attribute vec2 iRot;
 varying vec2 vUv;
 varying vec4 vColor;
 varying float vFog;
+varying float vBack;
 uniform float fogNear;
 uniform float fogFar;
 void main() {
     vUv = mix(iUV.xy, iUV.zw, uv);
     vColor = iColor;
+    vBack = 0.0;
     vec2 q = position.xy * iSize;
     float c = cos(iRot.y), s = sin(iRot.y);
     vec4 mv;
@@ -32,6 +34,8 @@ void main() {
         mv.xy += vec2(c * q.x - s * q.y, s * q.x + c * q.y);
     } else if (iRot.x < 1.5) {
         mv = modelViewMatrix * vec4(iPos + vec3(s * q.x, q.y, -c * q.x), 1.0);
+        // skylt sedd bakifrån: visa inte spegelvänd text
+        vBack = dot(vec3(c, 0.0, s), cameraPosition - iPos) < 0.0 ? 1.0 : 0.0;
     } else if (iRot.x < 2.5) {
         mv = modelViewMatrix * vec4(iPos + vec3(c * q.x - s * q.y, 0.0, s * q.x + c * q.y), 1.0);
     } else {
@@ -52,7 +56,9 @@ uniform float additive;
 varying vec2 vUv;
 varying vec4 vColor;
 varying float vFog;
+varying float vBack;
 void main() {
+    if (vBack > 0.5) discard;
     vec4 c = texture2D(map, vUv) * vColor;
     if (c.a < alphaTest) discard;
     if (additive > 0.5) {
@@ -69,7 +75,7 @@ const LUT = new Float32Array(256);
 for (let i = 0; i < 256; i++) LUT[i] = lin(i / 255);
 export const toLinear = c => LUT[Math.max(0, Math.min(255, Math.round(c * 255)))];
 
-export function createQuadBatch(THREE, { capacity = 256, map, kind = 'alpha', renderOrder = 0, name = 'batch' }) {
+export function createQuadBatch(THREE, { capacity = 256, map, kind = 'alpha', renderOrder = 0, name = 'batch', offset = false }) {
     const base = new THREE.PlaneGeometry(1, 1);
     const geo = new THREE.InstancedBufferGeometry();
     geo.index = base.index;
@@ -97,7 +103,9 @@ export function createQuadBatch(THREE, { capacity = 256, map, kind = 'alpha', re
         depthWrite: kind === 'cutout',
         depthTest: true,
         blending: additive ? THREE.AdditiveBlending : THREE.NormalBlending,
-        polygonOffset: kind === 'ground', polygonOffsetFactor: -2, polygonOffsetUnits: -4
+        side: THREE.DoubleSide, // platta saker på marken ses ovanifrån (baksidan i planets ordning)
+        // platta saker på marken: dra fram dem en aning i djupet så att de inte flimrar mot asfalten
+        polygonOffset: offset, polygonOffsetFactor: -2, polygonOffsetUnits: -4
     });
     const mesh = new THREE.Mesh(geo, mat);
     mesh.frustumCulled = false;

@@ -9,8 +9,8 @@
 //  three: x = världens x, z = världens y, y = upp
 export const PERSON_H = 34;        // en människa
 export const EYE_H = 30;           // ögonhöjd i förstapersonsvy
-export const FLOOR_H = 40;         // en våning
-export const GROUND_FLOOR_H = 50;  // bottenvåningen är högre: dörrar och skyltfönster
+export const FLOOR_H = 44;         // en våning (~40 px, lite högre så att gatorna inte känns låga)
+export const GROUND_FLOOR_H = 54;  // bottenvåningen är högre: dörrar och skyltfönster
 export const MAX_FLOORS = 8;       // fasadtexturen har åtta rader
 export const CAR_H = 21;           // en bil
 export const ROOM_H = 58;          // takhöjd inomhus (~3 m)
@@ -66,6 +66,8 @@ export const CHASE = {
     fov: 58
 };
 export const FPS = { fov: 75, carEye: 16, bikeEye: 27, bob: 0.7 };
+const LIFTS_ALL = [1, 1.6, 2.4], NO_LIFT = [1];
+const YAW_OFFS = [0, 0.6, -0.6, 1.2, -1.2, 1.8, -1.8];
 
 // Var kameran tittar ifrån: spelaren eller fordonet hen kör
 export function cameraSubject(world) {
@@ -88,23 +90,54 @@ export function chaseCamera(st, subj, dt, opts = {}, room = false, blocked = nul
     let up = c.up * zoom * (1 + fast * 0.1);
     // pitch: + tittar uppåt (kameran sänks), − tittar ner (kameran höjs)
     if (opts.pitch != null) up = c.lookH + back * Math.tan(clamp(Math.atan2(c.up - c.lookH, c.back) - opts.pitch, 0.04, 1.4));
-    const fx = Math.cos(st.yaw), fy = Math.sin(st.yaw);
-    // Hus i vägen: gå längs linjen från målet bakåt och stanna före första väggen
-    let k = 1;
+    // Hus i vägen: lyft kameran över hindret, annars sväng runt det, annars dra in den
+    let k = 1, lift = 1, yoff = 0;
     if (blocked) {
         const steps = 14;
-        for (let i = 1; i <= steps; i++) {
-            const t = i / steps;
-            if (blocked(subj.x - fx * back * t, subj.y - fy * back * t, c.lookH + (up - c.lookH) * t)) { k = Math.max(0.12, (i - 1) / steps); break; }
-        }
+        const hitAt = (L, off) => {
+            const ax = Math.cos(st.yaw + off), ay = Math.sin(st.yaw + off);
+            const upL = c.lookH + (up - c.lookH) * L;
+            for (let i = 1; i <= steps; i++) {
+                const t = i / steps;
+                if (blocked(subj.x - ax * back * t, subj.y - ay * back * t, c.lookH + (upL - c.lookH) * t)) return i;
+            }
+            return 0;
+        };
+        const prev = st.yoffT || 0;
+        if (hitAt(1, prev)) {
+            let found = false;
+            const lifts = room ? NO_LIFT : LIFTS_ALL;
+            for (let a = 0; a < YAW_OFFS.length && !found; a++) {
+                const off = a === 0 ? prev : YAW_OFFS[a];
+                if (a > 0 && off === prev) continue;
+                for (let l = 0; l < lifts.length; l++) if (!hitAt(lifts[l], off)) { lift = lifts[l]; yoff = off; found = true; break; }
+            }
+            if (!found) {
+                // ingen fri väg: ställ kameran precis framför väggen
+                const first = hitAt(1, 0);
+                let lo = (first - 1) / steps, hi = first / steps;
+                const ax = Math.cos(st.yaw), ay = Math.sin(st.yaw);
+                for (let it = 0; it < 5; it++) {
+                    const m = (lo + hi) / 2;
+                    if (blocked(subj.x - ax * back * m, subj.y - ay * back * m, c.lookH + (up - c.lookH) * m)) hi = m; else lo = m;
+                }
+                k = Math.max(0.06, lo - 10 / back);
+            }
+        } else yoff = prev;
     }
-    // Snabbt in, långsamt ut igen
+    st.yoffT = yoff;
+    if (st.lift == null) { st.lift = lift; st.yoff = yoff; }
+    // Snabbt in/upp, långsamt tillbaka
     st.dist += (k - st.dist) * Math.min(1, dt * (k < st.dist ? 14 : 2.5));
-    if (!(dt > 0)) st.dist = Math.min(st.dist, k);
-    back *= st.dist; up = c.lookH + (up - c.lookH) * st.dist;
+    st.lift += (lift - st.lift) * Math.min(1, dt * (lift > st.lift ? 8 : 2));
+    st.yoff = lerpAngle(st.yoff || 0, yoff, Math.min(1, dt * 3));
+    if (!(dt > 0)) { st.dist = Math.min(st.dist, k); st.lift = Math.max(st.lift, lift); st.yoff = yoff; }
+    back *= st.dist; up = c.lookH + (up - c.lookH) * st.lift * Math.max(st.dist, 0.3);
+    const fx = Math.cos(st.yaw + st.yoff), fy = Math.sin(st.yaw + st.yoff);
+    const lx = Math.cos(st.yaw), ly = Math.sin(st.yaw);
     if (room) up = Math.min(up, ROOM_H - 6);
     out.x = subj.x - fx * back; out.y = subj.y - fy * back; out.z = up;
-    out.lx = subj.x + fx * c.ahead * zoom; out.ly = subj.y + fy * c.ahead * zoom; out.lz = c.lookH;
+    out.lx = subj.x + lx * c.ahead * zoom * st.dist; out.ly = subj.y + ly * c.ahead * zoom * st.dist; out.lz = c.lookH;
     out.fov = CHASE.fov;
     return out;
 }
@@ -118,9 +151,10 @@ export function fpsCamera(world, opts = {}, out = {}) {
         const a = v.angle, L = v.spec?.l || 44, W = v.spec?.w || 22;
         const bike = v.spec?.kind === 'bike';
         // förarplatsen: lite bakom mitten, till vänster (högertrafik)
-        const fwd = bike ? -0.12 * L : -0.04 * L, side = bike ? 0 : -0.2 * W;
-        x = v.x + Math.cos(a) * fwd + Math.sin(a) * side;
-        y = v.y + Math.sin(a) * fwd - Math.cos(a) * side;
+        // vänster om färdriktningen (cos a, sin a) är (sin a, −cos a) när y pekar nedåt
+        const fwd = bike ? -0.12 * L : -0.04 * L, left = bike ? 0 : 0.2 * W;
+        x = v.x + Math.cos(a) * fwd + Math.sin(a) * left;
+        y = v.y + Math.sin(a) * fwd - Math.cos(a) * left;
         z = bike ? FPS.bikeEye : FPS.carEye;
         yaw = opts.yaw ?? a;
     } else {
@@ -205,11 +239,15 @@ export function figurePose(pose, phase, moving = true, out = {}) {
             armL = armR = 0.3; sideL = sideR = 2.5 + up * 0.35; bob = up * 1.2;
             break;
         }
-        case 'dance':
-            sway = Math.sin(phase * 2) * 0.35;
-            armL = 1.2 + Math.sin(phase * 2) * 0.9; armR = 1.2 - Math.sin(phase * 2) * 0.9;
-            sideL = sideR = 0.5; legL = s * 0.35; legR = -s * 0.35; bob = Math.abs(Math.sin(phase * 2)) * 1.5;
+        case 'dance': {
+            // armarna vevar upp i luften omväxlande, höfterna gungar
+            const w = Math.sin(phase * 2);
+            sway = w * 0.35;
+            armL = 0.35 + Math.max(0, w) * 0.5; armR = 0.35 + Math.max(0, -w) * 0.5;
+            sideL = 1.3 + w * 1.15; sideR = 1.3 - w * 1.15;
+            legL = s * 0.3; legR = -s * 0.3; bob = Math.abs(w) * 1.6;
             break;
+        }
         case 'work':
             armL = armR = 1.1; legL = legR = 0;
             break;

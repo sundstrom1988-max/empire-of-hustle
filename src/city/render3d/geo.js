@@ -48,17 +48,20 @@ export class GeoBuilder {
         const lo = [col[0] * ao, col[1] * ao, col[2] * ao];
         const sideCols = [lo, lo, col, col];
         const tuv = opts.topUV;
+        // sidornas uv: u längs kanten (px / su), v 0→1 över höjden
+        const su = opts.sideU, sg = opts.sideGroup ?? group;
+        const suv = (len) => (su ? [0, 0, len / su, 0, len / su, 1, 0, 1] : null);
         // +y
         this.quad([x0, y1, z1], [x1, y1, z1], [x1, y1, z0], [x0, y1, z0], [0, 1, 0],
             tuv ? [...tuv(x0, z1), ...tuv(x1, z1), ...tuv(x1, z0), ...tuv(x0, z0)] : null, top, opts.topGroup ?? group);
         // −z (norr)
-        this.quad([x1, y0, z0], [x0, y0, z0], [x0, y1, z0], [x1, y1, z0], [0, 0, -1], null, sideCols, group);
+        this.quad([x1, y0, z0], [x0, y0, z0], [x0, y1, z0], [x1, y1, z0], [0, 0, -1], suv(x1 - x0), sideCols, sg);
         // +z (söder)
-        this.quad([x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1], [0, 0, 1], null, sideCols, group);
+        this.quad([x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1], [0, 0, 1], suv(x1 - x0), sideCols, sg);
         // −x (väster)
-        this.quad([x0, y0, z0], [x0, y0, z1], [x0, y1, z1], [x0, y1, z0], [-1, 0, 0], null, sideCols, group);
+        this.quad([x0, y0, z0], [x0, y0, z1], [x0, y1, z1], [x0, y1, z0], [-1, 0, 0], suv(z1 - z0), sideCols, sg);
         // +x (öster)
-        this.quad([x1, y0, z1], [x1, y0, z0], [x1, y1, z0], [x1, y1, z1], [1, 0, 0], null, sideCols, group);
+        this.quad([x1, y0, z1], [x1, y0, z0], [x1, y1, z0], [x1, y1, z1], [1, 0, 0], suv(z1 - z0), sideCols, sg);
         if (opts.bottom) this.quad([x0, y0, z0], [x1, y0, z0], [x1, y0, z1], [x0, y0, z1], [0, -1, 0], null, lo, group);
     }
     // Cylinder (lodrät) med n sidor
