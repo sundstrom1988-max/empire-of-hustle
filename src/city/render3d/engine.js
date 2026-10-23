@@ -12,6 +12,7 @@ import { SHOPS } from '../../data/gameData.js';
 import { ITEM_TYPES } from '../items.js';
 import { phoneAccess, gangById } from '../missions.js';
 import { CREW_LOOK } from '../render.js';
+import { bannedFor } from '../brawl.js';
 import * as INT from '../interiors.js';
 import { dayPalette, cameraSubject, chaseCamera, fpsCamera, smooth, lerp, clamp, parseColor, Pool, EYE_H } from './math.js';
 import { paintFxAtlas, fxRect, FX, LabelAtlas } from './paint.js';
@@ -212,7 +213,8 @@ export function createEngine(THREE, canvas, options = {}) {
         const k = smooth(blend);
         for (const key of KEYS) cur[key] = blend >= 1 ? camT[key] : lerp(camF[key], camT[key], k);
         let sx = 0, sy = 0;
-        if (dt > 0 && world.shake > 0) { sx = (Math.random() - 0.5) * world.shake * 6; sy = (Math.random() - 0.5) * world.shake * 6; }
+        // opts.shake === false: inställningen "kamerarörelse" är av
+        if (dt > 0 && world.shake > 0 && opts.shake !== false) { sx = (Math.random() - 0.5) * world.shake * 6; sy = (Math.random() - 0.5) * world.shake * 6; }
         camera.position.set(cur.x + sx, cur.z + sy * 0.5, cur.y + sy);
         camera.lookAt(cur.lx, cur.lz, cur.ly);
         const near = mode === 'fps' || blend < 1 ? 1 : 3;
@@ -488,7 +490,8 @@ export function createEngine(THREE, canvas, options = {}) {
             const fx = o.x - DX[o.side] * 18, fy = o.y - DY[o.side] * 18;
             decal(fx, fy, 30, R.disc, rgb, 0.3 + (0.5 + 0.5 * Math.sin(T * 4 + o.y)) * 0.4);
             shine(wx - DX[o.side] * 6, wy - DY[o.side] * 6, 40, flick ? 120 : 80, R.glow, rgb, 0.5);
-            label('GÅ IN', '#ffffff', fx, fy, 24, 4, null);
+            const shut = bannedFor(world, sd.id) > 0; // utslängd efter ett bråk: stängt en stund
+            label(shut ? 'STÄNGT' : 'GÅ IN', shut ? '#f87171' : '#ffffff', fx, fy, 24, 4, null);
             light(wx - DX[o.side] * 30, wy - DY[o.side] * 30, 50, rgb, flick ? 160 : 90, 260, 1.2);
         }
         // Butikernas ikon på taket och HQ-skylten
@@ -747,6 +750,8 @@ export function createEngine(THREE, canvas, options = {}) {
         if (kind) {
             const g = gangById(world.profile.gang);
             fpsOpts.weapon = world.profile.weapon; fpsOpts._shirt = g && g.kind !== 'mc' ? g.color : p.color;
+            // huvudgung av/på och fri blick i bilen (instrumentbrädan sitter kvar i bilen)
+            fpsOpts.bob = opts.bob ?? 1; fpsOpts.lookYaw = opts.lookYaw || 0; fpsOpts.lookPitch = opts.lookPitch || 0;
             vm.update(p, fpsOpts, kind, dt, T, look);
         }
         lap('viewmodel');

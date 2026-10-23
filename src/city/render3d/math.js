@@ -59,11 +59,14 @@ export function hasGable(b) {
 }
 
 // ── Kameror ──
+//  Följkameran sitter nära (ungefär 2–3 gånger närmare än överblicken): bilen eller gubben
+//  ska synas stort. I fart backar den lite och tittar längre fram (fast = andel av toppfarten):
+//  back × (1 + speedBack·fast), titta ahead × (1 + speedAhead·fast) framför.
 export const CHASE = {
-    car: { back: 320, up: 220, ahead: 90, lookH: 18, turn: 3.2 },
-    foot: { back: 210, up: 140, ahead: 60, lookH: 26, turn: 2.6 },
-    room: { back: 120, up: 44, ahead: 40, lookH: 24, turn: 3.0 },
-    fov: 58
+    car: { back: 150, up: 84, ahead: 60, lookH: 16, turn: 3.2, speedBack: 0.35, speedAhead: 2.2 },
+    foot: { back: 150, up: 92, ahead: 46, lookH: 27, turn: 2.6, speedBack: 0, speedAhead: 0 },
+    room: { back: 110, up: 42, ahead: 36, lookH: 26, turn: 3.0, speedBack: 0, speedAhead: 0 },
+    fov: 60
 };
 export const FPS = { fov: 75, carEye: 16, bikeEye: 27, bob: 0.7 };
 const LIFTS_ALL = [1, 1.6, 2.4], NO_LIFT = [1];
@@ -86,8 +89,10 @@ export function chaseCamera(st, subj, dt, opts = {}, room = false, blocked = nul
     else st.yaw = lerpAngle(st.yaw, want, opts.yaw != null ? 1 : Math.min(1, dt * c.turn));
     const zoom = clamp(opts.dist ?? 1, 0.15, 3);
     const fast = subj.car ? clamp(subj.speed / (subj.max || 400), 0, 1) : 0;
-    let back = c.back * zoom * (1 + fast * 0.22);
-    let up = c.up * zoom * (1 + fast * 0.1);
+    // farten glider in (en krock eller ett gasryck ska inte rycka i kameran)
+    st.fast = st.fast == null || !(dt > 0) ? fast : st.fast + (fast - st.fast) * Math.min(1, dt * 1.8);
+    let back = c.back * zoom * (1 + st.fast * (c.speedBack || 0));
+    let up = c.up * zoom * (1 + st.fast * 0.1);
     // pitch: + tittar uppåt (kameran sänks), − tittar ner (kameran höjs)
     if (opts.pitch != null) up = c.lookH + back * Math.tan(clamp(Math.atan2(c.up - c.lookH, c.back) - opts.pitch, 0.04, 1.4));
     // Hus i vägen: lyft kameran över hindret, annars sväng runt det, annars dra in den
@@ -137,12 +142,14 @@ export function chaseCamera(st, subj, dt, opts = {}, room = false, blocked = nul
     const lx = Math.cos(st.yaw), ly = Math.sin(st.yaw);
     if (room) up = Math.min(up, ROOM_H - 6);
     out.x = subj.x - fx * back; out.y = subj.y - fy * back; out.z = up;
-    out.lx = subj.x + lx * c.ahead * zoom * st.dist; out.ly = subj.y + ly * c.ahead * zoom * st.dist; out.lz = c.lookH;
+    const ahead = c.ahead * (1 + st.fast * (c.speedAhead || 0)) * zoom * st.dist;
+    out.lx = subj.x + lx * ahead; out.ly = subj.y + ly * ahead; out.lz = c.lookH;
     out.fov = CHASE.fov;
     return out;
 }
 
 // Förstapersonsvy: ögonen på spelaren, eller förarplatsen i bilen. Vinkel från opts.yaw/pitch.
+//  opts.bob: 0 = ingen huvudgung (inställningen "kamerarörelse"), opts.fov: synfältet (grader)
 export function fpsCamera(world, opts = {}, out = {}) {
     const p = world.player, v = p.vehicle;
     const pitch = clamp(opts.pitch ?? 0, -1.4, 1.4);
@@ -160,14 +167,15 @@ export function fpsCamera(world, opts = {}, out = {}) {
     } else {
         x = p.x; y = p.y;
         const moving = Math.hypot(p.vx || 0, p.vy || 0) > 20;
-        z = p.dead ? 6 : EYE_H + (moving ? Math.abs(Math.sin(p.walkPhase || 0)) * FPS.bob : 0);
+        const bob = FPS.bob * (opts.bob ?? 1);
+        z = p.dead ? 6 : EYE_H + (moving ? Math.abs(Math.sin(p.walkPhase || 0)) * bob : 0);
         yaw = opts.yaw ?? p.angle;
     }
     const cp = Math.cos(pitch);
     out.x = x; out.y = y; out.z = z;
     out.lx = x + Math.cos(yaw) * cp * 100; out.ly = y + Math.sin(yaw) * cp * 100; out.lz = z + Math.sin(pitch) * 100;
     out.yaw = yaw; out.pitch = pitch;
-    out.fov = FPS.fov;
+    out.fov = clamp(opts.fov ?? FPS.fov, 40, 110);
     return out;
 }
 

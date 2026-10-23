@@ -111,6 +111,9 @@ export function createViewModel(THREE) {
             }
             if (kind === 'car' || kind === 'bike') {
                 const v = p.vehicle;
+                // Fri blick: kameran vrids i bilen — ratt och instrument sitter kvar i bilen
+                const ly = prof?.lookYaw || 0, lp = prof?.lookPitch || 0;
+                cockpit.rotation.set(-lp, ly, 0); bars.rotation.set(-lp, ly, 0);
                 mats.paint.color.set(v.exploded ? '#1a1a1a' : v.color || '#888');
                 // ratten följer styrningen lite
                 wheel.rotation.z = hub.rotation.z = -(v.spin || 0) * 0.12;
@@ -121,7 +124,8 @@ export function createViewModel(THREE) {
             for (const [k, w] of Object.entries(weapons)) w.visible = k === weapon;
             const moving = Math.hypot(p.vx || 0, p.vy || 0) > 20;
             const ph = p.walkPhase || 0;
-            const bobX = moving ? Math.sin(ph) * 0.9 : 0, bobY = moving ? Math.abs(Math.cos(ph)) * 0.8 : Math.sin(t * 1.6) * 0.15;
+            const bk = prof?.bob ?? 1; // inställningen "kamerarörelse"
+            const bobX = (moving ? Math.sin(ph) * 0.9 : 0) * bk, bobY = (moving ? Math.abs(Math.cos(ph)) * 0.8 : Math.sin(t * 1.6) * 0.15) * bk;
             hands.position.set(bobX, -bobY, 0);
             const rgb = parseColor(prof?._shirt || '#334155');
             mats.sleeve.color.setRGB(rgb[0], rgb[1], rgb[2], THREE.SRGBColorSpace);

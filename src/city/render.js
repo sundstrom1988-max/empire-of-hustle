@@ -78,7 +78,9 @@ export function withoutProps(npcs, fn) {
 export class Renderer {
     constructor(canvas) {
         this.canvas = canvas;
-        this.ctx = canvas.getContext('2d', { alpha: false });
+        // Genomskinlig: i 3D-lägena ligger den ovanpå 3D-bilden och ritar bara HUD:en
+        // (i överblicken målar draw() hela bakgrunden som förut)
+        this.ctx = canvas.getContext('2d', { alpha: true });
         this.light = document.createElement('canvas');
         this.lctx = this.light.getContext('2d');
         this.chunks = new Map();

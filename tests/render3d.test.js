@@ -103,20 +103,38 @@ describe('chase camera', () => {
         expect(out.lx).toBeGreaterThan(1000);                  // tittar framför
     });
 
-    it('uses ~320 back / ~220 up behind a car and follows its heading smoothly', () => {
+    // Etapp 0 (masterprompten avsnitt 3): följkameran ska vara markant närmare än förut (320/220)
+    it('sits close behind a car (CHASE.car, under half the old 320/220) and follows its heading smoothly', () => {
+        expect(CHASE.car.back).toBeLessThan(320 / 2);
+        expect(CHASE.car.up).toBeLessThan(220 / 2);
         const car = { x: 500, y: 500, vx: 0, vy: 0, angle: Math.PI / 2, spec: { l: 44, w: 22, maxSpeed: 400, kind: 'car' } };
         const w = fakeWorld({ vehicle: car });
         const st = {};
         let out = chaseCamera(st, cameraSubject(w), 0.016, {}, false, null, {});
-        expect(out.y).toBeCloseTo(500 - 320, 0);               // bilen pekar nedåt (+y): kameran ovanför i 2D
-        expect(out.z).toBeCloseTo(220, 0);
+        expect(out.y).toBeCloseTo(500 - CHASE.car.back, 0);    // bilen pekar nedåt (+y): kameran ovanför i 2D
+        expect(out.z).toBeCloseTo(CHASE.car.up, 0);
         car.angle = 0;                                          // tvär sväng
         out = chaseCamera(st, cameraSubject(w), 0.05, {}, false, null, {});
         expect(st.yaw).toBeGreaterThan(0.1);                    // har inte hunnit vända helt
         expect(st.yaw).toBeLessThan(Math.PI / 2);
         for (let i = 0; i < 200; i++) out = chaseCamera(st, cameraSubject(w), 0.05, {}, false, null, {});
         expect(st.yaw).toBeCloseTo(0, 3);
-        expect(out.x).toBeCloseTo(500 - 320, 0);
+        expect(out.x).toBeCloseTo(500 - CHASE.car.back, 0);
+    });
+
+    it('in fart: backar lite och tittar längre fram, mjukt (inga hopp)', () => {
+        const car = { x: 500, y: 500, vx: 0, vy: 0, angle: 0, spec: { l: 44, w: 22, maxSpeed: 400, kind: 'car' } };
+        const w = fakeWorld({ vehicle: car });
+        const st = {};
+        const still = { ...chaseCamera(st, cameraSubject(w), 1 / 60, {}, false, null, {}) };
+        car.vx = 400;                                           // full fart på en gång
+        const next = { ...chaseCamera(st, cameraSubject(w), 1 / 60, {}, false, null, {}) };
+        expect(Math.abs(next.x - still.x)).toBeLessThan(3);     // inget ryck i första bilden
+        let out;
+        for (let i = 0; i < 300; i++) out = chaseCamera(st, cameraSubject(w), 1 / 60, {}, false, null, {});
+        expect(500 - out.x).toBeGreaterThan(CHASE.car.back * 1.2);   // lite längre bak
+        expect(500 - out.x).toBeLessThan(CHASE.car.back * 1.5);      // men bilen blir ingen prick
+        expect(out.lx - 500).toBeGreaterThan(still.lx - 500 + 80);   // tittar längre fram på vägen
     });
 
     it('obeys opts.yaw directly and zooms with opts.dist', () => {

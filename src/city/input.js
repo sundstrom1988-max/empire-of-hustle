@@ -1,6 +1,7 @@
 // ═══════════════════════════════════════════
-//  STAN — tangentbord, mus, touchknappar och
-//  joystick (mobil)
+//  STAN — tangentbord, mus, touchknappar,
+//  joystick (mobil), pekarlås och blick, samt
+//  styrningen till fots (W längs blicken)
 // ═══════════════════════════════════════════
 
 // ── Joystick: ren matematik (testas i tests/joystick.test.js) ──
@@ -111,6 +112,72 @@ export function stickCar(mem, stick, car, dt) {
     return ctl;
 }
 
+// ── Till fots: blick, gång och uthållighet (ren matematik, tests/controls.test.js) ──
+// W går längs blicken och A/D är sidsteg relativt den — aldrig fasta världsaxlar.
+// Vinklar som i resten av stan: 0 = öster (+x), π/2 = söder (+y, nedåt på skärmen).
+const TAU = Math.PI * 2;
+
+// Vinkeln i (−π, π], hur många varv man än snurrat (−π blir π)
+export function normAngle(a) {
+    if (!Number.isFinite(a)) return 0;
+    a %= TAU;
+    if (a > Math.PI) a -= TAU;
+    else if (a <= -Math.PI) a += TAU;
+    return a;
+}
+
+// Blicken: turn (radianer, musen i 3D eller touch-look) vrider gubben, annars tittar
+// han mot aim (världspunkten under pekaren i överblick). Ingen av dem flyttar honom.
+export function lookAngle(angle, input, x, y) {
+    if (input.turn) return normAngle(angle + input.turn);
+    const a = input.aim;
+    if (a && (a.x !== x || a.y !== y)) return normAngle(Math.atan2(a.y - y, a.x - x));
+    return normAngle(angle);
+}
+
+// Vart gubben går, i världen (längd 0 eller 1):
+//  - joysticken (mx, my) är redan omräknad till världsriktning av staden (index.js)
+//  - annars tangenterna relativt blicken a: F = (cos a, sin a), R = (−sin a, cos a),
+//    v = fwd·F + strafe·R, normerad så att diagonalen inte går fortare
+export function footMove(angle, input) {
+    const mx = input.mx || 0, my = input.my || 0;
+    const sl = Math.hypot(mx, my);
+    if (sl > 0.01) return { x: mx / sl, y: my / sl, stick: true };
+    const f = input.fwd || 0, s = input.strafe || 0;
+    if (!f && !s) return { x: 0, y: 0, stick: false };
+    const c = Math.cos(angle), n = Math.sin(angle);
+    const x = f * c - s * n, y = f * n + s * c;
+    const len = Math.hypot(x, y);
+    return len > 1 ? { x: x / len, y: y / len, stick: false } : { x, y, stick: false };
+}
+
+// Uthållighet 0–100: spring drar, vila fyller på. Den som kört slut är andfådd och
+// kan inte springa igen förrän den är tillbaka på STAMINA_RECOVER. Allt per sekund,
+// så det blir samma oavsett bildfrekvens.
+export const STAMINA_MAX = 100;
+export const STAMINA_DRAIN = 12;     // i spring: full → tom på drygt 8 s
+export const STAMINA_WALK = 10;      // tillbaka när man går
+export const STAMINA_REST = 20;      // ... när man står still eller sitter i bilen
+export const STAMINA_RECOVER = 30;
+// s = spelaren ({ stamina, winded }). Ger true om han springer det här steget.
+export function staminaStep(s, dt, wantRun, moving) {
+    if (!Number.isFinite(s.stamina)) s.stamina = STAMINA_MAX;
+    if (s.winded && s.stamina >= STAMINA_RECOVER) s.winded = false;
+    const run = !!wantRun && !!moving && !s.winded && s.stamina > 0;
+    if (run) {
+        s.stamina = Math.max(0, s.stamina - STAMINA_DRAIN * dt);
+        if (s.stamina <= 0) s.winded = true;
+    } else s.stamina = Math.min(STAMINA_MAX, s.stamina + (moving ? STAMINA_WALK : STAMINA_REST) * dt);
+    return run;
+}
+
+// Skriver man i ett textfält (chatt, SMS) ska spelet inte röra sig
+export function isTypingTarget(t) {
+    if (!t) return false;
+    const tag = t.tagName;
+    return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || !!t.isContentEditable;
+}
+
 const MAP = {
     ArrowUp: 'up', KeyW: 'up',
     ArrowDown: 'down', KeyS: 'down',
@@ -123,7 +190,7 @@ const MAP = {
     KeyQ: 'weapon',
     KeyM: 'map',
     KeyT: 'phone',
-    KeyV: 'zoom',
+    KeyV: 'cam', KeyC: 'cam',   // byt kameraläge: förstaperson → följkamera → överblick
     Digit1: 'c1', Digit2: 'c2', Digit3: 'c3',
     ShiftLeft: 'run', ShiftRight: 'run',
     KeyP: 'pause',
@@ -135,59 +202,110 @@ export class Input {
         this.held = new Set();
         this.edges = new Set();
         this.root = root;
-        // Skriver man i ett textfält (t.ex. SMS) ska spelet inte röra sig
-        const typing = (e) => {
-            const t = e.target;
-            return !!t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable);
-        };
+        const doc = typeof document !== 'undefined' ? document : null;
+        this.doc = doc;
+        // Fokus i ett textfält (chatt, SMS): inga spelkontroller
+        const typing = (e) => isTypingTarget(e.target) || isTypingTarget(doc?.activeElement);
         this.onKeyDown = (e) => {
-            if (typing(e)) return;
             const k = MAP[e.code];
-            if (!k) return;
+            if (!k || typing(e)) return;
+            // Esc som släpper pekarlåset (3D) är inte "åk hem"
+            if (k === 'exit' && (this.locked || performance.now() - this.lockLostT < 300)) return;
             e.preventDefault();
             if (!e.repeat) this.edges.add(k);
             this.held.add(k);
         };
+        // Släppa går alltid, även i ett textfält: annars fastnar W om man klickar in i chatten med den nere
         this.onKeyUp = (e) => {
-            if (typing(e)) return;
             const k = MAP[e.code];
-            if (k) { this.held.delete(k); e.preventDefault(); }
+            if (!k) return;
+            this.held.delete(k);
+            if (!typing(e)) e.preventDefault();
         };
-        this.onBlur = () => { this.held.clear(); this.resetStick?.(); }; // inga fastnade tangenter när fönstret tappar fokus
+        // Inga fastnade tangenter eller knappar när fönstret tappar fokus, fliken döljs eller man börjar skriva
+        this.onBlur = () => this.releaseAll();
+        this.onVisibility = () => { if (doc?.hidden) this.releaseAll(); };
+        this.onFocusIn = (e) => { if (isTypingTarget(e.target)) this.releaseAll(); };
         window.addEventListener('keydown', this.onKeyDown);
         window.addEventListener('keyup', this.onKeyUp);
         window.addEventListener('blur', this.onBlur);
+        doc?.addEventListener('visibilitychange', this.onVisibility);
+        doc?.addEventListener('focusin', this.onFocusIn);
 
         // Mus (dator): sikta med pekaren, vänsterklick slår/skjuter, hjulet zoomar.
-        // ignoreMouse(x, y) låter staden säga "det här klicket var på kartan".
+        // ignoreMouse(x, y) låter staden säga "det här klicket var på kartan" (eller bakom en meny).
         this.mouse = { x: 0, y: 0, t: -1e9, inside: false };
         this.wheel = 0;
         this.ignoreMouse = null;
+        // Pekarlås (3D): index.js sätter lockWanted. Klicket som tar låset sväljs (inget skott).
+        // I låst läge summeras musens rörelse till blicken (takeLook), likaså ett finger som
+        // drar på canvasen utanför joysticken och knapparna (touch-look).
+        this.lockWanted = false;
+        this.onLockChange = null;
+        this.lockLostT = -1e9;
+        this.look = { dx: 0, dy: 0 };
+        this.lookId = null;
+        this.lookAt = null;
         this.canvas = root.querySelector('canvas');
         if (this.canvas) {
             const pos = (e) => { const b = this.canvas.getBoundingClientRect(); return { x: e.clientX - b.left, y: e.clientY - b.top }; };
+            // Låst: pekaren står still där låset togs — räkna klicket som mitt i bild
+            const mid = () => { const b = this.canvas.getBoundingClientRect(); return { x: b.width / 2, y: b.height / 2 }; };
+            const clampMove = v => Math.max(-250, Math.min(250, Number(v) || 0)); // webbläsare ger ibland ett jättehopp precis vid låset
+            const isMouse = e => !e.pointerType || e.pointerType === 'mouse';
             this.onMouseMove = (e) => {
-                if (e.pointerType && e.pointerType !== 'mouse') return;
+                if (this.lookId !== null && e.pointerId === this.lookId) {
+                    this.look.dx += e.clientX - this.lookAt.x;
+                    this.look.dy += e.clientY - this.lookAt.y;
+                    this.lookAt = { x: e.clientX, y: e.clientY };
+                    return;
+                }
+                if (!isMouse(e)) return;
+                if (this.locked) { this.look.dx += clampMove(e.movementX); this.look.dy += clampMove(e.movementY); return; }
                 Object.assign(this.mouse, pos(e), { t: performance.now(), inside: true });
             };
             this.onMouseDown = (e) => {
-                if ((e.pointerType && e.pointerType !== 'mouse') || e.button !== 0) return;
-                const p = pos(e);
-                Object.assign(this.mouse, p, { t: performance.now(), inside: true });
+                if (!isMouse(e)) { this.startLook(e, pos(e)); return; }
+                if (e.button !== 0) return;
+                const locked = this.locked;
+                const p = locked ? mid() : pos(e);
+                if (!locked) Object.assign(this.mouse, p, { t: performance.now(), inside: true });
                 if (this.ignoreMouse && this.ignoreMouse(p.x, p.y)) return;
+                if (this.lockWanted && !locked) { this.requestLock(); return; }
                 if (!this.held.has('fire')) this.edges.add('fire');
                 this.held.add('fire');
             };
-            this.onMouseUp = (e) => { if (e.button === 0) this.held.delete('fire'); };
-            this.onMouseLeave = () => { this.mouse.inside = false; this.held.delete('fire'); };
+            this.onMouseUp = (e) => {
+                if (this.lookId !== null && e.pointerId === this.lookId) { this.lookId = null; return; }
+                if (isMouse(e) && e.button === 0) this.held.delete('fire');
+            };
+            this.onLookEnd = (e) => { if (e.pointerId === this.lookId) this.lookId = null; };
+            this.onMouseLeave = (e) => {
+                if (!isMouse(e) || this.locked) return;
+                this.mouse.inside = false;
+                this.held.delete('fire');
+            };
             this.onWheel = (e) => { e.preventDefault(); this.wheel += Math.sign(e.deltaY); };
             this.onContext = (e) => e.preventDefault();
             this.canvas.addEventListener('pointermove', this.onMouseMove);
             this.canvas.addEventListener('pointerdown', this.onMouseDown);
             window.addEventListener('pointerup', this.onMouseUp);
+            this.canvas.addEventListener('pointercancel', this.onLookEnd);
+            this.canvas.addEventListener('lostpointercapture', this.onLookEnd);
             this.canvas.addEventListener('pointerleave', this.onMouseLeave);
             this.canvas.addEventListener('wheel', this.onWheel, { passive: false });
             this.canvas.addEventListener('contextmenu', this.onContext);
+            // Låset kommer och går (Esc, fokusbyte): blicken nollas, och pekarens gamla
+            // position siktar inte förrän musen rört sig igen
+            this.onLockEv = () => {
+                const on = this.locked;
+                if (!on) this.lockLostT = performance.now();
+                this.held.delete('fire');
+                this.look.dx = this.look.dy = 0;
+                this.mouse.t = -1e9;
+                if (this.onLockChange) this.onLockChange(on);
+            };
+            doc?.addEventListener('pointerlockchange', this.onLockEv);
         }
 
         // Touchknappar: <button data-key="up"> osv.
@@ -282,19 +400,62 @@ export class Input {
         return false;
     }
 
+    // ── Pekarlås och blick ──
+    get locked() { return !!this.canvas && !!this.doc && this.doc.pointerLockElement === this.canvas; }
+    requestLock() {
+        const c = this.canvas;
+        if (!c || !c.requestPointerLock || this.locked) return;
+        try {
+            const r = c.requestPointerLock();
+            if (r && typeof r.catch === 'function') r.catch(() => { }); // t.ex. direkt efter Esc: nästa klick försöker igen
+        } catch (e) { /* inget pekarlås här (iframe, äldre webbläsare) */ }
+    }
+    releaseLock() {
+        if (!this.locked) return;
+        try { this.doc.exitPointerLock(); } catch (e) { /* redan släppt */ }
+    }
+    // Ett finger på canvasen (inte joysticken, inte en knapp) tittar runt i 3D.
+    // Inte på minikartan eller bakom en meny (samma ignoreMouse som musen).
+    startLook(e, p) {
+        if (this.lookId !== null) return;
+        if (this.ignoreMouse && this.ignoreMouse(p.x, p.y)) return;
+        this.lookId = e.pointerId;
+        this.lookAt = { x: e.clientX, y: e.clientY };
+        try { this.canvas.setPointerCapture(e.pointerId); } catch (err) { /* äldre webbläsare */ }
+    }
+    // Blicken sedan förra gången: musens rörelse i låst läge + touch-look, i skärm-px
+    takeLook() {
+        const l = { dx: this.look.dx, dy: this.look.dy };
+        this.look.dx = this.look.dy = 0;
+        return l;
+    }
+
+    // Släpp allt som hålls nere: fokusbyte, dold flik, textfält
+    releaseAll() {
+        this.held.clear();
+        this.edges.clear();
+        this.buttons?.forEach(b => b.classList?.remove('pressed'));
+        this.resetStick?.();
+        this.lookId = null;
+        this.look.dx = this.look.dy = 0;
+    }
+
     // Kontrolltillstånd för den här framen.
-    // Joysticken styr gången här; i bilen räknar staden om den med stickDrive().
+    // Bil: throttle/steer. Till fots: fwd/strafe relativt blicken (world.js vrider dem
+    // med gubbens vinkel). mx/my = joysticken i skärmens riktning (upp = −y); staden
+    // räknar om den till världsriktning, och i bilen till gas/ratt med stickCar().
     state() {
         const up = this.has('up') ? 1 : 0, down = this.has('down') ? 1 : 0;
         const left = this.has('left') ? 1 : 0, right = this.has('right') ? 1 : 0;
         const walk = stickWalk(this.stick);
-        const stick = walk.mx !== 0 || walk.my !== 0;
         return {
             throttle: up - down,
             steer: right - left,
             handbrake: this.has('hb'),
-            mx: stick ? walk.mx : right - left,
-            my: stick ? walk.my : down - up,
+            fwd: up - down,
+            strafe: right - left,
+            mx: walk.mx,
+            my: walk.my,
             run: this.has('run') || walk.run,
             horn: this.has('horn'),
             action: this.pressed('act'),
@@ -305,8 +466,8 @@ export class Input {
         };
     }
 
-    // Musen siktar om den rört sig nyligen (eller en knapp hålls inne). Annars tittar gubben dit han går.
-    aimActive(now = performance.now()) { return this.mouse.inside && (now - this.mouse.t < 4000 || this.held.has('fire')); }
+    // Musen siktar om den rört sig nyligen (eller en knapp hålls inne). Låst (3D) siktar den aldrig mot en punkt.
+    aimActive(now = performance.now()) { return !this.locked && this.mouse.inside && (now - this.mouse.t < 4000 || this.held.has('fire')); }
 
     // Hjulet sedan förra gången: -1 = in, +1 = ut, 0 = inget
     takeWheel() { const w = Math.sign(this.wheel); this.wheel = 0; return w; }
@@ -317,10 +478,16 @@ export class Input {
         window.removeEventListener('keydown', this.onKeyDown);
         window.removeEventListener('keyup', this.onKeyUp);
         window.removeEventListener('blur', this.onBlur);
+        this.doc?.removeEventListener('visibilitychange', this.onVisibility);
+        this.doc?.removeEventListener('focusin', this.onFocusIn);
         if (this.canvas) {
+            this.releaseLock();
+            this.doc?.removeEventListener('pointerlockchange', this.onLockEv);
             this.canvas.removeEventListener('pointermove', this.onMouseMove);
             this.canvas.removeEventListener('pointerdown', this.onMouseDown);
             window.removeEventListener('pointerup', this.onMouseUp);
+            this.canvas.removeEventListener('pointercancel', this.onLookEnd);
+            this.canvas.removeEventListener('lostpointercapture', this.onLookEnd);
             this.canvas.removeEventListener('pointerleave', this.onMouseLeave);
             this.canvas.removeEventListener('wheel', this.onWheel);
             this.canvas.removeEventListener('contextmenu', this.onContext);

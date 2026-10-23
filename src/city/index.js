@@ -7,8 +7,14 @@
 import { generateCity } from './map.js';
 import { World } from './world.js';
 import { Renderer } from './render.js';
+import { createRenderer3D } from './render3d.js';
 import { Hud } from './hud.js';
 import { Input, stickCar } from './input.js';
+import {
+    is3D, nextCam, loadCam, saveCam, loadView, saveView, loadIndex, saveIndex, ZOOM_KEY, CHASE_KEY, TOP_ZOOMS, CHASE_ZOOMS, CHASE_DEFAULT,
+    CAM_NAMES, CAM_ICONS, wheelView, viewLabel, lookTurn, stepPitch, aimPoint, stickToWorld, followYaw, chaseRate, controlYaw,
+    createFreeLook, stepFreeLook, resetFreeLook, SENS_RANGE, FOV_RANGE
+} from './camera.js';
 import { stars } from './wanted.js';
 import { gangById } from './missions.js';
 import { JOIN_RESPECT } from './constants.js';
@@ -29,6 +35,8 @@ let session = null;
 export function isCityOpen() { return !!session; }
 
 const isTouch = () => (typeof window !== 'undefined') && (window.matchMedia?.('(pointer: coarse)').matches || 'ontouchstart' in window);
+// localStorage (null i privat läge eller utan webbläsare): kameravalet gäller då bara nu
+const storage = () => { try { return typeof localStorage !== 'undefined' ? localStorage : null; } catch (e) { return null; } };
 
 function buildOverlay(touch) {
     const el = document.createElement('div');
@@ -38,7 +46,7 @@ function buildOverlay(touch) {
         <canvas class="city-canvas"></canvas>
         <div class="city-topbar">
             <button class="city-btn" data-cmd="phone" title="Telefon: SMS, taxi, doktor, crew (T)">📱</button>
-            <button class="city-btn" data-cmd="zoom" title="Byt vy: zooma in och ut (V)">🔍</button>
+            <button class="city-btn" data-cmd="cam" title="Byt kamera: förstaperson → följkamera → överblick (V eller C)">🔍</button>
             <button class="city-btn" data-cmd="radio" title="Byt radiokanal (R)">📻</button>
             <button class="city-btn" data-cmd="pause" title="Paus (P)">⏸</button>
             <button class="city-btn city-home" data-cmd="home" title="Åk hem (Esc)">🏠 HEM</button>
@@ -83,7 +91,10 @@ export function openCity(profile, opts = {}) {
     world.nameOf = id => gameState.players.find(pl => pl.charKey === id)?.char?.name || id;
     cityEnter(profile.charKey);
     const renderer = new Renderer(canvas);
-    renderer.zoomMul = ZOOMS[loadZoom()].mul;
+    // Kameran: valt läge och zoomsteg från förra gången (camera.js). 3D laddas först när det behövs.
+    const st = storage();
+    const topZoom = loadIndex(st, ZOOM_KEY, TOP_ZOOMS.length, 0);
+    renderer.zoomMul = TOP_ZOOMS[topZoom].mul;
     const hud = new Hud();
     const input = new Input(overlay);
     // Klick på minikartan/helkartan (eller bakom en meny) är inte ett slag
@@ -102,10 +113,22 @@ export function openCity(profile, opts = {}) {
     session = {
         world, renderer, hud, input, overlay, modal, touch, opts,
         raf: 0, last: performance.now(), acc: 0, paused: true, modalType: 'intro',
-        errors: 0, musicMuted: !!opts.musicMuted, pendingMission: null, closing: false
+        errors: 0, musicMuted: !!opts.musicMuted, pendingMission: null, closing: false,
+        // Kameran (camera.js): cam = spelarens val, som gäller tills hen själv byter
+        cam: loadCam(st), topZoom, chaseZoom: loadIndex(st, CHASE_KEY, CHASE_ZOOMS.length, CHASE_DEFAULT), view: loadView(st),
+        r3: null, r3State: 'idle', r3Shown: false, wheelT: 0,
+        look: { pitch: 0, camYaw: NaN, turn: 0, free: createFreeLook(), veh: null, room: undefined, x: 0, y: 0 }
     };
+    session.view3 = make3DView(session);
+    // Tappar man pekarlåset mitt i spelet (Esc, fokusbyte) kommer pausmenyn — inte "åk hem"
+    input.onLockChange = (locked) => {
+        const s = session;
+        if (!s || locked || s.closing) return;
+        if (s.input.lockWanted && !s.modalType && !s.paused) showPause();
+    };
+    if (is3D(session.cam)) ensure3D();
 
-    const onResize = () => renderer.resize();
+    const onResize = () => { renderer.resize(); session?.r3?.resize(); };
     const onVis = () => { if (document.hidden && session && !session.paused) showPause(); };
     window.addEventListener('resize', onResize);
     document.addEventListener('visibilitychange', onVis);
@@ -134,7 +157,7 @@ export function openCity(profile, opts = {}) {
 
     onTap(overlay.querySelector('.city-topbar'), '[data-cmd]', (b) => {
         const cmd = b.dataset.cmd;
-        if (cmd === 'zoom') cycleZoom();
+        if (cmd === 'cam') cycleCam();
         else if (cmd === 'radio') cycleRadio();
         else if (cmd === 'phone') { if (!session.modalType) showCityPhone(); }
         else if (cmd === 'pause') session.paused ? resume() : showPause();
@@ -142,6 +165,9 @@ export function openCity(profile, opts = {}) {
     }, touch);
     // Menyernas knappar: en lyssnare på modalen (innehållet byts varje gång den visas)
     onTap(modal, '[data-act]', b => onModalAction(b.dataset.act), touch);
+    // Pausmenyns reglage (känslighet, synfält, kamerarörelse, inverterad Y)
+    modal.addEventListener('input', onSetting);
+    modal.addEventListener('change', (e) => { onSetting(e); if (e.target?.dataset?.set) e.target.blur(); }); // fokus tillbaka till spelet (P/Esc)
 
     stopRadio();
     showIntro();
@@ -186,6 +212,9 @@ function showModal(type, html) {
     s.modalType = type;
     s.modal.innerHTML = html;
     s.modal.hidden = false;
+    // Menyer släpper pekarlåset (musen behövs för knapparna). Läget och blicken står kvar.
+    s.look.turn = 0;
+    updateLock(s);
 }
 
 function hideModal() {
@@ -206,12 +235,30 @@ function showIntro() {
         </div>`);
 }
 
+// Kamera och blick i pausmenyn: läget, känslighet, synfält, kamerarörelse och inverterad Y (sparas)
+function cameraSettings(s) {
+    const vw = s.view;
+    const btn = cam => `<button class="cs-cam${s.cam === cam ? ' on' : ''}" data-act="cam:${cam}" aria-pressed="${s.cam === cam}">${CAM_ICONS[cam]} ${CAM_NAMES[cam]}</button>`;
+    const note = s.r3State === 'failed' ? `<p class="city-warn">⚠️ 3D går inte här (${escapeHtml(s.r3Reason || 'WebGL2 saknas')}) — bara ÖVERBLICK.</p>` : '';
+    return `
+        <div class="city-settings">
+            <div class="cs-title">🎥 Kamera <small>${s.touch ? '🔍 byter' : 'V / C byter · hjulet zoomar'}</small></div>
+            <div class="cs-cams">${btn('fps')}${btn('chase')}${btn('top')}</div>
+            ${note}
+            <label class="cs-row"><span>${s.touch ? 'Känslighet (dra för att titta)' : 'Muskänslighet'}</span><input type="range" min="${SENS_RANGE[0]}" max="${SENS_RANGE[1]}" step="0.1" value="${vw.sens}" data-set="sens"><b data-out="sens">${vw.sens.toFixed(1)}</b></label>
+            <label class="cs-row"><span>Synfält (förstaperson)</span><input type="range" min="${FOV_RANGE[0]}" max="${FOV_RANGE[1]}" step="1" value="${vw.fov}" data-set="fov"><b data-out="fov">${vw.fov}°</b></label>
+            <label class="cs-check"><input type="checkbox" data-set="bob" ${vw.bob ? 'checked' : ''}> Kamerarörelse (gung när du går, skakningar)</label>
+            <label class="cs-check"><input type="checkbox" data-set="invertY" ${vw.invertY ? 'checked' : ''}> Invertera Y (titta upp/ned)</label>
+        </div>`;
+}
+
 function showPause() {
     const w = session.world;
     const canHome = w.canGoHome();
     showModal('pause', `
         <div class="city-card">
             <div class="city-logo small">PAUS</div>
+            ${cameraSettings(session)}
             ${controlsHelp(session.touch)}
             <div class="city-row">
                 <button class="city-go" data-act="resume">▶ Fortsätt</button>
@@ -453,7 +500,8 @@ function onModalAction(act) {
             else if (act.startsWith('taxi:')) { const ok = s.world.taxi(Number(act.slice(5))); handleEvents(); if (ok) resume(); else showCityPhone(); }
             else if (act === 'doctor') { const ok = s.world.callDoctor(); handleEvents(); if (ok) resume(); else showCityPhone(); }
             else if (act.startsWith('crew:')) { s.world.orderCrew(act.slice(5)); resume(); }
-            else if (act === 'sms') { resume(); s.opts.sms?.open(); }
+            else if (act === 'sms') { resume({ lock: false }); s.opts.sms?.open(); }
+            else if (act.startsWith('cam:')) { setCam(act.slice(4)); showPause(); }
             else if (act === 'armor') { s.world.buyArmor(); handleEvents(); showGuns(); }
             else if (act.startsWith('gun:') || act.startsWith('ammo:')) {
                 const [kind, id] = act.split(':');
@@ -464,7 +512,9 @@ function onModalAction(act) {
     }
 }
 
-function resume() {
+// Tillbaka till spelet: samma kameraläge, position och tillstånd som innan menyn.
+// lock: ta pekarlåset direkt i 3D (klicket på "Fortsätt" räknas som användarens tryck).
+function resume({ lock = true } = {}) {
     const s = session;
     hideModal();
     s.paused = false;
@@ -472,7 +522,10 @@ function resume() {
     s.acc = 0;
     s.input.held.clear();
     s.input.edges.clear();
+    s.input.takeLook?.();
+    s.look.turn = 0;
     syncVehicleAudio();
+    updateLock(s, lock);
 }
 
 function tryGoHome() {
@@ -505,30 +558,200 @@ function cycleRadio() {
     s.hud.onEvent({ type: 'radio', name: STATIONS[v.radio].name, tag: STATIONS[v.radio].tag });
 }
 
-// ── Vy: hur nära kameran är (sparas i webbläsaren) ──
-const ZOOMS = [
-    { name: 'NORMAL', mul: 1 },
-    { name: 'LÅNGT', mul: 0.66 },
-    { name: 'NÄRA', mul: 1.35 }
-];
-const ZOOM_KEY = 'hustle_city_zoom';
-function loadZoom() {
-    try { const i = Number(localStorage.getItem(ZOOM_KEY)); return Number.isInteger(i) && ZOOMS[i] ? i : 0; } catch (e) { return 0; }
-}
-function setZoom(i) {
+// ── Kameran: FÖRSTAPERSON, FÖLJKAMERA och ÖVERBLICK (logiken i camera.js) ──
+// Spelarens val (s.cam) gäller tills hen själv byter: dörrar, rum, bil, menyer, uppdrag,
+// omladdning och återanslutning rör det aldrig. Bytet ändrar bara hur stan ritas.
+
+// Det som faktiskt visas: valt 3D-läge när 3D är klart, annars överblicken (laddar, eller 3D går inte)
+function shownCam(s) { return is3D(s.cam) && s.r3State === 'ready' && s.r3?.available ? s.cam : 'top'; }
+
+// 3D (three + motorn) laddas första gången ett 3D-läge behövs, inte när stan öppnas
+function ensure3D() {
     const s = session;
-    try { localStorage.setItem(ZOOM_KEY, String(i)); } catch (e) { /* privat läge: gäller bara nu */ }
-    s.zoomIdx = i;
-    s.renderer.zoomMul = ZOOMS[i].mul;
-    s.hud.onEvent({ type: 'view', name: `VY: ${ZOOMS[i].name}`, tag: s.touch ? '🔍 byter' : 'V / 🔍 / scrollhjulet' });
+    if (!s || s.r3State !== 'idle') return;
+    s.r3State = 'loading';
+    const fail = (why) => {
+        if (session !== s || s.closing) return;
+        s.r3State = 'failed';
+        s.r3Reason = why;
+        // Stanna i överblicken och säg varför — spelarens val skrivs inte över
+        s.hud.onEvent({ type: 'cam', name: CAM_NAMES.top, icon: '⚠️', tag: `3D går inte här (${why})` });
+        s.world.message(`⚠️ 3D-vyn går inte att starta här (${why}). Du spelar i ÖVERBLICK.`);
+        updateLock(s);
+    };
+    createRenderer3D(s.overlay).then(async (r3) => {
+        if (session !== s || s.closing) { r3.dispose(); return; }
+        if (!r3.available) { fail(r3.reason || 'WebGL2 saknas'); return; }
+        r3.setVisible(false);
+        await r3.prepare(s.world); // bygg staden och kompilera i förväg: första 3D-bilden hackar inte
+        if (session !== s || s.closing) { r3.dispose(); return; }
+        if (!r3.available) { r3.dispose(); fail('WebGL tappades'); return; }
+        s.r3 = r3;
+        s.r3State = 'ready';
+        if (is3D(s.cam)) camBanner(s);
+        updateLock(s);
+    }).catch((e) => { console.warn('3D:', e); fail('laddningen misslyckades'); });
 }
-function cycleZoom() { setZoom(((session.zoomIdx ?? loadZoom()) + 1) % ZOOMS.length); }
-// Scrollhjulet: ett steg närmare (-1) eller längre ut (+1), utan att gå runt
-function zoomStep(dir) {
-    const order = [1, 0, 2]; // LÅNGT, NORMAL, NÄRA
-    const at = order.indexOf(session.zoomIdx ?? loadZoom());
-    const next = order[Math.max(0, Math.min(order.length - 1, at - dir))];
-    if (next !== (session.zoomIdx ?? loadZoom())) setZoom(next);
+
+// Banner med lägets namn när det byts (och när 3D blivit klart)
+function camBanner(s) {
+    const loading = is3D(s.cam) && s.r3State !== 'ready' && s.r3State !== 'failed';
+    s.hud.onEvent({
+        type: 'cam', icon: CAM_ICONS[s.cam],
+        name: viewLabel({ cam: s.cam, top: s.topZoom, chase: s.chaseZoom }),
+        tag: loading ? '⏳ Laddar 3D…' : s.touch ? '🔍 byter kamera · dra på skärmen för att titta' : 'V / C byter · hjulet zoomar'
+    });
+}
+
+// Spelaren väljer läge (V/C, 🔍, hjulet eller pausmenyn)
+function setCam(cam, { save = true } = {}) {
+    const s = session;
+    if (!s || !['fps', 'chase', 'top'].includes(cam)) return;
+    if (is3D(cam) && s.r3State === 'failed') {
+        s.world.message(`⚠️ ${CAM_NAMES[cam]} kräver 3D (WebGL2), som inte går att starta här. Du stannar i ÖVERBLICK.`);
+        cam = 'top'; save = false;
+    }
+    s.cam = cam;
+    if (save) saveCam(storage(), cam);
+    if (is3D(cam)) ensure3D();
+    camBanner(s);
+    updateLock(s);
+}
+function cycleCam() { setCam(nextCam(session.cam)); }
+
+// Scrollhjulet: ett steg in (−1) eller ut (+1) — inom läget och vidare över lägesgränserna
+function wheelCam(dir) {
+    const s = session;
+    const cur = { cam: s.cam, top: s.topZoom, chase: s.chaseZoom };
+    const next = wheelView(cur, dir, s.r3State !== 'failed');
+    if (next === cur) return;
+    const st = storage();
+    if (next.top !== s.topZoom) { s.topZoom = next.top; s.renderer.zoomMul = TOP_ZOOMS[next.top].mul; saveIndex(st, ZOOM_KEY, next.top); }
+    if (next.chase !== s.chaseZoom) { s.chaseZoom = next.chase; saveIndex(st, CHASE_KEY, next.chase); }
+    // Över en lägesgräns: lite längre paus, så att en pekplatta inte far förbi alla steg på en gång
+    s.wheelT = next.cam !== s.cam ? 0.35 : 0.12;
+    if (next.cam !== s.cam) setCam(next.cam); else camBanner(s);
+}
+
+// Pekarlåset (dator, 3D): önskat när man spelar — inte i menyer, på stora kartan eller med SMS uppe.
+// request: ta det direkt (bara från ett klick/tryck, annars säger webbläsaren nej).
+function updateLock(s, request = false) {
+    if (!s || s.touch) return;
+    const inp = s.input;
+    const smsOpen = typeof document !== 'undefined' && !!document.querySelector('.sms-overlay');
+    const want = is3D(shownCam(s)) && !s.modalType && !s.paused && !s.world.showMap && !smsOpen && !s.closing;
+    inp.lockWanted = want;
+    if (!want) { if (inp.locked) inp.releaseLock?.(); }
+    else if (request && !inp.locked) inp.requestLock?.();
+}
+
+// Blicken från musen (låst) eller ett finger på skärmen. Till fots vrids gubben (vid nästa steg);
+// i bilen är det fri blick som bara syns i bild och fjädrar tillbaka. Höjdvinkeln är bara bild.
+function applyLook(s, look, mode, dt) {
+    const p = s.world.player, v = p.vehicle, fl = s.look.free, vw = s.view;
+    if (v !== s.look.veh) { resetFreeLook(fl); s.look.veh = v; }
+    const dx = is3D(mode) && look ? look.dx : 0, dy = is3D(mode) && look ? look.dy : 0;
+    if (v) { stepFreeLook(fl, dx, dy, dt, { sens: vw.sens, invertY: vw.invertY, touch: s.touch }); return; }
+    if (!dx && !dy) return;
+    s.look.turn += lookTurn(dx, vw.sens, s.touch);
+    if (mode === 'fps') s.look.pitch = stepPitch(s.look.pitch, dy, vw.sens, vw.invertY, s.touch);
+}
+
+// Kontrollerna för ett steg: input.state() + blick (turn), sikte (aim) och joysticken i världens riktning
+function buildState(s, mode, stepDt) {
+    const inp = s.input, w = s.world, p = w.player, car = p.vehicle;
+    const state = inp.state();
+    state.turn = 0;
+    state.aim = null;
+    state.lookOnly = !!car; // i bilen: blicken är bara bild, aldrig styrning
+    if (is3D(mode)) {
+        if (!car) state.turn = s.look.turn;
+    } else if (!s.touch && !car && inp.aimActive()) {
+        // Överblick: pekaren siktar, med dödzon runt gubben (räknat i skärmen från där han ritas)
+        state.aim = aimPoint(inp.mouse, s.renderer.worldToScreen(p.x, p.y), p, s.renderer.cam?.zoom || 1);
+    }
+    s.look.turn = 0;
+    // Joysticken: skärmens riktning → världens (i 3D: upp = rakt fram i bild)
+    const yaw = controlYaw(mode, p, s.look.camYaw);
+    if (state.mx || state.my) Object.assign(state, stickToWorld(state.mx, state.my, mode, yaw));
+    state.faceMove = !!inp.stick?.active && mode !== 'fps'; // förstaperson: blicken står kvar, man går i sidled
+    // Joysticken i bilen: kör dit man drar (gas och ratt räknas om från riktningen).
+    // stickCar minns om bilen står fast mot en vägg och backar då loss den.
+    if (car && inp.stick?.active) {
+        const r = mode === 'top' ? inp.stick : stickToWorld(inp.stick.x, inp.stick.y, mode, yaw);
+        const stick = mode === 'top' ? inp.stick : { active: true, mag: inp.stick.mag, x: r.mx, y: r.my };
+        Object.assign(state, stickCar(s.stickMem || (s.stickMem = {}), stick, car, stepDt));
+    } else s.stickMem = null;
+    return state;
+}
+
+// Följkamerans riktning: bakom bilen, eller blicken till fots (vridningen från musen går in direkt)
+function updateCamYaw(s, dt, turned) {
+    const w = s.world, p = w.player, v = p.vehicle, L = s.look;
+    const room = w.interior ? w.interior.id : null;
+    // Dörr, taxi eller avstigning långt bort: ställ kameran bakom direkt i stället för att svepa
+    if (room !== L.room || Math.hypot(p.x - L.x, p.y - L.y) > 300) L.camYaw = NaN;
+    L.room = room; L.x = p.x; L.y = p.y;
+    const stick = s.input.stick;
+    const up = stick?.active && stick.mag > 0 ? -stick.y / stick.mag : 0;
+    const rate = chaseRate({ car: !!v, touch: s.touch, stickActive: !!stick?.active, stickUp: up, room: !!room });
+    L.camYaw = followYaw(L.camYaw, v ? v.angle : p.angle, dt, rate, v ? 0 : turned);
+}
+
+// Det 3D-motorn får: vinklar, avstånd och inställningarna
+function camOpts(s, mode) {
+    const p = s.world.player, v = p.vehicle, fl = s.look.free, vw = s.view;
+    const o = s.camOpts || (s.camOpts = {});
+    o.bob = vw.bob ? 1 : 0; o.shake = vw.bob; o.fov = vw.fov;
+    o.lookYaw = v ? fl.yaw : 0; o.lookPitch = v ? fl.pitch : 0;
+    if (mode === 'fps') {
+        o.yaw = (v ? v.angle : p.angle) + o.lookYaw;
+        o.pitch = v ? fl.pitch : s.look.pitch;
+        o.dist = undefined;
+    } else {
+        o.yaw = (Number.isFinite(s.look.camYaw) ? s.look.camYaw : (v ? v.angle : p.angle)) + o.lookYaw;
+        o.pitch = v && fl.pitch ? fl.pitch : undefined;
+        o.dist = (CHASE_ZOOMS[s.chaseZoom] || CHASE_ZOOMS[CHASE_DEFAULT]).dist;
+    }
+    return o;
+}
+
+// HUD:ens bild av 3D-kameran: samma w/h/dpr som 2D-canvasen, och världen → skärmen genom 3D
+function make3DView(s) {
+    const v = {};
+    const view = {
+        get w() { return s.renderer.w; }, get h() { return s.renderer.h; }, get dpr() { return s.renderer.dpr; },
+        mode: 'chase',
+        // Bakom kameran finns ingen bild: ge en punkt långt ut åt rätt håll (pilarna mot målet)
+        worldToScreen(x, y, z = 0) {
+            const o = { x: 0, y: 0, visible: false, depth: Infinity };
+            const r3 = s.r3;
+            if (!r3) return o;
+            r3.worldToScreen(x, y, z, o);
+            if (o.depth !== Infinity && Number.isFinite(o.x) && Number.isFinite(o.y)) return o;
+            r3.getView(v);
+            const dx = x - v.x, dy = y - v.y, c = Math.cos(v.yaw), sn = Math.sin(v.yaw);
+            const f = dx * c + dy * sn, r = -dx * sn + dy * c, L = Math.hypot(f, r) || 1;
+            o.x = view.w / 2 + r / L * 1e5; o.y = view.h / 2 - f / L * 1e5; o.visible = false;
+            return o;
+        }
+    };
+    return view;
+}
+
+// Pausmenyns inställningar: ändras direkt och sparas
+function onSetting(e) {
+    const s = session, el = e.target;
+    const k = el?.dataset?.set;
+    if (!s || !k) return;
+    const vw = s.view;
+    if (k === 'sens') vw.sens = Math.min(SENS_RANGE[1], Math.max(SENS_RANGE[0], Number(el.value) || 1));
+    else if (k === 'fov') vw.fov = Math.round(Math.min(FOV_RANGE[1], Math.max(FOV_RANGE[0], Number(el.value) || 75)));
+    else if (k === 'bob') vw.bob = !!el.checked;
+    else if (k === 'invertY') vw.invertY = !!el.checked;
+    saveView(storage(), vw);
+    const out = s.modal.querySelector(`[data-out="${k}"]`);
+    if (out) out.textContent = k === 'sens' ? vw.sens.toFixed(1) : k === 'fov' ? `${vw.fov}°` : '';
 }
 
 // Touch: samma knapp är slag/skott till fots och handbroms i bilen — visa vilket just nu
@@ -587,6 +810,8 @@ function frame(ts) {
     let keepEdges = false; // inget steg den här framen: knapptrycken väntar på nästa
     try {
         const inp = s.input;
+        // Blicken (låst mus, touch-look) läses varje bild: syns direkt, vridningen går in vid nästa steg
+        const look = inp.takeLook ? inp.takeLook() : null;
         if (s.modalType) {
             // Tangenter i modaler
             if (inp.pressed('act')) {
@@ -610,29 +835,27 @@ function frame(ts) {
             if (inp.pressed('c3')) s.world.orderCrew('attack');
             if (inp.pressed('crew')) { const cur = s.world.crew[0]?.order; s.world.orderCrew(cur === 'follow' ? 'attack' : cur === 'attack' ? 'hold' : 'follow'); }
             if (inp.pressed('phone')) showCityPhone();
-            if (inp.pressed('zoom')) cycleZoom();
+            if (inp.pressed('cam')) cycleCam();
             const wheel = inp.takeWheel();
-            if (wheel) zoomStep(wheel);
+            s.wheelT = Math.max(0, s.wheelT - dt);
+            if (wheel && s.wheelT <= 0) wheelCam(wheel);
             if (s.world.player.vehicle && inp.pressed('r')) cycleRadio(); // till fots betyder R rån
+            applyLook(s, look, shownCam(s), dt);
         }
         if (s.closing) return;
+        let turned = 0;
         if (!s.paused) {
             s.acc += dt;
             // Läs kontrollerna bara när ett steg faktiskt körs: 90/120 Hz-skärmar har frames
             // utan steg, och då skulle knapptryck (👊, E, 💰 …) ätas upp och försvinna
             if (s.acc >= STEP) {
-                const state = inp.state();
-                // Musen siktar (dator): världskoordinaten under pekaren
-                state.aim = !s.touch && inp.aimActive() ? s.renderer.screenToWorld(inp.mouse.x, inp.mouse.y) : null;
-                // Joysticken i bilen: kör dit man drar (gas och ratt räknas om från riktningen).
-                // stickCar minns om bilen står fast mot en vägg och backar då loss den.
-                const car = s.world.player.vehicle;
-                if (car && inp.stick.active) Object.assign(state, stickCar(s.stickMem || (s.stickMem = {}), inp.stick, car, Math.min(5, Math.floor(s.acc / STEP)) * STEP));
-                else s.stickMem = null;
+                const state = buildState(s, shownCam(s), Math.min(5, Math.floor(s.acc / STEP)) * STEP);
+                turned = state.turn;
                 s.throttle = state.throttle;
                 let steps = 0;
                 while (s.acc >= STEP && steps < 5) {
-                    s.world.update(STEP, steps === 0 ? state : { ...state, action: false, punch: false, rob: false, weapon: false });
+                    // Engångssaker (tryck och blickens vridning) bara i första steget
+                    s.world.update(STEP, steps === 0 ? state : { ...state, turn: 0, action: false, punch: false, rob: false, weapon: false });
                     s.acc -= STEP;
                     steps++;
                 }
@@ -654,15 +877,9 @@ function frame(ts) {
             if (j !== s.lastSynced) { s.lastSynced = j; if (isMyTurn()) syncState(); else syncMe(); }
         }
         if (s.touch) updateTouchLabels();
-        s.renderer.updateCamera(s.world, s.paused ? 0 : dt);
-        // Utzoomat ser man längre: folk och bilar ska dyka upp utanför bild (world.manageSpawns)
-        const zm = s.renderer.zoomMul || 1;
-        const viewR = Math.hypot(s.renderer.w, s.renderer.h) / 2 / Math.min(s.renderer.cam.zoom, s.renderer.zTarget || 9);
-        // (fotgängare skapas 520 px bort i normalvyn — utzoomat ska det vara bortom skärmens hörn)
-        s.world.viewExtra = zm < 1 ? Math.max(viewR * (1 - zm), viewR + 40 - 520) : 0;
-        s.world.viewDense = zm < 1 ? Math.min(1.6, 1 / (zm * zm)) : 1;
-        s.renderer.draw(s.world, s.paused ? 0 : dt);
-        s.hud.draw(s.renderer.ctx, s.world, s.renderer, { touch: s.touch });
+        updateCamYaw(s, s.paused ? 0 : dt, turned);
+        updateLock(s);
+        drawFrame(s, s.paused ? 0 : dt);
         if (!keepEdges) inp.endFrame();
         s.errors = Math.max(0, s.errors - 0.02);
     } catch (err) {
@@ -670,6 +887,37 @@ function frame(ts) {
         s.errors++;
         if (s.errors > 20) close('crash');
     }
+}
+
+// ── Bilden: 3D (förstaperson/följkamera) med HUD:en ovanpå, eller 2D (överblick) ──
+// I 3D ser man långt längs gatorna: folk och bilar skapas och städas längre bort (world.manageSpawns),
+// där dimman redan tagit dem, så att de inte poppar upp mitt i bild. Lite tätare för att det inte ska kännas tomt.
+const VIEW_3D = { fps: { extra: 700, dense: 1.4 }, chase: { extra: 650, dense: 1.35 } };
+function drawFrame(s, dt) {
+    const mode = shownCam(s), r = s.renderer, w = s.world;
+    r.updateCamera(w, dt); // 2D-kameran följer med även i 3D: överblicken är redo direkt vid byte
+    const three = is3D(mode);
+    if (s.r3 && three !== s.r3Shown) { s.r3.setVisible(three); s.r3Shown = three; }
+    if (three) {
+        w.viewExtra = VIEW_3D[mode].extra; w.viewDense = VIEW_3D[mode].dense;
+        s.r3.render(w, dt, mode, camOpts(s, mode));
+        // 2D-canvasen är genomskinlig ovanpå 3D: bara HUD:en och det som hör till platser i världen
+        const ctx = r.ctx;
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.clearRect(0, 0, r.canvas.width, r.canvas.height);
+        s.view3.mode = mode;
+        s.hud.drawWorld3D(ctx, w, s.view3, { touch: s.touch, mode, lockHint: !s.touch && s.input.lockWanted && !s.input.locked });
+        s.hud.draw(ctx, w, s.view3, { touch: s.touch, cam: mode });
+        return;
+    }
+    // Utzoomat ser man längre: folk och bilar ska dyka upp utanför bild (world.manageSpawns)
+    const zm = r.zoomMul || 1;
+    const viewR = Math.hypot(r.w, r.h) / 2 / Math.min(r.cam.zoom, r.zTarget || 9);
+    // (fotgängare skapas 520 px bort i normalvyn — utzoomat ska det vara bortom skärmens hörn)
+    w.viewExtra = zm < 1 ? Math.max(viewR * (1 - zm), viewR + 40 - 520) : 0;
+    w.viewDense = zm < 1 ? Math.min(1.6, 1 / (zm * zm)) : 1;
+    r.draw(w, dt);
+    s.hud.draw(r.ctx, w, r, { touch: s.touch, cam: 'top' });
 }
 
 function close(reason) {
@@ -680,6 +928,8 @@ function close(reason) {
     try {
         s.input.destroy();
         s.cleanup();
+        s.r3?.dispose();
+        s.r3 = null;
         engineStop();
         sirenStop();
         stopRadio();

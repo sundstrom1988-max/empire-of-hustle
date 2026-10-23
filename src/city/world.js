@@ -20,6 +20,7 @@ import { PROPERTIES, pvpLoss, SPAWN_PROTECTION } from '../multiplayer/authority.
 import * as INT from './interiors.js';
 import { bizInterior, bizFlow, salePrice, tillCap } from './businesses.js';
 import * as BRAWL from './brawl.js';
+import { lookAngle, footMove, normAngle, staminaStep, STAMINA_MAX } from './input.js';
 import { SHOPS } from '../data/gameData.js';
 
 export const CLOCK_START = 19.5; // 19:30 — kvällen är ung
@@ -159,6 +160,8 @@ export class World {
         };
         this.player.armor = Math.max(0, Math.min(ARMOR_CAP, profile.armor || 0));
         this.player.protT = 0;
+        this.player.stamina = STAMINA_MAX; // uthållighet för spring (footStep)
+        this.player.winded = false;
         if (!Array.isArray(profile.crew)) profile.crew = [];
         this.crew = profile.crew.map((m, i) => { const s = spotNear(city, start.x, start.y, i); return makeMember(m, i, s.x, s.y); });
         this.setupOwnedCars();
@@ -387,6 +390,7 @@ export class World {
         p.nitro = Math.max(0, p.nitro - dt);
         p.hitT = Math.max(0, p.hitT - dt);
         p.hurtT = Math.max(0, p.hurtT - dt);
+        if (p.vehicle || p.dead) staminaStep(p, dt, false, false); // i bilen vilar benen
         if (p.vehicle) {
             const v = p.vehicle;
             const ctl = { throttle: input.throttle, steer: input.steer, handbrake: input.handbrake, nitro: p.nitro > 0 && input.throttle > 0 };
@@ -397,12 +401,12 @@ export class World {
             if (input.horn && this.hornT <= 0) { this.sfx('horn', 0.8); this.hornT = 0.45; this.scarePeds(v.x, v.y, 160); }
             if (input.action) this.exitVehicle();
         } else if (!p.dead) {
-            const speed = input.run ? 175 : 115;
-            stepWalker(p, input.mx, input.my, speed, dt, this.city);
-            if (Math.hypot(input.mx, input.my) > 0.1) p.walkPhase += dt * speed * 0.12;
-            // Musen siktar: gubben tittar mot pekaren och kan gå åt ett annat håll
-            this.mouseAim = !!input.aim;
-            if (input.aim) p.angle = Math.atan2(input.aim.y - p.y, input.aim.x - p.x);
+            // Blick, gång längs blicken och spring (footStep), sedan kollision mot kartan
+            this.footStep(dt, input, 115, 175);
+            p.x += p.vx * dt; p.y += p.vy * dt;
+            collideCircleWithMap(p, p.r || 7, this.city);
+            // Musen siktar (pekaren i överblick, blicken i 3D): smalare autosikte
+            this.mouseAim = !!(input.aim || input.turn);
             p.punchT = Math.max(0, p.punchT - dt);
             p.muzzle = Math.max(0, (p.muzzle || 0) - dt);
             if (input.weapon) this.cycleWeapon();
@@ -417,6 +421,30 @@ export class World {
                 else this.tryEnterVehicle();
             }
         }
+    }
+
+    // ── Till fots, ute och inne: blick, gång och uthållighet ──
+    // Blicken: turn (mus i 3D, touch-look) vrider, annars tittar gubben mot aim (pekaren
+    // i överblick). Musen flyttar honom aldrig. Tangenterna går relativt blicken (fwd längs
+    // den, strafe åt höger om den); joysticken (mx, my) är redan i världsriktning och med
+    // faceMove vänder han sig dit han går. Sätter vx/vy — anroparen flyttar och krockar.
+    footStep(dt, input, walk, run) {
+        const p = this.player;
+        p.angle = lookAngle(p.angle, input, p.x, p.y);
+        const mv = footMove(p.angle, input);
+        const moving = mv.x !== 0 || mv.y !== 0;
+        // faceMove saknas (äldre anropare): som förr — titta dit du går om inget annat styr blicken
+        const face = input.faceMove ?? !(input.turn || input.aim);
+        if (mv.stick && face) p.angle = normAngle(Math.atan2(mv.y, mv.x));
+        const speed = staminaStep(p, dt, input.run, moving) ? run : walk;
+        if (moving) {
+            p.vx = mv.x * speed; p.vy = mv.y * speed;
+            p.walkPhase += dt * speed * 0.12;
+        } else {
+            const k = Math.exp(-12 * dt); // stannar på ett par px, lika vid alla tidssteg
+            p.vx *= k; p.vy *= k;
+        }
+        return moving;
     }
 
     afterStep(v, res, isPlayer) {
@@ -2185,12 +2213,9 @@ export class World {
 
     updateInteriorMode(dt, input) {
         const I = this.interior, p = this.player, def = I.def;
-        // Gå omkring
-        const speed = input.run ? 165 : 110;
-        const len = Math.hypot(input.mx, input.my);
-        if (len > 0.1) { p.vx = input.mx / len * speed; p.vy = input.my / len * speed; p.angle = Math.atan2(input.my, input.mx); p.walkPhase += dt * speed * 0.12; }
-        else { p.vx *= Math.max(0, 1 - 10 * dt); p.vy *= Math.max(0, 1 - 10 * dt); }
-        if (input.aim) p.angle = Math.atan2(input.aim.y - p.y, input.aim.x - p.x);
+        // Gå omkring: samma blick, gång längs blicken och spring som ute (footStep)
+        this.footStep(dt, input, 110, 165);
+        this.mouseAim = !!(input.aim || input.turn);
         p.x += p.vx * dt; p.y += p.vy * dt;
         INT.collideInterior(def, p, p.r);
         p.hurtT = Math.max(0, (p.hurtT || 0) - dt);

@@ -446,3 +446,94 @@ body.city-open .cbd-leaf {
 
 /* Mus: sikte i stan (inte på mobil) */
 .city-overlay:not(.touch) .city-canvas { cursor: crosshair; }
+
+/* ── Pausmenyn: kameraläge och blick ── */
+.city-settings {
+    text-align: left;
+    background: rgba(255, 255, 255, 0.04);
+    border-radius: 6px;
+    padding: 10px 12px;
+    margin-bottom: 12px;
+}
+
+.cs-title {
+    font-family: 'Bungee', Impact, sans-serif;
+    font-size: 13px;
+    color: var(--gta-yellow, #ffd23f);
+    margin-bottom: 8px;
+}
+
+.cs-title small {
+    font-family: system-ui, sans-serif;
+    font-size: 11px;
+    color: rgba(255, 255, 255, 0.55);
+    margin-left: 6px;
+}
+
+.cs-cams {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 6px;
+    margin-bottom: 10px;
+}
+
+.cs-cam {
+    font-family: 'Bungee', Impact, sans-serif;
+    font-size: 11px;
+    color: #fff;
+    background: rgba(0, 0, 0, 0.5);
+    border: 2px solid rgba(255, 255, 255, 0.25);
+    border-radius: 6px;
+    padding: 8px 4px;
+    min-height: 42px;
+    cursor: pointer;
+}
+
+.cs-cam.on {
+    background: var(--gta-yellow, #ffd23f);
+    color: #111;
+    border-color: #000;
+}
+
+.cs-row {
+    display: grid;
+    grid-template-columns: 1fr 1.2fr 44px;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    color: rgba(255, 255, 255, 0.8);
+    margin: 6px 0;
+}
+
+.cs-row input[type="range"] {
+    width: 100%;
+    accent-color: var(--gta-yellow, #ffd23f);
+}
+
+.cs-row b {
+    font-family: 'Bungee', Impact, sans-serif;
+    font-weight: 400;
+    color: var(--gta-yellow, #ffd23f);
+    text-align: right;
+}
+
+.cs-check {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    color: rgba(255, 255, 255, 0.8);
+    margin: 8px 0 2px;
+}
+
+.cs-check input {
+    width: 18px;
+    height: 18px;
+    accent-color: var(--gta-yellow, #ffd23f);
+}
+
+@media (max-width: 560px) {
+    .cs-row { grid-template-columns: 1fr 44px; row-gap: 2px; }
+    .cs-row input[type="range"] { grid-column: 1 / -1; grid-row: 2; }
+    .cs-cam { font-size: 10px; }
+}
