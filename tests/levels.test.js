@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
-    MAX_LEVEL, XP_MAX, MAX_AWARD, XP_CUBIC, RANKS, XP_TOTAL, xpToNext, xpForLevel, levelOf, levelFromXp, legendStars,
-    rankOf, rankIndex, ranksBetween, levelBadge, clampLevel, playerLevel,
+    MAX_LEVEL, XP_MAX, MAX_AWARD, XP_CUBIC, RANKS, RANK_STYLES, XP_TOTAL, xpToNext, xpForLevel, levelOf, levelFromXp, legendStars,
+    rankOf, rankIndex, maskOf, ranksBetween, levelBadge, clampLevel, playerLevel,
     UNLOCKS, getUnlock, requiredLevel, unlockLevel, isUnlocked, unlocksAt, unlocksBetween, nextUnlocks, lockLabel, lockInfo,
     missionCap, goodsCap, fenceCap, crewMax, crewRecover, gunDiscount,
     dmgMult, damageMultiplier, critChance, npcDamage, meleeBase, crewDmgMult, knockMult,
@@ -30,9 +30,25 @@ function fresh(extra = {}) {
     return { xp: 0, rep: 0, gang: null, respect: Object.fromEntries(GANG_IDS.map(id => [id, 0])), ...extra };
 }
 
+// Ranktabellen i masterprompt v3 avsnitt 6: Springpojke 1–5 och Gudfadern 100 ligger fast
+const RANK_TABLE = [
+    [1, 5, 'Springpojke'], [6, 10, 'Småhustlare'], [11, 20, 'Hustlare'], [21, 30, 'Fixare'],
+    [31, 40, 'Torped'], [41, 50, 'Veteran'], [51, 60, 'Kapten'], [61, 70, 'Underboss'],
+    [71, 80, 'Boss'], [81, 90, 'Storboss'], [91, 99, 'Don'], [100, 100, 'Gudfadern']
+];
+const HEX = /^#[0-9a-f]{6}$/i;
+
 describe('titelband', () => {
+    it('följer masterpromptens ranktabell', () => {
+        expect(RANKS.map(r => [r.from, r.to, r.title])).toEqual(RANK_TABLE);
+        for (const [from, to, title] of RANK_TABLE) {
+            expect(rankOf(from).title, `nivå ${from}`).toBe(title);
+            expect(rankOf(to).title, `nivå ${to}`).toBe(title);
+            if (from > 1) expect(rankOf(from - 1).title, `nivå ${from - 1}`).not.toBe(title);
+        }
+    });
     it('täcker 1–100 utan luckor eller överlapp', () => {
-        expect(RANKS).toHaveLength(11);
+        expect(RANKS).toHaveLength(12);
         expect(RANKS[0].from).toBe(1);
         expect(RANKS[RANKS.length - 1].to).toBe(100);
         RANKS.forEach((r, i) => {
@@ -42,18 +58,55 @@ describe('titelband', () => {
         });
         for (const L of allLevels) expect(RANKS.filter(r => L >= r.from && L <= r.to)).toHaveLength(1);
     });
-    it('har rätt titlar i ändarna och vid gränserna', () => {
-        expect(rankOf(1).title).toBe('Springpojke');
-        expect(rankOf(5).title).toBe('Springpojke');
-        expect(rankOf(6).title).toBe('Hangaround');
-        expect(rankOf(23).title).toBe('Torped');
-        expect(rankOf(84).title).toBe('Underboss');
-        expect(rankOf(85).title).toBe('Gudfadern');
+    it('har Springpojke 1–5 och Gudfadern 100 fast', () => {
+        expect(RANKS[0]).toMatchObject({ id: 'springpojke', title: 'Springpojke', from: 1, to: 5, emoji: '🛴', color: '#9ca3af' });
+        expect(RANKS[11]).toMatchObject({ id: 'gudfadern', title: 'Gudfadern', from: 100, to: 100, emoji: '🌹', color: '#ffd23f' });
+        expect(rankOf(99).title).toBe('Don');
         expect(rankOf(100).title).toBe('Gudfadern');
-        expect(rankOf(100).color).toBe('#ffd23f');
-        expect(rankOf(1).emoji).toBe('🛴');
-        expect(rankOf(85).emoji).toBe('🌹');
-        expect(levelBadge(23)).toBe('🔨 23 Torped');
+        expect(levelBadge(23)).toBe('🔧 23 Fixare');
+        expect(levelBadge(100)).toBe('🌹 100 Gudfadern');
+    });
+    it('ger varje rang ett eget emblem och en egen färg', () => {
+        expect(new Set(RANKS.map(r => r.emoji)).size).toBe(RANKS.length);
+        expect(new Set(RANKS.map(r => r.color.toLowerCase())).size).toBe(RANKS.length);
+        expect(new Set(RANKS.map(r => r.id)).size).toBe(RANKS.length);
+        for (const r of RANKS) {
+            expect(r.emoji.length, r.title).toBeGreaterThan(0);
+            expect(r.color, r.title).toMatch(HEX);
+        }
+    });
+    it('ger varje rang en maskbild som etapp 1 kan rita', () => {
+        expect(new Set(RANKS.map(r => r.mask.name)).size).toBe(RANKS.length);
+        expect(new Set(RANKS.map(r => r.mask.desc)).size).toBe(RANKS.length);
+        for (const r of RANKS) {
+            expect(typeof r.mask.name, r.title).toBe('string');
+            expect(r.mask.name.length, r.title).toBeGreaterThan(3);
+            expect(r.mask.desc.length, r.title).toBeGreaterThan(60);
+            expect(r.mask.base, r.title).toMatch(HEX);
+            expect(r.mask.accent, r.title).toMatch(HEX);
+            expect(Object.isFrozen(r.mask), r.title).toBe(true);
+            expect(Object.isFrozen(r), r.title).toBe(true);
+        }
+        expect(maskOf(1)).toBe(RANKS[0].mask);
+        expect(maskOf(50).name).toBe(RANKS[5].mask.name);
+        expect(maskOf(100).name).toBe('Guldmasken');
+        expect(maskOf('skräp')).toBe(RANKS[0].mask);
+        expect(maskOf(999)).toBe(RANKS[11].mask);
+    });
+    it('stiger i visuell stil från enkel gatustil till exklusiv boss', () => {
+        expect(Object.keys(RANK_STYLES)).toEqual(['gata', 'hardingen', 'syndikat', 'exklusiv']);
+        RANKS.forEach((r, i) => {
+            expect(RANK_STYLES[r.style], r.title).toBeDefined();
+            expect(r.tier, r.title).toBe(RANK_STYLES[r.style].tier);
+            if (i > 0) expect(r.tier, r.title).toBeGreaterThanOrEqual(RANKS[i - 1].tier);
+        });
+        expect(RANKS[0].style).toBe('gata');
+        expect(RANKS[11].style).toBe('exklusiv');
+        expect(RANKS[11].tier).toBe(4);
+        expect(new Set(RANKS.map(r => r.tier))).toEqual(new Set([1, 2, 3, 4]));
+        // gatustilen är bara tyg, guldet kommer sist
+        expect(RANKS.filter(r => r.tier === 1).map(r => r.title)).toEqual(['Springpojke', 'Småhustlare', 'Hustlare']);
+        expect(RANKS.filter(r => r.tier === 4).map(r => r.title)).toEqual(['Storboss', 'Don', 'Gudfadern']);
     });
     it('klarar trasiga nivåer', () => {
         expect(rankOf(0).id).toBe('springpojke');
@@ -65,10 +118,12 @@ describe('titelband', () => {
         expect(clampLevel('42')).toBe(42);
     });
     it('räknar befordringar mellan två nivåer', () => {
-        expect(ranksBetween(5, 6).map(r => r.id)).toEqual(['hangaround']);
+        expect(ranksBetween(5, 6).map(r => r.id)).toEqual(['smahustlare']);
         expect(ranksBetween(6, 10)).toEqual([]);
-        expect(ranksBetween(1, 100)).toHaveLength(10);
-        expect(ranksBetween(22, 31).map(r => r.id)).toEqual(['torped', 'gangsoldat']);
+        expect(ranksBetween(1, 100)).toHaveLength(11);
+        expect(ranksBetween(20, 31).map(r => r.id)).toEqual(['fixare', 'torped']);
+        expect(ranksBetween(22, 30)).toEqual([]);
+        expect(ranksBetween(99, 100).map(r => r.id)).toEqual(['gudfadern']);
     });
 });
 
@@ -89,10 +144,44 @@ describe('XP-kurva', () => {
         }
         expect(xpToNext(100)).toBe(0);
     });
+    it('är komplett för alla 100 nivåer och strikt stigande', () => {
+        expect(XP_TOTAL).toHaveLength(101);
+        for (const L of allLevels) {
+            expect(Number.isInteger(XP_TOTAL[L]), `XP_TOTAL[${L}]`).toBe(true);
+            if (L > 1) expect(XP_TOTAL[L], `XP_TOTAL[${L}]`).toBeGreaterThan(XP_TOTAL[L - 1]);
+        }
+        for (let L = 1; L < 100; L++) {
+            expect(Number.isInteger(xpToNext(L)) && xpToNext(L) > 0, `steget från nivå ${L}`).toBe(true);
+            if (L > 1) expect(xpToNext(L), `steget från nivå ${L}`).toBeGreaterThan(xpToNext(L - 1));
+        }
+        // varje nivå har en egen gräns: ingen nivå hoppas över av levelOf
+        for (const L of allLevels) expect(levelOf(XP_TOTAL[L])).toBe(L);
+    });
+    it('tidiga nivåer kommer snabbt och senare nivåer kräver mer', () => {
+        // första jobbet (80 XP med milstolpen) ger nivå 2; Småhustlare efter cirka 20 min och Hustlare efter cirka 40 min
+        expect(xpToNext(1)).toBeLessThanOrEqual(60);
+        expect(levelOf(80)).toBe(2);
+        expect(XP_TOTAL[6]).toBeLessThanOrEqual(21 * 20);          // 21 XP/min på nivå 1–5
+        expect(XP_TOTAL[11]).toBeLessThanOrEqual(1200);
+        // kostnaden för ett helt titelband och per nivå i bandet stiger hela vägen
+        const bands = RANKS.slice(0, -1);   // Gudfadern (100) har inget steg efter sig
+        const cost = bands.map(r => XP_TOTAL[r.to + 1] - XP_TOTAL[r.from]);
+        const perLevel = bands.map((r, i) => cost[i] / (r.to - r.from + 1));
+        for (let i = 1; i < bands.length; i++) {
+            expect(cost[i], bands[i].title).toBeGreaterThan(cost[i - 1]);
+            expect(perLevel[i], bands[i].title).toBeGreaterThan(perLevel[i - 1]);
+        }
+        // ... och det gäller varje tiotal nivåer
+        const span = (a, b) => XP_TOTAL[Math.min(b + 1, 100)] - XP_TOTAL[a];
+        for (let a = 11; a < 100; a += 10) expect(span(a, a + 9), `nivå ${a}–${a + 9}`).toBeGreaterThan(span(a - 10, a - 1));
+        // de sista nio nivåerna kostar långt mer än de första tio
+        expect(span(91, 99)).toBeGreaterThan(25 * span(1, 10));
+    });
     it('stämmer med designens nyckelnivåer', () => {
         const table = [[2, 45, 60], [5, 270, 105], [6, 375, 120], [10, 945, 185], [11, 1130, 200], [16, 2285, 280], [20, 3505, 350],
-            [23, 4610, 405], [30, 7865, 550], [31, 8415, 570], [41, 15175, 815], [51, 24690, 1125], [60, 36155, 1470],
-            [63, 40690, 1600], [75, 63100, 2210], [85, 87935, 2840]];
+            [21, 3855, 370], [23, 4610, 405], [30, 7865, 550], [31, 8415, 570], [41, 15175, 815], [51, 24690, 1125], [60, 36155, 1470],
+            [61, 37625, 1510], [63, 40690, 1600], [71, 54810, 1990], [75, 63100, 2210], [81, 77245, 2575], [85, 87935, 2840],
+            [91, 106050, 3280]];
         for (const [L, total, next] of table) {
             expect(xpForLevel(L)).toBe(total);
             expect(xpToNext(L)).toBe(next);
@@ -131,7 +220,9 @@ describe('XP-kurva', () => {
         const r = levelFromXp(100);
         expect(r).toMatchObject({ xp: 100, level: 2, title: 'Springpojke', emoji: '🛴', color: '#9ca3af', xpInto: 55, xpNeeded: 60, xpLeft: 5, maxed: false });
         expect(r.progress).toBeCloseTo(55 / 60);
-        expect(levelFromXp(XP_TOTAL[23]).title).toBe('Torped');
+        expect(levelFromXp(XP_TOTAL[23])).toMatchObject({ level: 23, title: 'Fixare', emoji: '🔧', color: '#38bdf8', rankIndex: 3 });
+        expect(levelFromXp(XP_TOTAL[31]).title).toBe('Torped');
+        expect(levelFromXp(XP_TOTAL[100]).rank.mask.name).toBe('Guldmasken');
     });
     it('tål trasig XP', () => {
         for (const bad of [undefined, null, NaN, 'abc', -500, {}, [], Infinity]) {
@@ -172,12 +263,12 @@ describe('upplåsningar', () => {
             'pimp:2': 8, 'pimp:3': 16,
             'bm:smuggle': 5, 'bm:counterfeit': 9, 'bm:crypto_scam': 13, 'bm:hack': 17, 'bm:insider': 21,
             'deal:launder': 7, 'deal:bribe': 12,
-            'perk:torpedo': 23, 'perk:backup': 31, 'perk:bribecop': 35, 'perk:kapo': 51, 'perk:lawyer': 63,
-            'perk:chauffeur': 70, 'perk:family': 75, 'perk:legend': 80, 'perk:offer': 85, 'perk:godcar': 85,
+            'perk:torpedo': 31, 'perk:backup': 31, 'perk:bribecop': 35, 'perk:kapo': 51, 'perk:lawyer': 63,
+            'perk:chauffeur': 71, 'perk:family': 75, 'perk:legend': 81, 'perk:offer': 100, 'perk:godcar': 100,
             // fas 1-poster som fyller luckorna efter nivå 40
-            'perk:backup2': 44, 'perk:doctor': 58, 'perk:heat': 68, 'perk:crewheal': 73, 'cap:missions6': 78,
-            'perk:bribecop2': 82, 'perk:discount30': 88, 'cap:goods25': 90, 'perk:doctorfree': 93, 'cap:fence5': 95,
-            'perk:heat2': 97, 'cosm:donstar': 100
+            'perk:backup2': 44, 'perk:doctor': 58, 'perk:turfprice': 61, 'perk:nofailloss': 63, 'perk:heat': 68,
+            'perk:crewheal': 73, 'cap:missions6': 78, 'perk:bribecop2': 85, 'perk:discount30': 88, 'cap:goods25': 90,
+            'perk:doctorfree': 91, 'cap:fence5': 95, 'perk:heat2': 97, 'cosm:goldname': 100, 'cosm:godstar': 100
         };
         for (const [id, L] of Object.entries(design)) expect(requiredLevel(id), id).toBe(L);
         // start: allt som inte står i listan
@@ -214,9 +305,9 @@ describe('upplåsningar', () => {
         expect(unlocksBetween(25, 26)).toEqual([]);
         expect(unlocksBetween(89, 90).map(u => u.id)).toEqual(['cap:goods25']);
         expect(nextUnlocks(24).map(u => u.id)).toEqual(['house:house-centrum', 'perk:discount10', 'prop:stripclub']);
-        expect(nextUnlocks(97).map(u => u.id)).toEqual(['cosm:donstar']);
+        expect(nextUnlocks(97, 10).map(u => u.id)).toEqual(['perk:offer', 'cosm:goldname', 'perk:godcar', 'cosm:godstar']);
         for (const u of nextUnlocks(1, 999)) expect(isActiveUnlock(u)).toBe(true);
-        expect(comingSoon().map(u => u.id)).toEqual(['mission:collect', 'cosm:goldguns', 'cosm:rose', 'cosm:statue', 'prestige']);
+        expect(comingSoon().map(u => u.id)).toEqual(['mission:collect', 'cosm:goldguns', 'cosm:statue', 'cosm:rose', 'prestige']);
         expect(comingSoon().every(u => u.fas > ACTIVE_FAS)).toBe(true);
         const p = { xp: XP_TOTAL[26] - 1 };
         const r = awardXp(p, 'opps', { career: createCareer(T0) }, T0);
@@ -234,6 +325,30 @@ describe('upplåsningar', () => {
         // varje titel kommer med något
         for (const r of RANKS.slice(1)) expect(unlocksAt(r.from).length, r.title).toBeGreaterThan(0);
     });
+    it('titlarnas signaturupplåsningar ligger på titelns första nivå', () => {
+        const first = id => RANKS.find(r => r.id === id).from;
+        expect(requiredLevel('perk:torpedo')).toBe(first('torped'));
+        expect(requiredLevel('crew:veteran')).toBe(first('veteran'));
+        expect(requiredLevel('perk:paytier')).toBe(first('veteran'));
+        expect(requiredLevel('perk:kapo')).toBe(first('kapten'));
+        expect(requiredLevel('perk:turfprice')).toBe(first('underboss'));
+        expect(requiredLevel('perk:chauffeur')).toBe(first('boss'));
+        expect(requiredLevel('perk:legend')).toBe(first('storboss'));
+        expect(requiredLevel('perk:doctorfree')).toBe(first('don'));
+        // Gudfadern (nivå 100) bär hela kronan: erbjudandet, den svarta Rollsen, guldnamnet, stjärnan, rosen och Prestige
+        for (const id of ['perk:offer', 'perk:godcar', 'cosm:goldname', 'cosm:godstar', 'cosm:rose', 'prestige']) expect(requiredLevel(id), id).toBe(100);
+        expect(unlocksAt(100).map(u => u.id)).toEqual(['perk:offer', 'cosm:goldname', 'perk:godcar', 'cosm:godstar']);
+        // inget Gudfader-ord ligger före Gudfadern
+        for (const u of UNLOCKS.filter(x => /Gudfader/.test(x.label))) expect(u.level, u.id).toBe(100);
+    });
+    it('en upplåsning som nämner en titel ligger på den titelns band', () => {
+        for (const u of UNLOCKS) {
+            for (const r of RANKS) if (u.label.includes(r.title)) expect(rankOf(u.level).title, `${u.id}: "${u.label}"`).toBe(r.title);
+        }
+        // Torpedslaget och Veteranerna nämner sin titel, så vakten ovan gör något
+        expect(UNLOCKS.filter(u => u.label.includes('Torped')).map(u => u.id)).toEqual(['perk:torpedo']);
+        expect(UNLOCKS.filter(u => u.label.includes('Veteran')).map(u => u.id)).toEqual(['crew:veteran']);
+    });
     it('racet: det som ger pengar räknas på rummets lägsta nivå + 10', () => {
         expect(RACE_GAP).toBe(10);
         expect(raceLevel(60, 1)).toBe(11);
@@ -241,7 +356,7 @@ describe('upplåsningar', () => {
         expect(raceLevel(60, null)).toBe(60);
         expect(raceLevel(60, undefined)).toBe(60);
         expect(raceLevel(60, 'x')).toBe(60);
-        const vet = { xp: XP_TOTAL[60] }, newbie = { xp: 0 }, ai = { xp: XP_TOTAL[90], isAI: true };
+        const vet = { xp: XP_TOTAL[61] }, newbie = { xp: 0 }, ai = { xp: XP_TOTAL[90], isAI: true };
         expect(roomMinLevel([vet, newbie, ai])).toBe(1);
         expect(roomMinLevel([vet, ai])).toBeNull();     // en människa: solo
         expect(roomMinLevel([vet])).toBeNull();
@@ -271,7 +386,9 @@ describe('upplåsningar', () => {
     });
     it('skriver låstexten', () => {
         expect(lockLabel('weapon:uzi')).toBe('🔒 Nivå 16 · Hustlare');
-        expect(lockLabel('prop:stripclub')).toBe('🔒 Nivå 28 · Torped');
+        expect(lockLabel('prop:stripclub')).toBe('🔒 Nivå 28 · Fixare');
+        expect(lockLabel('perk:torpedo')).toBe('🔒 Nivå 31 · Torped');
+        expect(lockLabel('perk:godcar')).toBe('🔒 Nivå 100 · Gudfadern');
         const info = lockInfo(9, 'weapon:uzi');
         expect(info).toMatchObject({ locked: true, need: 16, left: 7, hint: 'du: Nv 9 · 7 nivåer kvar' });
         expect(lockInfo(15, 'weapon:uzi').hint).toBe('du: Nv 15 · 1 nivå kvar');
@@ -289,9 +406,9 @@ describe('gränser per runda och crew', () => {
         expect([54, 55, 72, 73].map(crewRecover)).toEqual([25, 12, 12, 8]);
         expect([24, 25, 37, 38, 87, 88].map(gunDiscount)).toEqual([1, 0.9, 0.9, 0.8, 0.8, 0.7]);
         expect([30, 31, 43, 44].map(backupPerRound)).toEqual([0, 1, 1, 2]);
-        expect([34, 35, 81, 82].map(L => bribeCops(L))).toEqual([
+        expect([34, 35, 84, 85].map(L => bribeCops(L))).toEqual([
             { perRound: 0, perStar: 1000 }, { perRound: 1, perStar: 1000 }, { perRound: 1, perStar: 1000 }, { perRound: 2, perStar: 500 }]);
-        expect([57, 58, 92, 93].map(doctorMult)).toEqual([1, 0.5, 0.5, 0]);
+        expect([57, 58, 90, 91].map(doctorMult)).toEqual([1, 0.5, 0.5, 0]);
         expect([67, 68, 96, 97].map(lostTrackMult)).toEqual([1, 0.75, 0.75, 0.5]);
     });
     it('stämmer med upplåsningslistan', () => {
@@ -321,6 +438,14 @@ describe('gränser per runda och crew', () => {
         expect(doctorMult(requiredLevel('perk:doctorfree'))).toBe(0);
         expect(lostTrackMult(requiredLevel('perk:heat'))).toBe(0.75);
         expect(lostTrackMult(requiredLevel('perk:heat2'))).toBe(0.5);
+        expect(knockMult(requiredLevel('perk:torpedo'))).toBe(1.25);
+        expect(knockMult(requiredLevel('perk:torpedo') - 1)).toBe(1);
+        expect(failRespect(requiredLevel('perk:nofailloss'))).toBe(0);
+        expect(failRespect(requiredLevel('perk:nofailloss') - 1)).toBe(-5);
+        expect(respectFloor(requiredLevel('perk:family'), true)).toBe(50);
+        expect(respectFloor(requiredLevel('perk:family') - 1, true)).toBe(-100);
+        expect(robFightChance(0.5, requiredLevel('perk:legend'), { type: 'civ' })).toBe(0);
+        expect(robFightChance(0.5, requiredLevel('perk:legend') - 1, { type: 'civ' })).toBeGreaterThan(0);
     });
 });
 
@@ -369,7 +494,7 @@ describe('skada', () => {
     it('crew, knuff och motvikt', () => {
         expect(crewDmgMult(1)).toBe(1);
         for (const L of allLevels) expect(crewDmgMult(L)).toBeLessThanOrEqual(1.25);
-        expect([22, 23].map(knockMult)).toEqual([1, 1.25]);
+        expect([30, 31].map(knockMult)).toEqual([1, 1.25]);
         expect([1, 30, 60, 100].map(oppsCount)).toEqual([4, 5, 6, 7]);
         expect(oppsArmed(1, true)).toBe(2);
         expect(oppsArmed(1, false)).toBe(0);
@@ -426,11 +551,12 @@ describe('skada', () => {
         expect(pvpDamage(53, 45, 50, 50)).toBe(45);
         expect(pvpDamage(53, 45, 70, 50)).toBeCloseTo(49.5);
         expect(NEWBIE_MAX_LEVEL).toBe(15);
+        expect(requiredLevel('weapon:uzi')).toBe(NEWBIE_MAX_LEVEL + 1);   // skyddet gäller tills uzin är upplåst
         expect(newbieShield(15, 5)).toBe(true);
         expect(newbieShield(14, 5)).toBe(false);
-        expect(newbieShield(40, 6)).toBe(true);     // skyddet räcker till och med Langare
+        expect(newbieShield(40, 6)).toBe(true);     // Småhustlare skyddas
         expect(newbieShield(25, 15)).toBe(true);
-        expect(newbieShield(40, 16)).toBe(false);   // Hustlare har uzi: inget skydd
+        expect(newbieShield(40, 16)).toBe(false);   // uzin kommer på nivå 16: inget skydd
         expect(newbieShield(15, 5, true)).toBe(false);
         expect(pvpDamage(20, 45, 30, 3)).toBeCloseTo(20 * 1.1 * 0.5);
         expect(pvpDamage(20, 45, 30, 3, { aggro: true })).toBeCloseTo(22);
@@ -472,17 +598,17 @@ describe('respekt', () => {
         expect(fearMult(100)).toBeCloseTo(0.604);
         const civ = { type: 'civ' }, metro = { type: 'metro' };
         expect(robFightChance(0.3, 1, civ)).toBeCloseTo(0.3);
-        expect(robFightChance(0.3, 79, civ)).toBeCloseTo(0.3 * fearMult(79));
-        expect(robFightChance(0.3, 80, civ)).toBe(0);
-        expect(robFightChance(0.1, 80, metro)).toBe(0);
-        expect(robFightChance(1, 80, { type: 'gang', gang: 'kebab' })).toBeCloseTo(fearMult(80));
+        expect(robFightChance(0.3, 80, civ)).toBeCloseTo(0.3 * fearMult(80));
+        expect(robFightChance(0.3, 81, civ)).toBe(0);
+        expect(robFightChance(0.1, 81, metro)).toBe(0);
+        expect(robFightChance(1, 81, { type: 'gang', gang: 'kebab' })).toBeCloseTo(fearMult(81));
         // snutar, tuffingar och rånare har också type 'civ' (ai.js) men är inte vanligt folk
-        expect(robFightChance(1, 80, { type: 'civ', cop: true })).toBeCloseTo(fearMult(80));
-        expect(robFightChance(0.8, 80, { type: 'civ', tough: true })).toBeCloseTo(0.8 * fearMult(80));
+        expect(robFightChance(1, 81, { type: 'civ', cop: true })).toBeCloseTo(fearMult(81));
+        expect(robFightChance(0.8, 81, { type: 'civ', tough: true })).toBeCloseTo(0.8 * fearMult(81));
         expect(robFightChance(0.8, 100, { type: 'civ', tough: true, mugger: false, wasMugger: true })).toBeCloseTo(0.8 * fearMult(100));
         // utan ped gäller bara fearMult, aldrig nollan
-        expect(robFightChance(1, 80)).toBeCloseTo(fearMult(80));
-        expect(robFightChance(1, 80, 'civ')).toBeCloseTo(fearMult(80));
+        expect(robFightChance(1, 81)).toBeCloseTo(fearMult(81));
+        expect(robFightChance(1, 81, 'civ')).toBeCloseTo(fearMult(81));
         expect(isOrdinaryPed(civ)).toBe(true);
         expect(isOrdinaryPed({ type: 'civ', cop: true })).toBe(false);
         expect(isOrdinaryPed(null)).toBe(false);
@@ -586,8 +712,9 @@ describe('awardXp', () => {
         const r = awardXp(p, 'join', { career }, T0);
         expect(r.gained).toBe(150);   // 100 + första gänget 50
         expect(r).toMatchObject({ from: 5, to: 6, rankUp: true });
-        expect(r.rank.title).toBe('Hangaround');
-        expect(r.ranks.map(x => x.id)).toEqual(['hangaround']);
+        expect(r.rank.title).toBe('Småhustlare');
+        expect(r.rank.emoji).toBe('🧢');
+        expect(r.ranks.map(x => x.id)).toEqual(['smahustlare']);
         expect(r.unlocked.map(u => u.id)).toContain('weapon:pistol');
         expect(r.rewards.rep).toBe(6);
         expect(p.rep).toBe(6);
@@ -783,7 +910,7 @@ describe('awardXp', () => {
         expect(p.xpOnce).toEqual([]);
     });
     it('steg-XP som ger en ny titel betalar även den titelns respekt', () => {
-        // nivå 10 → 11 (Langare): +5 tar kebab 55 → 60 (steg 60, 60 XP) ...
+        // nivå 10 → 11 (Hustlare): +5 tar kebab 55 → 60 (steg 60, 60 XP) ...
         const p = fresh({ xp: XP_TOTAL[11] - 1 });
         p.respect.kebab = 55;
         const r = awardXp(p, 'opps', { career: createCareer(T0), amount: 1 }, T0);
@@ -795,8 +922,8 @@ describe('awardXp', () => {
         for (const id of GANG_IDS) q.respect[id] = 95;
         q.respect.kebab = 22;
         const r2 = awardXp(q, 'opps', { career: createCareer(T0), amount: 1, mentor: 1.75 }, T0);
-        // Hangaround: fem gäng 95 → 100 (5 × 100 × 1,75 = 875 XP) räcker till Langare (nivå 11) ...
-        expect(r2.ranks.map(x => x.id)).toEqual(['hangaround', 'langare']);
+        // Småhustlare: fem gäng 95 → 100 (5 × 100 × 1,75 = 875 XP) räcker till Hustlare (nivå 11) ...
+        expect(r2.ranks.map(x => x.id)).toEqual(['smahustlare', 'hustlare']);
         expect(r2.to).toBe(11);
         // ... vars +5 tar kebab 27 → 32 och betalar steget 30 i andra varvet
         expect(q.respect.kebab).toBe(32);
@@ -957,7 +1084,7 @@ describe('nivåer som inte firats', () => {
         const p = { xp: XP_TOTAL[7], lvSeen: 5 };
         const u = unseenLevels(p);
         expect(u).toMatchObject({ from: 5, to: 7, rankUp: true });
-        expect(u.ranks.map(r => r.id)).toEqual(['hangaround']);
+        expect(u.ranks.map(r => r.id)).toEqual(['smahustlare']);
         expect(u.unlocked.every(x => x.level === 6 || x.level === 7)).toBe(true);
         markLevelSeen(p);
         expect(p.lvSeen).toBe(7);

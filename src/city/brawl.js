@@ -30,7 +30,6 @@
 // ═══════════════════════════════════════════
 
 import { WEAPONS } from './weapons.js';
-import { addHeat } from './wanted.js';
 import { collideInterior, roomStep } from './interiors.js';
 
 export const NO_BRAWL = new Set(['gunshop']);   // Pang-Pelle säger ifrån
@@ -228,7 +227,8 @@ function callCops(world) {
     const I = world.interior;
     fightOf(I).cops = true;
     I.seen = true;
-    if (world.wanted) addHeat(world.wanted, 1, true);
+    // Polisen (police.js): en trafikincident-nivå, och de vet vilket ställe det gäller
+    if (world.crime) world.crime('brawlCall', { at: I.door, known: true });
     world.message('📞 Personalen har ringt snuten — de väntar utanför.');
 }
 

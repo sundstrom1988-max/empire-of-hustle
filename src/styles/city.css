@@ -447,6 +447,25 @@ body.city-open .cbd-leaf {
 /* Mus: sikte i stan (inte på mobil) */
 .city-overlay:not(.touch) .city-canvas { cursor: crosshair; }
 
+/* 3D (förstaperson/följkamera) på smal skärm: knapparna som en kolumn vid högerkanten under
+   den mindre minikartan (hud.js minimapRect compact) — inte en rad tvärs över bilden */
+@media (max-width: 560px) {
+    .city-overlay.cam3d .city-topbar {
+        top: 246px;
+        left: auto;
+        right: 8px;
+        flex-direction: column;
+        align-items: flex-end;
+        gap: 6px;
+    }
+
+    .city-overlay.cam3d .city-btn {
+        min-width: 40px;
+        min-height: 32px;
+        padding: 4px 7px;
+    }
+}
+
 /* ── Pausmenyn: kameraläge och blick ── */
 .city-settings {
     text-align: left;

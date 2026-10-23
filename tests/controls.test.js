@@ -168,6 +168,20 @@ describe('Till fots ute: W följer blicken', () => {
         expect(w.player.y).toBe(y0);
     });
 
+    it('blicken i 3D (turn) räknas som eget sikte i 4 s, även de steg musen står still', () => {
+        const w = openWorld();
+        w.update(DT, IDLE);
+        expect(w.mouseAim).toBe(false);
+        w.update(DT, { ...IDLE, turn: 0.1 });
+        expect(w.mouseAim).toBe(true);
+        for (let i = 0; i < 180; i++) w.update(DT, IDLE);
+        expect(w.mouseAim).toBe(true);
+        for (let i = 0; i < 66; i++) w.update(DT, IDLE);
+        expect(w.mouseAim).toBe(false);
+        w.update(DT, { ...IDLE, aim: { x: w.player.x + 50, y: w.player.y } });
+        expect(w.mouseAim).toBe(true);
+    });
+
     it('vrider man under gången följer W den nya blicken direkt (ingen seghet)', () => {
         const w = openWorld();
         walk(w, 10, { fwd: 1 }, DIRS.E);

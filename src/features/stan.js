@@ -136,10 +136,16 @@ function gangCard(p) {
 
 let cityProfile = null;
 
+// Omladdning eller stängd flik mitt i stan: spara (polisens läge ligger i profilen, p.cityPolice),
+// så att en pågående jakt eller sökning inte raderas av en omladdning.
+if (typeof window !== 'undefined') window.addEventListener('pagehide', () => { if (isCityOpen()) saveGame(); });
+
 export function goToCity() {
     const p = myPlayer();
     if (!p || isCityOpen()) return;
     if (!canGoToCity()) { showToast('⏳ Vänta på din tur!'); return; }
+    // Gripen men sidan laddades om innan stan stängdes: gripandet gäller ändå
+    if (p.cityBusted && !p.inJail) { cityProfile = p; onCityClosed({ reason: 'busted', stars: p.cityBusted.stars || 3, moneyDelta: 0 }); return; }
     if (p.inJail) { showToast('🔒 Du sitter i häktet — ingen stan för dig!'); return; }
     unlockAudio();
     stopRadio();
@@ -163,6 +169,7 @@ function onCityClosed(result) {
     cityProfile = null;
     if (!p) return;
     if (!p.cityStats) p.cityStats = {};
+    delete p.cityBusted;
     if (result.reason === 'busted') {
         const fine = Math.floor(p.money * 0.15);
         p.money -= fine;

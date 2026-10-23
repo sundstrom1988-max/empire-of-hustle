@@ -4,6 +4,7 @@
 
 import { GANGS, DISTRICTS, TILE } from './constants.js';
 import { stars } from './wanted.js';
+import { policeStatus } from './police.js';
 import { phoneAccess, gangById } from './missions.js';
 import { WEAPONS } from './weapons.js';
 import { buildMinimapBase, drawMap, MAP_LEGEND } from './minimap.js';
@@ -13,6 +14,7 @@ import { eTarget } from './camera.js';
 const BIG_FONT = 'Bungee, Impact, "Arial Black", sans-serif';
 const PAGER_FONT = 'VT323, "Courier New", monospace';
 const EMOJI_FONT = '"Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif';
+const PANEL_FONT = 'system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif';   // polispanelens rader: tätare än BIG_FONT
 
 function outlined(ctx, text, x, y, size, fill, align = 'left', font = BIG_FONT, stroke = 5) {
     ctx.font = `${size}px ${font}`;
@@ -39,6 +41,14 @@ function wrap(ctx, text, maxW) {
 }
 
 const fmtTime = s => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+
+// En rad som får plats (med … på slutet), för polispanelen på mobilen
+function fitText(ctx, text, maxW) {
+    let t = String(text);
+    if (ctx.measureText(t).width <= maxW) return t;
+    while (t.length > 4 && ctx.measureText(t + '…').width > maxW) t = t.slice(0, -1);
+    return t.trimEnd() + '…';
+}
 
 // Touch: knapparna heter annat än tangenterna (fight = 👊/vapnet, eller ⤵ i bilen)
 export function touchText(text, fight) {
@@ -87,9 +97,10 @@ export class Hud {
     }
 
     // Minikartan: nere till vänster på datorn, uppe till höger på mobilen
-    minimapRect(W, H, touch, narrow) {
+    // compact (3D på mobil): mindre, så att den inte tar bilden; knapparna står i en kolumn under den (city.css)
+    minimapRect(W, H, touch, narrow, compact = false) {
         if (touch || narrow) {
-            const size = Math.round(Math.min(124, W * 0.32));
+            const size = Math.round(compact ? Math.min(92, W * 0.24) : Math.min(124, W * 0.32));
             return { x: W - size - 12, y: narrow ? 128 : 118, size };
         }
         const size = Math.round(Math.max(130, Math.min(190, Math.min(W, H) * 0.24)));
@@ -145,6 +156,7 @@ export class Hud {
         const W = r.w, H = r.h;
         ctx.setTransform(r.dpr, 0, 0, r.dpr, 0, 0);
         const narrow = W < 560;
+        const compactMap = !!opts.cam && opts.cam !== 'top'; // 3D: mindre minikarta på mobilen
         const p = world.player, profile = world.profile;
 
         // ── Pengar (uppe till höger) ──
@@ -157,21 +169,8 @@ export class Hud {
         const goods = profile.cityGoods || 0;
         outlined(ctx, `🕖 ${clock}  ·  ☎️ ${left}/${world.maxMissions}${goods ? `  ·  🎒 ${goods}` : ''}`, W - 14, 26 + moneySize * 0.9, narrow ? 12 : 14, '#e5e7eb', 'right', BIG_FONT, 3);
 
-        // ── Efterlyst: snutmärken ──
-        const s = stars(world.wanted);
-        const blink = this.wantedFlash > 0 && Math.sin(this.t * 18) > 0;
-        const size = narrow ? 18 : 22;
-        const wy = 26 + moneySize * 0.9 + (narrow ? 24 : 30);
-        const lost = s > 0 && world.wanted.seenT > 4;
-        ctx.font = `${size}px ${EMOJI_FONT}`;
-        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-        for (let i = 0; i < 5; i++) {
-            const x = W - 14 - size * 0.6 - (4 - i) * (size + 4);
-            ctx.globalAlpha = i < s ? (blink ? 0.35 : lost ? 0.5 + 0.3 * Math.sin(this.t * 4) : 1) : 0.18;
-            ctx.fillText('👮', x, wy);
-        }
-        ctx.globalAlpha = 1;
-        if (s > 0) outlined(ctx, lost ? '🔍 SNUTEN LETAR — HÅLL DIG UNDAN' : '👀 SNUTEN SER DIG', W - 14, wy + size * 0.5 + 10, narrow ? 10 : 12, lost ? '#cbd5e1' : '#f87171', 'right', BIG_FONT, 3);
+        // ── Polisen: nivå, vad de gör, varför (polispanelen, drawPolice) ──
+        this.drawPolice(ctx, world, W, narrow, 26 + moneySize * 0.9 + (narrow ? 24 : 30), this.minimapRect(W, H, opts.touch, narrow));
 
         // ── Respekt (uppe till vänster) ──
         // Tre rader: ditt gäng, turfets gäng och det gäng som hatar dig mest
@@ -274,7 +273,8 @@ export class Hud {
         if (this.camBanner) {
             const b = this.camBanner;
             const a = Math.min(1, b.life / 0.4, (b.max - b.life) * 6 + 0.2);
-            const cy = narrow ? Math.max(H * 0.36, 300) + 64 : H * 0.62;
+            // ovanför mitten: i följkameran står gubben/bilen strax under mitten och ska synas
+            const cy = narrow ? Math.max(H * 0.36, 300) + 64 : H * 0.34;
             ctx.globalAlpha = Math.max(0, a);
             ctx.font = `${narrow ? 17 : 24}px ${BIG_FONT}`;
             const tw = ctx.measureText(`${b.icon} ${b.text}`).width + 36;
@@ -294,7 +294,7 @@ export class Hud {
         const m = world.mission;
         // Personsökaren får inte hamna under minikartan på smala datorskärmar
         const mmR = this.mapRect && !opts.touch && !narrow && !world.showMap ? this.mapRect.x + this.mapRect.size + 14 : 0;
-        const { x: px, w: pagerW } = pagerX(W, { touch: opts.touch, narrow, mmR, mapX: this.minimapRect(W, H, opts.touch, narrow).x });
+        const { x: px, w: pagerW } = pagerX(W, { touch: opts.touch, narrow, mmR, mapX: this.minimapRect(W, H, opts.touch, narrow, compactMap).x });
         const lines = [];
         ctx.font = `${narrow ? 18 : 20}px ${PAGER_FONT}`;
         if (m) {
@@ -343,13 +343,14 @@ export class Hud {
         // ── Tips ── (på touch heter knapparna annat än tangenterna)
         let hint = world.hint;
         if (hint && opts.touch) hint = touchText(hint, fightIcon);
+        if (hint && opts.locked) hint = hint.replace(/^ESC — /, 'ESC → 🏠 '); // 3D med fångad mus: Esc släpper musen först (paus)
         if (hint) outlined(ctx, hint, W / 2, py - (lines.length ? 22 : 8), narrow ? 13 : 16, '#fff', 'center', BIG_FONT, 4);
 
         // ── Minikarta över hela stan ──
         if (!this.mapBase) this.mapBase = buildMinimapBase(world.city);
         const remotes = world.remotes();
         const scout = (world.crew || []).some(c => c.role === 'scout' && !(c.down > 0));
-        const mm = this.minimapRect(W, H, opts.touch, narrow);
+        const mm = this.minimapRect(W, H, opts.touch, narrow, compactMap);
         this.mapRect = mm;
         if (!world.showMap) drawMap(ctx, world, this.mapBase, mm, { remotes, showCops: scout, t: this.t });
 
@@ -415,6 +416,83 @@ export class Hud {
             ctx.fillStyle = `rgba(120,0,0,${Math.min(0.35, world.stateT * 0.15)})`; ctx.fillRect(0, 0, W, H);
         } else if (world.state === 'busted') {
             ctx.fillStyle = `rgba(0,30,120,${Math.min(0.3, world.stateT * 0.12)})`; ctx.fillRect(0, 0, W, H);
+        }
+    }
+
+    // ── Polispanelen (uppe till höger, under pengarna) ──
+    // Nivån som 👮-märken, nivåns namn, vad polisen gör just nu (vill prata / jagar / söker /
+    // gav upp) med nedräkning, varför nivån steg och kvarvarande tryck. På mobilen kortare
+    // rader som slutar ovanför minikartan.
+    drawPolice(ctx, world, W, narrow, wy, mm = null) {
+        const P = world.police || world.wanted;
+        const st = policeStatus(P);
+        const s = stars(P);
+        const blink = this.wantedFlash > 0 && Math.sin(this.t * 18) > 0;
+        const size = narrow ? 18 : 22;
+        const R = W - 14;
+        const searching = st.phase === 'search';
+        ctx.font = `${size}px ${EMOJI_FONT}`;
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        for (let i = 0; i < 5; i++) {
+            const x = R - size * 0.6 - (4 - i) * (size + 4);
+            if (i < s) {
+                ctx.globalAlpha = blink ? 0.35 : searching ? 0.5 + 0.3 * Math.sin(this.t * 4) : 1;
+                ctx.fillText('👮', x, wy);
+            } else {
+                // Tom plats: en ring (färgemoji bryr sig inte alltid om globalAlpha, så ingen blek 👮)
+                ctx.globalAlpha = 1;
+                ctx.strokeStyle = 'rgba(255,255,255,0.28)'; ctx.lineWidth = 2;
+                ctx.beginPath(); ctx.arc(x, wy, size * 0.36, 0, Math.PI * 2); ctx.stroke();
+            }
+        }
+        ctx.globalAlpha = 1;
+        const showHeat = st.heat > 0.05;
+        if (!s && !st.ended && !showHeat) return;
+        const TONE = { stop: '#fbbf24', chase: '#f87171', search: '#93c5fd', ended: '#86efac', calm: '#cbd5e1' };
+        const color = TONE[st.tone] || '#fff';
+        const fs = narrow ? 11 : 13, lh = fs + 3;
+        const PW = narrow ? Math.min(236, W - 150) : 310;
+        ctx.font = `700 ${fs}px ${PANEL_FONT}`;
+        const rows = [];
+        if (s || st.ended) {
+            // Nivåns namn: egen rad på datorn, bredvid märkena på mobilen (där är det trångt ovanför minikartan)
+            if (!narrow) rows.push({ text: s ? `NIVÅ ${s} · ${st.name.toUpperCase()}` : 'LUGN', color, font: `${fs}px ${BIG_FONT}` });
+            else if (s) outlined(ctx, st.name.toUpperCase(), R - 5 * (size + 4) - 2, wy, 9, color, 'right', BIG_FONT, 3);
+            const cd = st.countdown !== null && st.countdown !== undefined ? ` · ${Math.ceil(st.countdown)} s` : '';   // hålls ihop på en rad
+            const icon = { stop: '🚨', chase: '🚔', search: '🔍', ended: '✔' }[st.tone] || '';
+            let action = st.action;
+            if (narrow) action = { stop: P.known ? 'Polisen väntar utanför' : st.countdown !== null && P.stop?.talk > 0 ? 'Polisen pratar med dig' : st.countdown !== null ? 'STANNA – polisen vill prata' : 'Stå kvar – polisen kommer', chase: 'JAGAR DIG', search: P.known ? 'Väntar utanför dörren' : 'SÖKER där du sågs senast' }[st.tone] || action;
+            if (st.tone === 'chase') { const n = world.vehicles.filter(v => v.driver === 'cop' && v.pol?.task === 'chase').length; action += ` · ${n} ${n === 1 ? 'bil' : 'bilar'}`; }
+            if (action) for (const l of (narrow ? [fitText(ctx, `${icon} ${action}${cd}`, PW)] : wrap(ctx, `${icon} ${action}${cd}`, PW).slice(0, 2))) rows.push({ text: l, color: '#fff' });
+            if (st.reason && s) for (const l of (narrow ? [fitText(ctx, `Varför: ${st.reason}`, PW)] : wrap(ctx, `Varför: ${st.reason}`, PW).slice(0, 2))) rows.push({ text: l, color: '#cbd5e1', weight: 400 });
+        }
+        let heatRow = showHeat && (!narrow || !s);
+        const y0 = wy + size * 0.5 + 4;
+        // Minikartan uppe till höger (mobil): panelen slutar ovanför den — orsaken får ge vika först
+        if (mm && mm.x < R && mm.y > y0) {
+            const room = mm.y - 6 - y0 - 8;
+            if (heatRow && rows.length * lh + 12 > room) heatRow = false;
+            while (rows.length > 1 && rows.length * lh > room) rows.pop();
+        }
+        const ph = rows.length * lh + (heatRow ? 12 : 0) + 8;
+        ctx.fillStyle = st.tone === 'chase' && blink ? 'rgba(127,29,29,0.75)' : 'rgba(0,0,0,0.55)';
+        ctx.fillRect(R - PW - 8, y0, PW + 10, ph);
+        ctx.fillStyle = color; ctx.fillRect(R + 1, y0, 2, ph);   // färgkant: vad som pågår
+        ctx.textAlign = 'right'; ctx.textBaseline = 'middle'; ctx.lineJoin = 'round';
+        rows.forEach((row, i) => {
+            const y = y0 + 4 + lh * (i + 0.5);
+            ctx.font = row.font || `${row.weight || 700} ${fs}px ${PANEL_FONT}`;
+            ctx.lineWidth = 3; ctx.strokeStyle = '#000'; ctx.strokeText(row.text, R - 2, y);
+            ctx.fillStyle = row.color; ctx.fillText(row.text, R - 2, y);
+        });
+        if (heatRow) {
+            // Kvarvarande tryck (heat): avtar när det är lugnt, påverkar patruller och om du får varning eller bot
+            const hy = y0 + 4 + rows.length * lh + 3, bw = Math.min(110, PW - 60);
+            ctx.font = `700 ${fs - 2}px ${PANEL_FONT}`;
+            ctx.fillStyle = '#cbd5e1'; ctx.textAlign = 'right';
+            ctx.fillText('Tryck', R - bw - 8, hy + 3);
+            ctx.fillStyle = 'rgba(255,255,255,0.15)'; ctx.fillRect(R - bw - 2, hy, bw, 6);
+            ctx.fillStyle = st.heat >= 2 ? '#f97316' : '#facc15'; ctx.fillRect(R - bw - 2, hy, bw * Math.min(1, st.heat / 5), 6);
         }
     }
 
@@ -537,7 +615,8 @@ export class Hud {
         if (!p.vehicle && !p.dead && world.state === 'play' && !world.fade && !world.showMap) {
             const wpn = WEAPONS[world.profile.weapon] || WEAPONS.fists;
             const ranged = !wpn.melee;
-            const reach = ranged ? 240 : 42;
+            // nävar/slagträ: strax framför (i följkameran lite längre fram, annars hamnar ringen på huvudet)
+            const reach = ranged ? 240 : opts.mode === 'fps' ? 42 : 90;
             const s = P(p.x + Math.cos(p.angle) * reach, p.y + Math.sin(p.angle) * reach, opts.mode === 'fps' ? 30 : ranged ? 19 : 22);
             const x = s.depth === Infinity ? W / 2 : clampN(s.x, 16, W - 16), y = s.depth === Infinity ? H / 2 : clampN(s.y, 16, H - 16);
             crosshair(ctx, x, y, ranged, ranged && !(world.profile.ammo?.[wpn.id] > 0));

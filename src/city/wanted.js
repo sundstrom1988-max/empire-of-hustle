@@ -1,72 +1,32 @@
 // ═══════════════════════════════════════════
-//  STAN — efterlysning (1–5 snutar)
-//  Bara brott som en snut SER höjer "heat". Nivån
-//  svalnar när ingen snut sett dig på ett tag, och
-//  efter några sekunder utom synhåll tappar de spåret.
+//  STAN — efterlysning (kompatibelt lager)
+//  Polisen ligger i police.js: nivå 0–5, faser, incidenter
+//  och tryck (heat) hålls isär. Det här är de gamla namnen
+//  som resten av spelet läser: stars(world.wanted) = nivån.
+//  world.wanted är samma objekt som world.police.
 // ═══════════════════════════════════════════
 
-export const CRIME = {
-    ped: 0.35,        // körde på någon
-    carjack: 0.45,    // drog ut en förare
-    copHit: 0.6,      // prejade en snutbil
-    wreck: 0.6,       // kvaddade en bil
-    explosion: 1.0,
-    copWreck: 1.5,    // kvaddade en snutbil
-    copCar: 1.2,      // snodde en snutbil
-    gangHit: 0.2,
-    shot: 0.4,        // sköt på öppen gata
-    rob: 0.5,         // rånade någon
-    robShop: 1.2,     // rånade en butik
-    copAssault: 0.6,  // gav sig på en snut
-    copKill: 1.2      // sänkte en snut
-};
+import { createPolice, alarm, clearPolice, carCap, chaseSpeed, MAX_LEVEL } from './police.js';
 
-const MAX_HEAT = 5.99;
-const CALM_DELAY = 4;     // sekunder utom synhåll innan nivån sjunker
-const LOST_AFTER = 4;     // sekunder utom synhåll innan snuten tappar spåret
+export function createWanted() { return createPolice(); }
 
-export function createWanted() { return { heat: 0, calm: 0, flash: 0, seenT: 99, lastSeen: null }; }
-
+// Nivån 0–5 (det som visas som 👮 och skickas till andra spelare)
 export function stars(w) {
-    const s = Math.ceil(w.heat - 1e-9);
-    return s <= 0 ? 0 : Math.min(5, s);
+    if (!w) return 0;
+    const n = Math.floor(Number(w.level) || 0);
+    return n <= 0 ? 0 : Math.min(MAX_LEVEL, n);
 }
 
-// Ett brott som ingen snut ser får inga följder
-export function addHeat(w, amount, witnessed = true) {
-    if (!witnessed) return false;
-    w.heat = Math.min(MAX_HEAT, w.heat + amount);
-    w.calm = 0;
-    w.flash = 1.5;
-    w.seenT = 0;
-    return true;
+// Direkt efterlysning (larm, uppdrag): nivån sätts och snuten vet var du är just nu
+export function setStars(w, n, text = 'Larm') {
+    if (!w || !(n > 0)) return null;
+    return alarm(w, n, text);
 }
 
-// Direkt efterlysning (larm, uppdrag): snuten vet var du är just nu
-export function setStars(w, n) {
-    w.heat = Math.max(w.heat, Math.min(MAX_HEAT, n - 0.5));
-    w.calm = 0;
-    w.flash = 1.5;
-    w.seenT = 0;
-}
+// Allt släpps (lackverkstan, registret rensat, gömstället)
+export function clearWanted(w, text) { if (w) clearPolice(w, text); }
 
-export function clearWanted(w) { w.heat = 0; w.calm = 0; w.flash = 0; w.seenT = 99; w.lastSeen = null; }
-
-// Har snuten tappat bort dig? Då letar de där de såg dig sist.
-export function lostTrack(w) { return w.seenT > LOST_AFTER; }
-
-export function updateWanted(w, dt, copSees, pos = null) {
-    w.flash = Math.max(0, w.flash - dt);
-    if (copSees) { w.seenT = 0; if (pos) w.lastSeen = { x: pos.x, y: pos.y }; } else w.seenT += dt;
-    if (w.heat <= 0) return;
-    if (copSees) { w.calm = 0; return; }
-    w.calm += dt;
-    if (w.calm > CALM_DELAY) {
-        const s = stars(w);
-        w.heat = Math.max(0, w.heat - dt * 0.3 / (1 + s * 0.1));
-    }
-}
-
-// Hur många snutbilar som jagar dig per nivå
-export function copTarget(s) { return [0, 1, 2, 3, 5, 7][Math.max(0, Math.min(5, s))]; }
-export function copSpeedFactor(s) { return 0.82 + 0.05 * s; }
+// Hur många polisbilar som högst jagar dig per nivå (insatstaket)
+export function copTarget(s) { return carCap(s); }
+// Fartfaktor för jagande polisbilar: fast per nivå, aldrig över 1
+export function copSpeedFactor(s) { return chaseSpeed(s); }

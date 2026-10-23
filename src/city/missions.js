@@ -225,7 +225,7 @@ export function updateMission(m, world, dt) {
         case 'escape':
             if (!m.started) {
                 m.started = true;
-                setStars(world.wanted, m.stars);
+                setStars(world.wanted, m.stars, 'Gänget tipsade polisen om dig');
                 world.notify(`🚨 ${m.stars} snutar är efter dig. Skaka av dem!`);
             }
             m.target = null;

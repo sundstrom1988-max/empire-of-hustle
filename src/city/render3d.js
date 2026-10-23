@@ -49,7 +49,7 @@ function unavailable(reason) {
 // options: { maxDpr (2), adaptive (true: sänk upplösningen om det går segt), antialias, maxLights (4, mobil 2) }
 export async function createRenderer3D(container, options = {}) {
     if (!container || typeof document === 'undefined') return unavailable('ingen container');
-    if (!webglSupported()) return unavailable('WebGL saknas');
+    if (!webglSupported()) return unavailable('WebGL2 saknas');
     let THREE, engineMod;
     try {
         [THREE, engineMod] = await Promise.all([import('three'), import('./render3d/engine.js')]);

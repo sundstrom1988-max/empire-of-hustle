@@ -3,6 +3,7 @@
 //  Ren logik: ingen DOM, ingen lagring, inga sidoeffekter utöver
 //  spelarobjektet och karriärobjektet som skickas in.
 //  Hela designen: docs/levels.md
+//  Ranktabellen (RANKS) kommer från masterprompt v3 avsnitt 6.
 //
 //  Grundregler:
 //   • XP (p.xp) är sanningen. Nivå, titel och färg räknas alltid fram
@@ -29,19 +30,69 @@ export const LEGEND_STAR_XP = 25000;     // en kosmetisk Legend-stjärna per 25 
 export const MAX_AWARD = 1000;           // största enskilda utdelning (före milstolpe) — skydd mot trasiga anrop
 export const AI_TURN_XP = 120;           // AI-spelare: bara för att visa en nivå
 
-// ── Titelband ──
+// ── Titelband (masterprompt v3 avsnitt 6) ──
+// Springpojke 1–5 och Gudfadern 100 ligger fast; banden däremellan är masterpromptens förslag.
+// Emblemet är emoji + color: ett eget för varje rang. mask är rankbilden som etapp 1 ritar:
+// name och desc beskriver den, base/accent är dess två färger (huvudmaterial och detalj).
+// tier/style är den stigande visuella stilen från enkel gatustil till exklusiv boss (RANK_STYLES).
+export const RANK_STYLES = Object.freeze({
+    gata: Object.freeze({ tier: 1, label: 'Gatustil', desc: 'Rått tyg, matt och slitet. Inga metaller, inget som glänser.' }),
+    hardingen: Object.freeze({ tier: 2, label: 'Hårding', desc: 'Skinn, stål, nitar och tejp. Första gången masken är något annat än tyg.' }),
+    syndikat: Object.freeze({ tier: 3, label: 'Syndikat', desc: 'Skräddat och dyrt: siden, lack, krom och diskret kant. Inget onödigt.' }),
+    exklusiv: Object.freeze({ tier: 4, label: 'Exklusiv', desc: 'Ornament, guld, sammet och ädelstenar. Gjord för en ensam man på toppen.' })
+});
+
+const R = (from, to, id, title, emoji, color, style, mask) =>
+    ({ from, to, id, title, emoji, color, style, tier: RANK_STYLES[style].tier, mask: Object.freeze(mask) });
 export const RANKS = Object.freeze([
-    { from: 1, to: 5, id: 'springpojke', title: 'Springpojke', emoji: '🛴', color: '#9ca3af' },
-    { from: 6, to: 10, id: 'hangaround', title: 'Hangaround', emoji: '👀', color: '#a3e635' },
-    { from: 11, to: 15, id: 'langare', title: 'Langare', emoji: '🎒', color: '#22c55e' },
-    { from: 16, to: 22, id: 'hustlare', title: 'Hustlare', emoji: '💸', color: '#2dd4bf' },
-    { from: 23, to: 30, id: 'torped', title: 'Torped', emoji: '🔨', color: '#38bdf8' },
-    { from: 31, to: 40, id: 'gangsoldat', title: 'Gängsoldat', emoji: '🪖', color: '#6366f1' },
-    { from: 41, to: 50, id: 'kvartersboss', title: 'Kvartersboss', emoji: '🏙️', color: '#a855f7' },
-    { from: 51, to: 62, id: 'kapo', title: 'Kapo', emoji: '🎩', color: '#ec4899' },
-    { from: 63, to: 74, id: 'consigliere', title: 'Consigliere', emoji: '🍷', color: '#f97316' },
-    { from: 75, to: 84, id: 'underboss', title: 'Underboss', emoji: '🥃', color: '#ef4444' },
-    { from: 85, to: 100, id: 'gudfadern', title: 'Gudfadern', emoji: '🌹', color: '#ffd23f' }
+    R(1, 5, 'springpojke', 'Springpojke', '🛴', '#9ca3af', 'gata', {
+        name: 'Gråluvan', base: '#6b7280', accent: '#9ca3af',
+        desc: 'Sliten grå stickad mössa neddragen över ögonbrynen, ansiktet bart. Matt tyg utan detaljer: ett bud som springer ärenden.'
+    }),
+    R(6, 10, 'smahustlare', 'Småhustlare', '🧢', '#a3e635', 'gata', {
+        name: 'Bandanan', base: '#374151', accent: '#a3e635',
+        desc: 'Rutig bandana uppdragen över näsa och mun, keps ovanpå. Ett enda färgstick i limegrönt; fortfarande bara tyg.'
+    }),
+    R(11, 20, 'hustlare', 'Hustlare', '💸', '#2dd4bf', 'gata', {
+        name: 'Skimasken', base: '#111827', accent: '#2dd4bf',
+        desc: 'Svart balaklava med smal ögonspringa och en tunn turkos list runt ögonen. Funktionell och skarp: jobbar på riktigt.'
+    }),
+    R(21, 30, 'fixare', 'Fixare', '🔧', '#38bdf8', 'hardingen', {
+        name: 'Läderhalvmasken', base: '#1f2937', accent: '#38bdf8',
+        desc: 'Svart halvmask i skinn över näsa och kinder, stålspänne vid örat och blå kantsöm. Den första masken som inte är av tyg.'
+    }),
+    R(31, 40, 'torped', 'Torped', '🥊', '#6366f1', 'hardingen', {
+        name: 'Hockeymasken', base: '#e5e7eb', accent: '#6366f1',
+        desc: 'Reporad vit målvaktsmask av plast med sprickor, mörka ögonhål och en indigoblå rand över pannan. Rå, slagen och skrämmande.'
+    }),
+    R(41, 50, 'veteran', 'Veteran', '🎖️', '#a855f7', 'hardingen', {
+        name: 'Stålmasken', base: '#9ca3af', accent: '#a855f7',
+        desc: 'Buckligt halvansikte i stål med nitar och ett gammalt ärr graverat över ena ögat, lila rem bakom nacken och en liten medalj vid kinden.'
+    }),
+    R(51, 60, 'kapten', 'Kapten', '🎩', '#ec4899', 'syndikat', {
+        name: 'Sidenmasken', base: '#0f172a', accent: '#ec4899',
+        desc: 'Svart sidendomino med smal rosa kantsöm och ett litet silvermärke vid tinningen, under en mörk filthatt. Första masken som ser skräddarsydd ut.'
+    }),
+    R(61, 70, 'underboss', 'Underboss', '🥃', '#f97316', 'syndikat', {
+        name: 'Bärnstensdominon', base: '#1c1917', accent: '#f97316',
+        desc: 'Matt svart läderdomino med kopparbeslag runt ögonen och en bärnstensorange brodyr längs kanten. Dyr men diskret.'
+    }),
+    R(71, 80, 'boss', 'Boss', '💼', '#ef4444', 'syndikat', {
+        name: 'Lackmasken', base: '#111111', accent: '#ef4444',
+        desc: 'Blank svart venetiansk halvmask i lack med kromkant och ett rött sidenband. Kall elegans: man ser att den kostade pengar.'
+    }),
+    R(81, 90, 'storboss', 'Storboss', '💎', '#e2e8f0', 'exklusiv', {
+        name: 'Platinamasken', base: '#94a3b8', accent: '#f8fafc',
+        desc: 'Helmask i polerad platina med silverfiligran och en liten diamant i pannan, sidenband och sammetskrage.'
+    }),
+    R(91, 99, 'don', 'Don', '🍷', '#be123c', 'exklusiv', {
+        name: 'Bautan', base: '#f5f5f4', accent: '#be123c',
+        desc: 'Klassisk elfenbensvit bauta med guldkant och vinröd sammet, under en svart trekantshatt med guldgalon.'
+    }),
+    R(100, 100, 'gudfadern', 'Gudfadern', '🌹', '#ffd23f', 'exklusiv', {
+        name: 'Guldmasken', base: '#ffd23f', accent: '#b91c1c',
+        desc: 'Helmask i blankpolerat guld med ögonspringor och en röd ros i pannan, sammetskappa med guldbroderi. Ingen annan mask i stan är av guld.'
+    })
 ].map((r, index) => Object.freeze({ ...r, index })));
 
 // Nivå från vad som helst (sträng, NaN, 0, 250 ...) → heltal 1..100
@@ -63,13 +114,16 @@ export function rankOf(level) {
 
 export function rankIndex(level) { return rankOf(level).index; }
 
+// Rankbilden på nivån: { name, desc, base, accent }
+export function maskOf(level) { return rankOf(level).mask; }
+
 // Titelband som börjar efter `from` och senast på `to` (de man befordras till)
 export function ranksBetween(from, to) {
     const a = clampLevel(from), b = clampLevel(to);
     return RANKS.filter(r => r.from > a && r.from <= b);
 }
 
-// "🔨 23 Torped"
+// "🔧 23 Fixare"
 export function levelBadge(level) {
     const L = clampLevel(level), r = rankOf(L);
     return `${r.emoji} ${L} ${r.title}`;
@@ -77,8 +131,10 @@ export function levelBadge(level) {
 
 // ── XP-kurva ──
 // need(L) = 5 · round((30 + 15·L + 0,0025·L³) / 5): XP från nivå L till L+1.
-// 0,0025 (inte 0,004) så att en vanlig spelare (cirka 33 XP/min) når Gudfadern
-// på cirka 45 h och nivå 100 på cirka 70 h. Se docs/levels.md avsnitt 2.
+// 0,0025 (inte 0,004) så att en vanlig spelare (cirka 33 XP/min) når Don (nivå 91)
+// på cirka 54 h och Gudfadern (nivå 100) på cirka 70 h. Se docs/levels.md avsnitt 2.
+// Kurvan är komplett för alla 100 nivåer och strikt stigande: första steget är 45 XP,
+// det sista (nivå 99 → 100) 3 940 XP.
 export const XP_CUBIC = 0.0025;
 function stepXp(L) { return 5 * Math.round((30 + 15 * L + XP_CUBIC * L ** 3) / 5); }
 
@@ -188,7 +244,6 @@ export const UNLOCKS = Object.freeze([
     U(22, 'crew:slot3', 'crew', 'Crewplats 3'),
     U(22, 'house:house-skogsbacken', 'house', 'Gömstället Villan i Skogsbacken'),
     U(23, 'weapon:shotgun', 'weapon', 'Hagelgevär hos Pang-Pelle'),
-    U(23, 'perk:torpedo', 'perk', 'Torpedslaget: slagen knuffar 25 % längre', 'bonus'),
     U(25, 'house:house-centrum', 'house', 'Gömstället Takvåningen i Centrum'),
     U(25, 'perk:discount10', 'perk', 'Pang-Pelle −10 % på vapen, ammo och väst', 'bonus'),
     U(26, 'mission:collect', 'mission', 'Uppdraget Indrivning', 'nytt', 2),
@@ -196,6 +251,7 @@ export const UNLOCKS = Object.freeze([
     U(28, 'crew:bouncer', 'crew', 'Anställ Stora Sven'),
     U(28, 'car:rolls', 'car', 'Rolls Royce'),
     U(30, 'crew:slot4', 'crew', 'Crewplats 4 (max)'),
+    U(31, 'perk:torpedo', 'perk', 'Torpedslaget: slagen knuffar 25 % längre', 'bonus'),
     U(31, 'perk:backup', 'perk', 'Ring backup: två från gänget slåss för dig i 60 s', 'nytt'),
     U(33, 'cap:fence4', 'cap', 'Skrota 4 bilar per runda', 'bonus'),
     U(35, 'cap:goods15', 'cap', 'Langa 15 varor per runda', 'bonus'),
@@ -211,28 +267,28 @@ export const UNLOCKS = Object.freeze([
     U(55, 'perk:fastrecover', 'perk', 'Crewet reser sig efter 12 s', 'bonus'),
     U(58, 'perk:doctor', 'perk', 'Doktorn tar halva priset', 'bonus'),
     U(60, 'cap:goods20', 'cap', 'Langa 20 varor per runda', 'bonus'),
-    U(60, 'perk:turfprice', 'perk', '+20 % pris på ditt gängs turf', 'bonus'),
+    U(61, 'perk:turfprice', 'perk', '+20 % pris på ditt gängs turf', 'bonus'),
     U(63, 'perk:lawyer', 'perk', 'Advokaten: kortare häkte och halva böter', 'bonus'),
     U(63, 'perk:nofailloss', 'perk', 'Misslyckade jobb kostar ingen respekt', 'bonus'),
     U(65, 'crew:elite', 'crew', 'Elitrekryter (+40 % hälsa och skada mot NPC:er)', 'nytt'),
     U(68, 'perk:heat', 'perk', 'Snuten tappar spåret 25 % snabbare', 'bonus'),
-    U(70, 'perk:chauffeur', 'perk', 'Privatchaufför: gratis taxi, även med 1 stjärna', 'bonus'),
+    U(71, 'perk:chauffeur', 'perk', 'Privatchaufför: gratis taxi, även med 1 stjärna', 'bonus'),
     U(73, 'perk:crewheal', 'perk', 'Crewet reser sig efter 8 s', 'bonus'),
     U(75, 'perk:family', 'perk', 'Familjens skydd: gängrespekten går aldrig under +50', 'bonus'),
     U(78, 'cap:missions6', 'cap', '6 uppdrag per runda', 'bonus'),
-    U(80, 'perk:legend', 'perk', 'Gatans legend: vanligt folk slåss aldrig emot', 'bonus'),
-    U(82, 'perk:bribecop2', 'perk', 'Muta snuten: 500 kr per stjärna, två gånger per runda', 'bonus'),
-    U(85, 'perk:offer', 'perk', 'Ett erbjudande: alla gängbossar svarar, även rivalen', 'nytt'),
-    U(85, 'cosm:goldname', 'cosmetic', 'Guldnamn och krona i stan och listorna', 'nytt'),
-    U(85, 'perk:godcar', 'perk', 'Gudfaderns svarta Rolls vid HQ', 'nytt'),
+    U(81, 'perk:legend', 'perk', 'Gatans legend: vanligt folk slåss aldrig emot', 'bonus'),
+    U(85, 'perk:bribecop2', 'perk', 'Muta snuten: 500 kr per stjärna, två gånger per runda', 'bonus'),
     U(88, 'perk:discount30', 'perk', 'Pang-Pelle −30 %', 'bonus'),
     U(90, 'cap:goods25', 'cap', 'Langa 25 varor per runda', 'bonus'),
-    U(90, 'cosm:rose', 'cosmetic', 'Rosen på kavajen och gyllene basebollträ', 'kosmetiskt', 2),
-    U(93, 'perk:doctorfree', 'perk', 'Doktorn lappar ihop dig gratis', 'bonus'),
+    U(91, 'perk:doctorfree', 'perk', 'Doktorn lappar ihop dig gratis', 'bonus'),
     U(95, 'cap:fence5', 'cap', 'Skrota 5 bilar per runda', 'bonus'),
     U(95, 'cosm:statue', 'cosmetic', 'Staty av dig vid HQ', 'kosmetiskt', 2),
     U(97, 'perk:heat2', 'perk', 'Snuten tappar spåret dubbelt så snabbt', 'bonus'),
-    U(100, 'cosm:donstar', 'cosmetic', 'Don-stjärna i namnskylten och Legend-stjärnor', 'kosmetiskt'),
+    U(100, 'perk:offer', 'perk', 'Ett erbjudande: alla gängbossar svarar, även rivalen', 'nytt'),
+    U(100, 'cosm:goldname', 'cosmetic', 'Guldnamn och krona i stan och listorna', 'nytt'),
+    U(100, 'perk:godcar', 'perk', 'Gudfaderns svarta Rolls vid HQ', 'nytt'),
+    U(100, 'cosm:godstar', 'cosmetic', 'Gudfader-stjärna i namnskylten och Legend-stjärnor', 'kosmetiskt'),
+    U(100, 'cosm:rose', 'cosmetic', 'Rosen på kavajen och gyllene basebollträ', 'kosmetiskt', 2),
     U(100, 'prestige', 'prestige', 'Guldaura och valfri Prestige', 'nytt', 2)
 ]);
 const UNLOCK_BY_ID = new Map(UNLOCKS.map(u => [u.id, u]));
@@ -335,10 +391,10 @@ export function gunDiscount(level) { const L = clampLevel(level); return L >= 88
 export function backupPerRound(level) { const L = clampLevel(level); return L >= 44 ? 2 : L >= 31 ? 1 : 0; }
 export function bribeCops(level) {
     const L = clampLevel(level);
-    return L >= 82 ? { perRound: 2, perStar: 500 } : L >= 35 ? { perRound: 1, perStar: 1000 } : { perRound: 0, perStar: 1000 };
+    return L >= 85 ? { perRound: 2, perStar: 500 } : L >= 35 ? { perRound: 1, perStar: 1000 } : { perRound: 0, perStar: 1000 };
 }
 // Doktorns pris gånger det här (0 = gratis)
-export function doctorMult(level) { const L = clampLevel(level); return L >= 93 ? 0 : L >= 58 ? 0.5 : 1; }
+export function doctorMult(level) { const L = clampLevel(level); return L >= 91 ? 0 : L >= 58 ? 0.5 : 1; }
 // Tiden utom synhåll innan snuten tappar spåret (wanted.js LOST_AFTER) gånger det här
 export function lostTrackMult(level) { const L = clampLevel(level); return L >= 97 ? 0.5 : L >= 68 ? 0.75 : 1; }
 
@@ -368,7 +424,7 @@ export function meleeBase(roll, strength = 0) {
 }
 
 export function crewDmgMult(level) { return Math.min(1.25, 1 + 0.0025 * (clampLevel(level) - 1)); }
-export function knockMult(level) { return clampLevel(level) >= 23 ? 1.25 : 1; }   // Torpedslaget: 160 → 200 px/s
+export function knockMult(level) { return clampLevel(level) >= 31 ? 1.25 : 1; }   // Torpedslaget (Torped-bandet): 160 → 200 px/s
 
 // Veteraner (nivå 41) och elit (nivå 65) hos Rekryteraren. Faktorn gäller BARA mot NPC:er:
 // crewmedlemmen sparar sin basskada och bashälsa och sin klass (tier). I PvP skickas alltid
@@ -398,7 +454,7 @@ export function pvpMult(attackerLevel, targetLevel) {
     return 1 + 0.005 * d;
 }
 
-// Nybörjarskydd: målet på nivå ≤ 15 (Springpojke–Langare, innan uzin) och anfallaren
+// Nybörjarskydd: målet på nivå ≤ 15 (Springpojke, Småhustlare och första halvan av Hustlare, innan uzin på 16) och anfallaren
 // minst 10 nivåer över. aggro = nybörjaren slog själv anfallaren de senaste 30 s.
 export const NEWBIE_MAX_LEVEL = 15;
 export const NEWBIE_GAP = 10;
@@ -488,7 +544,7 @@ export function isOrdinaryPed(ped) {
     return ped.type === 'civ' || ped.type === 'metro';
 }
 
-// Chansen att någon slåss emot vid rån: bas · fearMult. Gatans legend (nivå 80):
+// Chansen att någon slåss emot vid rån: bas · fearMult. Gatans legend (nivå 81):
 // vanligt folk (isOrdinaryPed) slåss aldrig. Ta peden, inte bara typen.
 export function robFightChance(base, level, ped = null) {
     const b = clamp(Number(base) || 0, 0, 1);

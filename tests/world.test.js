@@ -594,31 +594,50 @@ describe('Snuten', () => {
         expect(stars(w.wanted)).toBeGreaterThan(0);
     });
 
-    it('går att skaka av sig: utom synhåll tappar de spåret och stjärnorna försvinner', () => {
+    // Polisen (police.js): utom synhåll några sekunder → sökning där de såg dig sist, och låg
+    // efterlysning avslutas 15–25 s efter att de tappat kontakten (förr: heat som svalnade på < 20 s).
+    it('går att skaka av sig: utom synhåll tappar de spåret, söker en stund och ger upp', () => {
         const w = makeWorld(62);
         standIn(w, 'skogsbacken');
         noCops(w);
         w.manageSpawns = () => { };   // inga nya snutar i det här testet
         setStars(w.wanted, 2);
-        w.wanted.seenT = 0;
-        let t = 0;
-        while (stars(w.wanted) > 0 && t < 30) { w.update(DT, IDLE); t += DT; }
+        let t = 0, searched = false;
+        while (stars(w.wanted) > 0 && t < 40) { w.update(DT, IDLE); t += DT; searched ||= w.police.phase === 'search'; }
+        expect(searched).toBe(true);
         expect(stars(w.wanted)).toBe(0);
-        expect(t).toBeLessThan(20);
+        expect(t).toBeGreaterThan(15);
+        expect(t).toBeLessThan(30);
     });
 
-    it('snutbilar som tappat bort dig patrullerar i stället för att jaga', () => {
+    // Förr: de som tappat bort dig körde vidare i filerna. Nu söker insatsens bilar där de såg dig
+    // sist — med blåljus, men utan att veta var du är nu.
+    it('snutbilar som tappat bort dig söker där de såg dig sist, inte där du är', () => {
         const w = makeWorld(63);
         standIn(w, 'hamnen');
         noCops(w);
         const v = copCar(w, 700, 1100);
         setStars(w.wanted, 2);
-        w.wanted.seenT = 10;
-        w.update(DT, IDLE);
-        expect(v.ai.mode).toBe('lane');
+        for (let i = 0; i < 20; i++) w.update(DT, IDLE);   // dispatchern ger bilen uppdraget
+        expect(v.pol.task).toBe('chase');
+        // De såg dig sist en bit bortom polisbilen (längre bort från där du faktiskt är)
+        const p = w.player, d = Math.hypot(v.x - p.x, v.y - p.y);
+        const gx = v.x + (v.x - p.x) / d * 450, gy = v.y + (v.y - p.y) / d * 450;
+        const [tx, ty] = city.laneTiles.reduce((b, t) => (Math.hypot(t[0] * TILE - gx, t[1] * TILE - gy) < Math.hypot(b[0] * TILE - gx, b[1] * TILE - gy) ? t : b));
+        const ls = { x: tx * TILE + TILE / 2, y: ty * TILE + TILE / 2 };
+        w.police.lastSeen = { ...ls };
+        w.police.seenT = 10;           // ingen har sett dig på ett tag
+        for (let i = 0; i < 20; i++) w.update(DT, IDLE);
+        expect(w.police.phase).toBe('search');
+        expect(v.pol.task).toBe('search');
         expect(v.siren).toBe(true);
+        const d0 = Math.hypot(v.x - ls.x, v.y - ls.y);
+        for (let i = 0; i < 60 * 3; i++) w.update(DT, IDLE);
+        expect(Math.hypot(v.x - ls.x, v.y - ls.y)).toBeLessThan(d0);
+        expect(w.police.lastSeen).toEqual(ls);   // exakt position uppdateras inte utan ny upptäckt
     });
 
+    // Nivå 1 är ett trafikstopp (de vill prata, ingen kliver ur och springer). Från nivå 2 kliver de ur.
     it('till fots kliver snuten ur bilen och springer efter dig', () => {
         const w = makeWorld(64);
         w.player.x = 8 * TILE + 32; w.player.y = 3 * TILE + 32;
@@ -629,11 +648,11 @@ describe('Snuten', () => {
         initLaneAI(v, 10, 3, 3, w.rnd);
         v.angle = Math.PI;
         w.vehicles.push(v);
-        setStars(w.wanted, 1);
+        setStars(w.wanted, 2);
         let out = false;
         for (let i = 0; i < 60 * 8 && !out; i++) {
             w.update(DT, IDLE);
-            setStars(w.wanted, 1);
+            setStars(w.wanted, 2);
             out = w.peds.some(p => p.cop && p.attack);
         }
         expect(out).toBe(true);

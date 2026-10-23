@@ -399,3 +399,117 @@ describe('mätning', () => {
         expect(frameStats([]).n).toBe(0);
     });
 });
+
+describe('HUD i 3D: projicerade etiketter, siktet och kamerabannern', () => {
+    // 2D-kontext som sparar texterna och bågarna (siktet) men annars sväljer allt
+    const recCtx = () => {
+        const log = { text: [], arcs: 0 };
+        const noop = () => { };
+        const ctx = new Proxy({}, {
+            get(t, k) {
+                if (k in t) return t[k];
+                if (k === 'fillText') return (s) => log.text.push(String(s));
+                if (k === 'arc') return () => { log.arcs++; };
+                if (k === 'measureText') return s => ({ width: String(s).length * 7 });
+                if (k === 'createRadialGradient' || k === 'createLinearGradient') return () => ({ addColorStop: noop });
+                return noop;
+            },
+            set(t, k, v) { t[k] = v; return true; }
+        });
+        return { ctx, log };
+    };
+    const city = generateCity(1337);
+    const makeWorld = () => {
+        const w = new World(city, createPlayerState('kimit'), { round: 2, rnd: mulberry32(4) });
+        w.vehicles = []; w.peds = []; w.state = 'play';
+        return w;
+    };
+    // Låtsas-3D: framför spelaren (mindre y) syns, bakom (större y) ligger bakom kameran
+    const view = (w, W = 1280, H = 720) => ({
+        w: W, h: H, dpr: 1,
+        worldToScreen: (x, y, z = 0) => (y > w.player.y + 300
+            ? { x: 0, y: 0, visible: false, depth: Infinity }
+            : { x: W / 2 + (x - w.player.x), y: H / 2 + (y - w.player.y) * 0.3 - z, visible: true, depth: 200 })
+    });
+
+    it('flytande text, pratbubbla och E-målet ritas där de är — inte det som är bakom kameran', async () => {
+        const { Hud } = await import('../src/city/hud.js');
+        const w = makeWorld(), hud = new Hud();
+        const p = w.player;
+        w.floater(p.x + 40, p.y - 60, '+100 KR');
+        w.floater(p.x, p.y + 800, 'BAKOM');
+        w.peds.push({ x: p.x - 30, y: p.y - 80, say: { text: 'Tjena bram', life: 2 }, hp: 10, maxHp: 10 });
+        w.vehicles.push(createVehicle('sedan', p.x + 28, p.y, 0));
+        for (const mode of ['fps', 'chase']) {
+            const { ctx, log } = recCtx();
+            expect(() => hud.drawWorld3D(ctx, w, view(w), { mode, touch: false })).not.toThrow();
+            expect(log.text).toContain('+100 KR');
+            expect(log.text).not.toContain('BAKOM');
+            expect(log.text).toContain('Tjena bram');
+            expect(log.text).toContain('E');                       // tangenten vid bilen E väljer
+            expect(log.text.some(t => /^Kör /.test(t))).toBe(true);
+            expect(log.arcs).toBeGreaterThan(0);                   // siktet (nävarna: en ring)
+        }
+    });
+
+    it('inget sikte i bilen; klick-hinten bara när den efterfrågas; mobil och inomhus kraschar inte', async () => {
+        const { Hud } = await import('../src/city/hud.js');
+        const w = makeWorld(), hud = new Hud();
+        let r = recCtx();
+        hud.drawWorld3D(r.ctx, w, view(w), { mode: 'fps', lockHint: true });
+        expect(r.log.text.some(t => /KLICKA I BILDEN/.test(t))).toBe(true);
+        const car = createVehicle('sedan', w.player.x, w.player.y, 0);
+        w.vehicles.push(car); car.driver = 'player'; w.player.vehicle = car;
+        r = recCtx();
+        hud.drawWorld3D(r.ctx, w, view(w), { mode: 'chase' });
+        expect(r.log.arcs).toBe(0);
+        expect(r.log.text.some(t => /KLICKA/.test(t))).toBe(false);
+        w.player.vehicle = null; car.driver = null;
+        expect(w.enterInterior('stripclub', w.city.markers.stripclub)).toBe(true);
+        expect(() => hud.drawWorld3D(recCtx().ctx, w, view(w, 390, 844), { mode: 'fps', touch: true })).not.toThrow();
+    });
+
+    it('kamerabannern visar lägets namn en stund och försvinner', async () => {
+        const { Hud } = await import('../src/city/hud.js');
+        const w = makeWorld(), hud = new Hud();
+        hud.onEvent({ type: 'cam', name: 'FÖRSTAPERSON', icon: '👁️', tag: 'V / C byter' });
+        const fake = { w: 1280, h: 720, dpr: 1, worldToScreen: (x, y) => ({ x, y }) };
+        let r = recCtx();
+        try { hud.draw(r.ctx, w, fake, { cam: 'fps' }); } catch (e) { /* andra spårs HUD-delar under arbete */ }
+        expect(r.log.text.some(t => /FÖRSTAPERSON/.test(t))).toBe(true);
+        hud.update(3);
+        r = recCtx();
+        try { hud.draw(r.ctx, w, fake, { cam: 'fps' }); } catch (e) { /* som ovan */ }
+        expect(r.log.text.some(t => /FÖRSTAPERSON/.test(t))).toBe(false);
+    });
+});
+
+describe('förstaperson inomhus: inga väggar att se igenom', () => {
+    it('allt som ritas i ögonhöjd har kollision, och inga osynliga hinder (alla rum)', async () => {
+        const INT = await import('../src/city/interiors.js');
+        await import('../src/city/businesses.js'); // registrerar verksamheternas rum
+        const { furnitureHeight, EYE_H } = await import('../src/city/render3d/math.js');
+        const LEG = INT.LEGEND || {};
+        const ids = Object.keys(INT.INTERIORS);
+        expect(ids.length).toBeGreaterThanOrEqual(10);
+        for (const id of ids) {
+            const def = INT.INTERIORS[id];
+            for (let ty = 0; ty < def.h; ty++) for (let tx = 0; tx < def.w; tx++) {
+                const ch = def.rows[ty][tx], info = LEG[ch];
+                const h = (info ? info.solid : ch !== '.') ? furnitureHeight(ch, info) : 0; // som render3d/room.js
+                const solid = INT.interiorSolid(def, (tx + 0.5) * INT.IN_TILE, (ty + 0.5) * INT.IN_TILE);
+                if (h >= EYE_H - 6) expect(solid, `${id} (${tx},${ty}) '${ch}' ritas ${h} px hög men går att gå in i`).toBe(true);
+                if (solid) expect(h, `${id} (${tx},${ty}) '${ch}' stoppar men syns inte`).toBeGreaterThan(0);
+            }
+        }
+    });
+
+    it('närplanet (1 px) ryms alltid inom spelarens radie, även vid största synfält och bredaste skärm', async () => {
+        const { FOV_RANGE } = await import('../src/city/camera.js');
+        const near = 1, vfov = Math.max(FOV_RANGE[1], 100) * Math.PI / 180, aspect = 2.4;
+        const hh = Math.tan(vfov / 2) * near, hw = hh * aspect;
+        const corner = Math.hypot(near, hh, hw);
+        const w = new World(generateCity(1337), createPlayerState('kimit'), { round: 2, rnd: mulberry32(1) });
+        expect(corner).toBeLessThan(w.player.r);             // ögat är mitt i gubben: väggen är minst r bort
+    });
+});

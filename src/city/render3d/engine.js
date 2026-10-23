@@ -273,7 +273,9 @@ export function createEngine(THREE, canvas, options = {}) {
 
     // En återanvänd beskrivning av en figur
     const F = {};
+    let fpsNear = false; // förstaperson: den som står i ögat ritas inte (annars ser man in i huvudet)
     function fig(x, y, angle, shirt, skin, hair, phase, scale, extra) {
+        if (fpsNear) { const dx = x - cur.x, dy = y - cur.y; if (dx * dx + dy * dy < 14 * 14) return; }
         F.x = x; F.y = y; F.z = extra.z || 0; F.angle = angle; F.shirt = shirt; F.skin = skin; F.hair = hair; F.phase = phase; F.scale = scale;
         F.down = !!extra.down; F.pose = extra.pose || 'walk'; F.moving = extra.moving !== false; F.pants = extra.pants || '#273043';
         F.hood = !!extra.hood; F.cap = extra.cap || null; F.vest = extra.vest || null; F.weapon = extra.weapon || null; F.punch = !!extra.punch;
@@ -662,7 +664,9 @@ export function createEngine(THREE, canvas, options = {}) {
         starMat.opacity = pal.night * 0.9;
         const fps = mode === 'fps';
         scene.fog.color.setHex(pal.fog);
-        scene.fog.near = fps ? 500 : 1100; scene.fog.far = fps ? 2300 : 3300;
+        // Dimman tar folk och bilar där de skapas och städas (index.js flyttar ut dem med world.viewExtra):
+        // halvvägs i dimman (fps ~1100 px, chase ~1400 px) innan något kan dyka upp — inga synliga pop-ins
+        scene.fog.near = fps ? 350 : 450; scene.fog.far = fps ? 1900 : 2300;
         fogFar = scene.fog.far; cullR = fogFar + 150;
         hemi.color.setHex(pal.zenith).lerp(tmpC.setHex(0xffffff), 0.55);
         hemi.groundColor.setHex(pal.ground);
@@ -703,6 +707,7 @@ export function createEngine(THREE, canvas, options = {}) {
         sky.position.copy(camera.position); stars.position.copy(camera.position);
         applyLook(world, mode, dt);
         const fps = mode === 'fps' && blend > 0.5;
+        fpsNear = fps;
         // fokuspunkten: där kameran tittar (för skarp mark och vilka ljus som tänds)
         if (mode === 'fps') { focus.x = cur.x + (cur.lx - cur.x) * 2.5; focus.y = cur.y + (cur.ly - cur.y) * 2.5; }
         else { focus.x = cur.lx; focus.y = cur.ly; }

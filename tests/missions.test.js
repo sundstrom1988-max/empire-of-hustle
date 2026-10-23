@@ -1,40 +1,44 @@
 import { describe, it, expect } from 'vitest';
-import { createWanted, addHeat, stars, updateWanted, copTarget, setStars, clearWanted } from '../src/city/wanted.js';
+import { createWanted, stars, copTarget, copSpeedFactor, setStars, clearWanted } from '../src/city/wanted.js';
+import { report, tickPolice } from '../src/city/police.js';
 import { createMission, updateMission, rewardFor, applyRespect, phoneOpen, isHostile, MISSION_TYPES, canJoin, phoneAccess } from '../src/city/missions.js';
 import { GANGS } from '../src/city/constants.js';
 import { generateCity } from '../src/city/map.js';
 import { mulberry32 } from '../src/city/rng.js';
 
+// Efterlysningen är nu polisens nivå (police.js): händelser med bas-nivå och tak i stället
+// för en heat-summa. wanted.js är det kompatibla lagret (stars = nivån).
 describe('wanted level', () => {
     it('starts clean and rises with crimes', () => {
         const w = createWanted();
         expect(stars(w)).toBe(0);
-        addHeat(w, 0.3);
+        report(w, 'bump');
         expect(stars(w)).toBe(1);
-        addHeat(w, 2);
+        report(w, 'robShop');
         expect(stars(w)).toBe(3);
     });
     it('ignores crimes no cop saw', () => {
         const w = createWanted();
-        expect(addHeat(w, 2, false)).toBe(false);
+        expect(report(w, 'shot', { witnessed: false })).toBe(null);
         expect(stars(w)).toBe(0);
     });
     it('caps at five stars', () => {
         const w = createWanted();
-        addHeat(w, 50);
+        for (let i = 0; i < 50; i++) { report(w, 'copKill'); tickPolice(w, 3, { sees: true }); }
         expect(stars(w)).toBe(5);
     });
     it('cools down only when no cop sees you', () => {
         const w = createWanted();
         setStars(w, 2);
-        for (let i = 0; i < 600; i++) updateWanted(w, 1 / 60, true);
+        for (let i = 0; i < 600; i++) tickPolice(w, 1 / 60, { sees: true });
         expect(stars(w)).toBe(2);
-        for (let i = 0; i < 60 * 60; i++) updateWanted(w, 1 / 60, false);
+        for (let i = 0; i < 60 * 60; i++) tickPolice(w, 1 / 60, { sees: false });
         expect(stars(w)).toBe(0);
     });
-    it('sends more cops for more stars', () => {
+    it('sends more cops for more stars, never faster than the car can go', () => {
         expect(copTarget(0)).toBe(0);
         expect(copTarget(5)).toBeGreaterThan(copTarget(2));
+        for (let s = 0; s <= 5; s++) expect(copSpeedFactor(s)).toBeLessThanOrEqual(1);
     });
     it('can be cleared by a respray', () => {
         const w = createWanted();

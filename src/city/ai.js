@@ -140,8 +140,10 @@ export function laneControl(v, world, dt) {
 }
 
 // ── Jakt (snut och fientliga gäng) ──
-function flowStep(world, tx, ty) {
-    const f = world.flow;
+// flow: flödesfältet att följa (standard: mot spelaren; polisens sökning har ett eget mot
+// platsen där de såg dig sist — de vet inte var du är nu)
+function flowStep(world, tx, ty, flow = world.flow) {
+    const f = flow;
     if (!f) return null;
     const W = world.city.w;
     let best = null, bd = Infinity;
@@ -161,17 +163,33 @@ function flowStep(world, tx, ty) {
     return best;
 }
 
-export function chaseControl(v, world, dt, speedFactor = 1) {
+// speedFactor: andel av bilens toppfart (polisen: fast per nivå, aldrig över 1 — ingen gummibandsfart).
+// opts (polisen, police.js):
+//   role: 'tail' bakom dig, 'flank' vid sidan av din väg (side ±1), 'cut' dit du är på väg (genskjutning)
+//   keep: håll så här långt avstånd och matcha farten i stället för att ramma (nivå 1–2, trafikstopp)
+//   goal + flow: kör till en punkt (sökningen: där de såg dig sist) längs ett eget flödesfält
+//   gas: högsta gaspådrag (polisen gasar mildare på låga nivåer)
+//   corner: högsta fart genom en sväng (låga nivåer: de kör försiktigt, inte som i en film)
+export function chaseControl(v, world, dt, speedFactor = 1, opts = {}) {
     const ai = v.ai;
     const p = world.player;
     const pv = p.vehicle;
-    let gx = p.x + (pv ? pv.vx * 0.3 : 0), gy = p.y + (pv ? pv.vy * 0.3 : 0);
-    const dist = Math.hypot(p.x - v.x, p.y - v.y);
-    if (dist > 230 || !lineClear(world.city, v.x, v.y, p.x, p.y)) {
-        const tx = Math.floor(v.x / TILE), ty = Math.floor(v.y / TILE);
-        const s1 = flowStep(world, tx, ty);
+    const pvx = pv ? pv.vx : 0, pvy = pv ? pv.vy : 0;
+    let tx, ty;
+    if (opts.goal) { tx = opts.goal.x; ty = opts.goal.y; }
+    else if (opts.role === 'cut') { tx = p.x + pvx * 1.1; ty = p.y + pvy * 1.1; }
+    else if (opts.role === 'flank') {
+        const sp = Math.hypot(pvx, pvy) || 1, side = opts.side || 1;
+        tx = p.x + pvx * 0.5 - pvy / sp * 70 * side; ty = p.y + pvy * 0.5 + pvx / sp * 70 * side;
+    } else { tx = p.x + pvx * 0.3; ty = p.y + pvy * 0.3; }
+    let gx = tx, gy = ty;
+    const dist = opts.goal ? Math.hypot(tx - v.x, ty - v.y) : Math.hypot(p.x - v.x, p.y - v.y);
+    if (dist > 230 || !lineClear(world.city, v.x, v.y, tx, ty)) {
+        const flow = opts.flow || world.flow;
+        const cx = Math.floor(v.x / TILE), cy = Math.floor(v.y / TILE);
+        const s1 = flowStep(world, cx, cy, flow);
         if (s1) {
-            const s2 = flowStep(world, s1[0], s1[1]) || s1;
+            const s2 = flowStep(world, s1[0], s1[1], flow) || s1;
             gx = center(s2[0]); gy = center(s2[1]);
         }
     }
@@ -179,13 +197,23 @@ export function chaseControl(v, world, dt, speedFactor = 1) {
     const diff = angleDiff(v.angle, want);
     let steer = clamp(diff * 3, -1, 1);
     const fwd = forwardSpeed(v);
-    let throttle = 1;
+    let throttle = opts.gas ?? 1;
     if (Math.abs(diff) > 1.9 && fwd > 160) throttle = -0.6;
+    if (opts.corner && Math.abs(diff) > 0.5 && fwd > opts.corner) throttle = -0.6;
     if (fwd > v.spec.maxSpeed * speedFactor) throttle = 0;
-    // Boxa in en stillastående spelare: bromsa i tid så att de inte bara rammar
-    const playerSlow = !pv || Math.hypot(pv.vx, pv.vy) < 40;
-    const stopDist = 70 + (fwd > 0 ? fwd * fwd / (2 * v.spec.brake) : 0);
-    if (playerSlow && dist < stopDist) throttle = fwd > 20 ? -1 : (dist > 70 ? 0.3 : 0);
+    if (!opts.goal) {
+        // Boxa in en stillastående spelare: bromsa i tid så att de inte bara rammar
+        const playerSlow = !pv || Math.hypot(pvx, pvy) < 40;
+        const stopDist = 70 + (fwd > 0 ? fwd * fwd / (2 * v.spec.brake) : 0);
+        if (playerSlow && dist < stopDist) throttle = fwd > 20 ? -1 : (dist > 70 ? 0.3 : 0);
+        // Håll avstånd (ingen ramning): på väg ikapp och nära → bromsa så att farten matchar
+        if (opts.keep && dist > 1) {
+            const closing = ((v.vx - pvx) * (p.x - v.x) + (v.vy - pvy) * (p.y - v.y)) / dist;
+            const need = opts.keep + (closing > 0 ? closing * closing / (2 * v.spec.brake) : 0);
+            if (dist < need && closing > 0) throttle = fwd > 15 ? -1 : 0;
+            else if (dist < opts.keep + 25 && throttle > 0) throttle = Math.min(throttle, 0.25);
+        }
+    }
 
     ai.stuckT = (throttle > 0 && Math.abs(fwd) < 25) ? ai.stuckT + dt : Math.max(0, ai.stuckT - dt);
     if (ai.stuckT > 1.1) { ai.revT = 0.9; ai.stuckT = 0; }

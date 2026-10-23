@@ -4,7 +4,9 @@
 //  snutbilar, gängbilar och MC-klubbarnas HD.
 // ═══════════════════════════════════════════
 
-import { GANGS } from './constants.js';
+import { GANGS, TILE, SOLID } from './constants.js';
+import { tileAt } from './map.js';
+import { distToVehicle } from './physics.js';
 
 export const VEHICLES = {
     cykel: { name: 'Cykel', kind: 'bike', l: 26, w: 10, maxSpeed: 250, accel: 320, brake: 520, turn: 3.8, grip: 10, hp: 40, mass: 0.35, colors: ['#06b6d4'], value: 120, engine: 0 },
@@ -81,6 +83,63 @@ export function createGangVehicle(gangId, x, y, angle, rnd = Math.random, opts =
     const v = createVehicle(type, x, y, angle, { ...opts, rnd, color });
     v.gang = g.id;
     return v;
+}
+
+// ── Avstigning: en giltig, fri plats bredvid bilen ──
+// Fri = en cirkel med radien r rör ingen solid ruta (hus, vatten, träd, mur) och ingen bil,
+// och vägen dit från bilens mitt går inte genom en vägg (man kliver aldrig ut på andra sidan ett hus).
+const circleClear = (city, x, y, r) => {
+    const x0 = Math.floor((x - r) / TILE), x1 = Math.floor((x + r) / TILE);
+    const y0 = Math.floor((y - r) / TILE), y1 = Math.floor((y + r) / TILE);
+    for (let ty = y0; ty <= y1; ty++) for (let tx = x0; tx <= x1; tx++) {
+        if (!SOLID.has(tileAt(city, tx, ty))) continue;
+        const px = Math.max(tx * TILE, Math.min(x, tx * TILE + TILE)), py = Math.max(ty * TILE, Math.min(y, ty * TILE + TILE));
+        if ((x - px) ** 2 + (y - py) ** 2 < r * r) return false;
+    }
+    return true;
+};
+// ...och inte genom en annan bil (står det en bil tätt intill dörren kliver man inte över den)
+const pathClear = (city, v, vehicles, x1, y1) => {
+    const n = Math.ceil(Math.hypot(x1 - v.x, y1 - v.y) / 4);
+    const near = vehicles.filter(o => o !== v && Math.abs(o.x - v.x) < 220 && Math.abs(o.y - v.y) < 220);
+    for (let i = 1; i <= n; i++) {
+        const x = v.x + (x1 - v.x) * i / n, y = v.y + (y1 - v.y) * i / n;
+        if (SOLID.has(tileAt(city, Math.floor(x / TILE), Math.floor(y / TILE)))) return false;
+        for (const o of near) if (distToVehicle(o, x, y) < 1) return false;
+    }
+    return true;
+};
+export function spotFree(city, vehicles, x, y, r = 7) {
+    if (!Number.isFinite(x) || !Number.isFinite(y) || !circleClear(city, x, y, r)) return false;
+    for (const o of vehicles) if (Math.abs(o.x - x) < 60 && Math.abs(o.y - y) < 60 && distToVehicle(o, x, y) < r + 1) return false;
+    return true;
+}
+// Förarsidan (vänster) först, sedan passagerarsidan, snett fram/bak, bakom, framför — och längre ut
+// i en ring om det är trångt. Returnerar { x, y } eller null om det inte finns någon fri plats nära.
+export function exitSpot(v, city, vehicles, r = 7) {
+    const fx = Math.cos(v.angle), fy = Math.sin(v.angle);
+    const lx = fy, ly = -fx;                      // vänster om nosen (y nedåt på skärmen)
+    const side = v.spec.w / 2 + r + 3, end = v.spec.l / 2 + r + 3;
+    const ok = (x, y) => spotFree(city, vehicles, x, y, r) && pathClear(city, v, vehicles, x, y);
+    for (const extra of [0, 10, 22]) {
+        const s = side + extra, e = end + extra;
+        const cands = [
+            [lx * s, ly * s], [-lx * s, -ly * s],                                   // vänster, höger
+            [lx * s - fx * 12, ly * s - fy * 12], [lx * s + fx * 12, ly * s + fy * 12],
+            [-lx * s - fx * 12, -ly * s - fy * 12], [-lx * s + fx * 12, -ly * s + fy * 12],
+            [-fx * e, -fy * e], [fx * e, fy * e]                                    // bakom, framför
+        ];
+        for (const [dx, dy] of cands) if (ok(v.x + dx, v.y + dy)) return { x: v.x + dx, y: v.y + dy };
+    }
+    // Trångt: leta i ringar runt bilen, närmast först
+    for (let d = Math.max(side, end) + 8; d <= 140; d += 8) {
+        for (let k = 0; k < 24; k++) {
+            const a = v.angle - Math.PI / 2 + k * Math.PI * 2 / 24;
+            const x = v.x + Math.cos(a) * d, y = v.y + Math.sin(a) * d;
+            if (ok(x, y)) return { x, y };
+        }
+    }
+    return null;
 }
 
 export function vehicleSpeed(v) { return Math.hypot(v.vx, v.vy); }

@@ -63,7 +63,7 @@ export function hasGable(b) {
 //  ska synas stort. I fart backar den lite och tittar längre fram (fast = andel av toppfarten):
 //  back × (1 + speedBack·fast), titta ahead × (1 + speedAhead·fast) framför.
 export const CHASE = {
-    car: { back: 150, up: 84, ahead: 60, lookH: 16, turn: 3.2, speedBack: 0.35, speedAhead: 2.2 },
+    car: { back: 120, up: 66, ahead: 60, lookH: 16, turn: 3.2, speedBack: 0.3, speedAhead: 2.2 },
     foot: { back: 150, up: 92, ahead: 46, lookH: 27, turn: 2.6, speedBack: 0, speedAhead: 0 },
     room: { back: 110, up: 42, ahead: 36, lookH: 26, turn: 3.0, speedBack: 0, speedAhead: 0 },
     fov: 60

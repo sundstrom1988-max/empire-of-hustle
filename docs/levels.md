@@ -4,6 +4,8 @@ Det här är den slutliga designen för nivåerna. Den ersätter de tre tidigare
 
 Den rena logiken finns i `src/game/levels.js` och testas i `tests/levels.test.js`. Avsnitt 11 visar vad modulen exporterar och var koden avviker från texten nedan.
 
+Ranktabellen i avsnitt 1 (titlar, nivågränser, emblem och rankbilder) kommer från masterprompt v3, avsnitt 6. Resten av designen är den ursprungliga.
+
 ---
 
 ## 0. Beslut i korthet
@@ -45,26 +47,57 @@ Nivån styr därför allt i stan: vapen, crew, uppdrag, brott, gömställen och 
 
 ---
 
-## 1. Titelband
+## 1. Titelband och rankbilder
 
-| Nivå | Titel | Emoji | Färg |
-|---|---|---|---|
-| 1–5 | Springpojke | 🛴 | `#9ca3af` |
-| 6–10 | Hangaround | 👀 | `#a3e635` |
-| 11–15 | Langare | 🎒 | `#22c55e` |
-| 16–22 | Hustlare | 💸 | `#2dd4bf` |
-| 23–30 | Torped | 🔨 | `#38bdf8` |
-| 31–40 | Gängsoldat | 🪖 | `#6366f1` |
-| 41–50 | Kvartersboss | 🏙️ | `#a855f7` |
-| 51–62 | Kapo | 🎩 | `#ec4899` |
-| 63–74 | Consigliere | 🍷 | `#f97316` |
-| 75–84 | Underboss | 🥃 | `#ef4444` |
-| 85–100 | Gudfadern | 🌹 | `#ffd23f` |
+**Ranktabellen kommer från masterprompt v3, avsnitt 6 ("Spelarnivå 1–100 med maskbilder och tydliga ranker").** Springpojke (nivå 1–5) och Gudfadern (nivå 100) ligger fast. Namnen och gränserna däremellan är masterpromptens konkreta designförslag, och de tidigare elva banden (Hangaround, Langare, Gängsoldat, Kvartersboss, Kapo, Consigliere med flera) är ersatta. Datan ligger i `RANKS` i `src/game/levels.js`. Den är förberedelse för etapp 1 och inte inkopplad i spelet än.
 
-- Det blir 11 band. De är korta i början, så att titlarna kommer tätt, och längre mot slutet.
+| Nivå | Titel | Emblem | Färg | Stil |
+|---|---|---|---|---|
+| 1–5 | Springpojke | 🛴 | `#9ca3af` | Gatustil (1) |
+| 6–10 | Småhustlare | 🧢 | `#a3e635` | Gatustil (1) |
+| 11–20 | Hustlare | 💸 | `#2dd4bf` | Gatustil (1) |
+| 21–30 | Fixare | 🔧 | `#38bdf8` | Hårding (2) |
+| 31–40 | Torped | 🥊 | `#6366f1` | Hårding (2) |
+| 41–50 | Veteran | 🎖️ | `#a855f7` | Hårding (2) |
+| 51–60 | Kapten | 🎩 | `#ec4899` | Syndikat (3) |
+| 61–70 | Underboss | 🥃 | `#f97316` | Syndikat (3) |
+| 71–80 | Boss | 💼 | `#ef4444` | Syndikat (3) |
+| 81–90 | Storboss | 💎 | `#e2e8f0` | Exklusiv (4) |
+| 91–99 | Don | 🍷 | `#be123c` | Exklusiv (4) |
+| 100 | Gudfadern | 🌹 | `#ffd23f` | Exklusiv (4) |
+
+- Det blir 12 band. Springpojke och Småhustlare är korta (5 nivåer), Hustlare till Storboss har 10 nivåer var, Don har 9 och Gudfadern är bara nivå 100.
+- **Emblemet** är `emoji` + `color`, och varje rang har ett eget: ingen emoji och ingen färg används två gånger (testat). Det stiger från barnslig gatustil (🛴 sparkcykel, 🧢 keps, 💸 pengar) via verktyg och muskler (🔧, 🥊, 🎖️) till kostym och lyx (🎩, 🥃, 💼, 💎, 🍷) och slutar i Gudfaderns ros 🌹.
 - Gudfadern får spelets befintliga guldfärg (`#ffd23f`, samma som pengarna i HUD:en).
-- Nivå, titel och färg räknas alltid fram ur `p.xp`, så sparfiler och avrundningar kan aldrig hamna i osynk. `p.level` finns bara som en cache som `awardXp` och `normalizeLevelFields` skriver, och den används aldrig för att avgöra en spärr.
+- **Rankbilden** är `mask: { name, desc, base, accent }`. `desc` beskriver masken så att etapp 1 kan rita den, `base` är huvudmaterialets färg och `accent` detaljens. `maskOf(L)` ger masken för en nivå.
+
+| Titel | Mask | Rankbilden (för etapp 1) | Bas / detalj |
+|---|---|---|---|
+| Springpojke | Gråluvan | Sliten grå stickad mössa neddragen över ögonbrynen, ansiktet bart. Matt tyg utan detaljer: ett bud som springer ärenden. | `#6b7280` / `#9ca3af` |
+| Småhustlare | Bandanan | Rutig bandana uppdragen över näsa och mun, keps ovanpå. Ett enda färgstick i limegrönt; fortfarande bara tyg. | `#374151` / `#a3e635` |
+| Hustlare | Skimasken | Svart balaklava med smal ögonspringa och en tunn turkos list runt ögonen. Funktionell och skarp: jobbar på riktigt. | `#111827` / `#2dd4bf` |
+| Fixare | Läderhalvmasken | Svart halvmask i skinn över näsa och kinder, stålspänne vid örat och blå kantsöm. Den första masken som inte är av tyg. | `#1f2937` / `#38bdf8` |
+| Torped | Hockeymasken | Reporad vit målvaktsmask av plast med sprickor, mörka ögonhål och en indigoblå rand över pannan. Rå, slagen och skrämmande. | `#e5e7eb` / `#6366f1` |
+| Veteran | Stålmasken | Buckligt halvansikte i stål med nitar och ett gammalt ärr graverat över ena ögat, lila rem bakom nacken och en liten medalj vid kinden. | `#9ca3af` / `#a855f7` |
+| Kapten | Sidenmasken | Svart sidendomino med smal rosa kantsöm och ett litet silvermärke vid tinningen, under en mörk filthatt. Första masken som ser skräddarsydd ut. | `#0f172a` / `#ec4899` |
+| Underboss | Bärnstensdominon | Matt svart läderdomino med kopparbeslag runt ögonen och en bärnstensorange brodyr längs kanten. Dyr men diskret. | `#1c1917` / `#f97316` |
+| Boss | Lackmasken | Blank svart venetiansk halvmask i lack med kromkant och ett rött sidenband. Kall elegans: man ser att den kostade pengar. | `#111111` / `#ef4444` |
+| Storboss | Platinamasken | Helmask i polerad platina med silverfiligran och en liten diamant i pannan, sidenband och sammetskrage. | `#94a3b8` / `#f8fafc` |
+| Don | Bautan | Klassisk elfenbensvit bauta med guldkant och vinröd sammet, under en svart trekantshatt med guldgalon. | `#f5f5f4` / `#be123c` |
+| Gudfadern | Guldmasken | Helmask i blankpolerat guld med ögonspringor och en röd ros i pannan, sammetskappa med guldbroderi. Ingen annan mask i stan är av guld. | `#ffd23f` / `#b91c1c` |
+
+- **Stilen** (`style` och `tier`) stiger i fyra steg med tre ranger per steg (`RANK_STYLES`). Etapp 1 kan använda den för ram, material och glans runt både masken och emblemet, så att utvecklingen syns även utan att man läser titeln:
+
+| Stil | Nivå | Ranger | Utseende |
+|---|---|---|---|
+| `gata` (Gatustil) | 1 | Springpojke, Småhustlare, Hustlare | Rått tyg, matt och slitet. Inga metaller, inget som glänser. |
+| `hardingen` (Hårding) | 2 | Fixare, Torped, Veteran | Skinn, stål, nitar och tejp. Första gången masken är något annat än tyg. |
+| `syndikat` (Syndikat) | 3 | Kapten, Underboss, Boss | Skräddat och dyrt: siden, lack, krom och diskret kant. Inget onödigt. |
+| `exklusiv` (Exklusiv) | 4 | Storboss, Don, Gudfadern | Ornament, guld, sammet och ädelstenar. Gjord för en ensam man på toppen. |
+
+- Nivå, titel, färg, emblem och mask räknas alltid fram ur `p.xp`, så sparfiler och avrundningar kan aldrig hamna i osynk. `p.level` finns bara som en cache som `awardXp` och `normalizeLevelFields` skriver, och den används aldrig för att avgöra en spärr.
 - Den pengabaserade `STREET_CRED` finns kvar men blir en liten rad, "Förmögenhet: Kebab-Mogul". Då konkurrerar inte två titlar med varandra.
+- **Titlar och upplåsningar hänger ihop.** Varje titel börjar på en nivå där något nytt låses upp, och en upplåsning som nämner en titel i sin text ligger på den titelns band: Torpedslaget på 31, veteranerna på 41 och Gudfaderns svarta Rolls på 100 (båda reglerna är testade). Vad som flyttades när banden byttes står i avsnitt 5.
 
 ---
 
@@ -79,32 +112,51 @@ nivå     = största L ≤ 100 där XP_TOTAL[L] ≤ p.xp
 ```
 
 - Den linjära termen styr nivå 1–30. Där tar varje nivå 2–6 minuter, och det första jobbet ger nivå 2 direkt.
-- Den kubiska termen börjar märkas efter nivå 40 och gör nivå 85–100 till ett långsiktigt mål. Koefficienten är 0,0025 (`XP_CUBIC`). Med 0,004 tog Gudfadern 54 h och nivå 100 89 h för en vanlig spelare, alltså ungefär 25 % längre än målet.
+- Den kubiska termen börjar märkas efter nivå 40 och gör de sista nivåerna till ett långsiktigt mål. Koefficienten är 0,0025 (`XP_CUBIC`). Med 0,004 tog nivå 85 54 h och nivå 100 89 h för en vanlig spelare, alltså ungefär 25 % längre än målet. Nu tar Don (nivå 91) cirka 54 h och Gudfadern (nivå 100) cirka 70 h.
 - XP per handling är fast, så ingen inflation. Takten ökar ändå lite med nivån, eftersom nya källor låses upp (bankrån, butiksrån, fler uppdrag, Kapo-jobb).
 
 ### Nyckelnivåer
 
-Kurvan är kontrollräknad i testerna: `need` är strikt växande, `XP_TOTAL[85] = 87 935` och `XP_TOTAL[100] = 138 475`.
+Kurvan är komplett för alla 100 nivåer (101 värden i `XP_TOTAL`) och kontrollräknad i testerna: `need` är strikt växande, `XP_TOTAL[85] = 87 935` och `XP_TOTAL[100] = 138 475`. Tidiga nivåer kommer snabbt: det första jobbet ger nivå 2 direkt, nivå 5 kommer efter cirka 13 minuter och Småhustlare (nivå 6) efter cirka 18. Senare nivåer kräver mer: varje nivå, varje titelband och varje tiotal nivåer kostar mer än det förra, och de nio sista nivåerna (91–99) kostar 32 425 XP, nästan 29 gånger så mycket som de första tio nivåerna (1 130 XP).
 
 | Nivå | Total XP för att nå nivån | XP till nästa nivå | Vanlig spelare | Flitig spelare |
 |---|---|---|---|---|
 | 2 | 45 | 60 | 2 min | 2 min |
 | 5 | 270 | 105 | 13 min | 13 min |
-| **6 Hangaround** | 375 | 120 | 18 min | 18 min |
+| **6 Småhustlare** | 375 | 120 | 18 min | 18 min |
 | 10 | 945 | 185 | 36 min | 36 min |
-| **11 Langare** | 1 130 | 200 | 42 min | 42 min |
-| **16 Hustlare** | 2 285 | 280 | 1 h 20 min | 1 h 20 min |
-| 20 | 3 505 | 350 | 2 h | 2 h |
-| **23 Torped** | 4 610 | 405 | 2,5 h | 2,5 h |
+| **11 Hustlare** | 1 130 | 200 | 42 min | 42 min |
+| 16 | 2 285 | 280 | 79 min | 79 min |
+| 20 | 3 505 | 350 | 2,0 h | 2,0 h |
+| **21 Fixare** | 3 855 | 370 | 2,2 h | 2,1 h |
 | 30 | 7 865 | 550 | 4,2 h | 3,9 h |
-| **31 Gängsoldat** | 8 415 | 570 | 4,5 h | 4,1 h |
-| **41 Kvartersboss** | 15 175 | 815 | 7,9 h | 7,1 h |
-| **51 Kapo** | 24 690 | 1 125 | 12,7 h | 11,2 h |
+| **31 Torped** | 8 415 | 570 | 4,5 h | 4,1 h |
+| **41 Veteran** | 15 175 | 815 | 7,9 h | 7,1 h |
+| **51 Kapten** | 24 690 | 1 125 | 12,7 h | 11,2 h |
 | 60 | 36 155 | 1 470 | 18,5 h | 15,7 h |
-| **63 Consigliere** | 40 690 | 1 600 | 20,8 h | 17,4 h |
-| **75 Underboss** | 63 100 | 2 210 | 32 h | 26 h |
-| **85 Gudfadern** | 87 935 | 2 840 | 45 h | 36 h |
-| 100 | 138 475 | – | 70 h | 55 h |
+| **61 Underboss** | 37 625 | 1 510 | 19,2 h | 16,2 h |
+| **71 Boss** | 54 810 | 1 990 | 27,9 h | 22,9 h |
+| **81 Storboss** | 77 245 | 2 575 | 39,2 h | 31,6 h |
+| 85 | 87 935 | 2 840 | 44,6 h | 35,7 h |
+| **91 Don** | 106 050 | 3 280 | 53,8 h | 42,8 h |
+| **100 Gudfadern** | 138 475 | – | 70,1 h | 55,3 h |
+
+XP per titelband, med samma speltidsmodell:
+
+| Titel | Nivåer | XP för bandet | Snitt XP per nivå | Total XP vid start | Vanlig spelare | Flitig spelare |
+|---|---|---|---|---|---|---|
+| Springpojke | 1–5 | 375 | 75 | 0 | 0 min | 0 min |
+| Småhustlare | 6–10 | 755 | 151 | 375 | 18 min | 18 min |
+| Hustlare | 11–20 | 2 725 | 273 | 1 130 | 42 min | 42 min |
+| Fixare | 21–30 | 4 560 | 456 | 3 855 | 2,2 h | 2,1 h |
+| Torped | 31–40 | 6 760 | 676 | 8 415 | 4,5 h | 4,1 h |
+| Veteran | 41–50 | 9 515 | 952 | 15 175 | 7,9 h | 7,1 h |
+| Kapten | 51–60 | 12 935 | 1 294 | 24 690 | 12,7 h | 11,2 h |
+| Underboss | 61–70 | 17 185 | 1 719 | 37 625 | 19,2 h | 16,2 h |
+| Boss | 71–80 | 22 435 | 2 244 | 54 810 | 27,9 h | 22,9 h |
+| Storboss | 81–90 | 28 805 | 2 881 | 77 245 | 39,2 h | 31,6 h |
+| Don | 91–99 | 32 425 | 3 603 | 106 050 | 53,8 h | 42,8 h |
+| Gudfadern | 100 | – | – | 138 475 | 70,1 h | 55,3 h |
 
 **Speltidsmodellen:** en aktiv runda i stan består av 3 uppdrag (varav 2,5 lyckas), 10 langningar, 1–2 skrotade bilar, lite gatubrott och några klick i imperiet. Takten styrs mest av jobben och langningen; gatubrotten begränsas av Gatukassan.
 - **Vanlig spelare:** 21 XP/min på nivå 1–5, 31 XP/min på nivå 6–19 och 33 XP/min från nivå 20. Det är designens runda med ett jobb på cirka 2 minuter.
@@ -123,9 +175,9 @@ Tabellen räknar utan engångsmilstolparna. De ger ungefär 80 XP extra under de
 | VIP-skjuts | 55 | 240 |
 | Bilstöld | 65 | 305 = nivå 5 |
 | Skrota bilen (15 + första gången 20) | 35 | 340 |
-| Ett uppdrag till | | nivå 6 (Hangaround) vid cirka 15 min |
+| Ett uppdrag till | | nivå 6 (Småhustlare) vid cirka 15 min |
 
-**Efter nivå 100:** XP räknas vidare. Varje 25 000 XP över nivå 100 ger en Legend-stjärna (`legendStars`), som bara är kosmetisk. Räknaren och Don-stjärnan i namnskylten är fas 1 (`cosm:donstar`); guldauran och Prestige är fas 2. `p.xp` kapas vid 10 000 000.
+**Efter nivå 100:** XP räknas vidare. Varje 25 000 XP över nivå 100 ger en Legend-stjärna (`legendStars`), som bara är kosmetisk. Räknaren och Gudfader-stjärnan i namnskylten är fas 1 (`cosm:godstar`); guldauran och Prestige är fas 2. `p.xp` kapas vid 10 000 000.
 
 ---
 
@@ -257,7 +309,7 @@ Tärning och events, minispel och kasino, inkomst per runda, sälja en verksamhe
 4. **Verksamheterna i Butik spärras inte.** Där räcker pengarna som spärr. Tjänsterna inne i dem spärras, men ägaren får alltid använda tjänsten i sin egen verksamhet.
 5. **Bara byggd fas firas.** `unlocksAt`, `unlocksBetween`, `nextUnlocks`, `awardXp().unlocked` och `unseenLevels` tar bara med poster med `fas ≤ ACTIVE_FAS` (1). Fas 2-poster (Indrivning, guldvapnen, rosen, statyn, Prestige) visas i Karriär-kortet som "Kommer snart" (`comingSoon()`), aldrig som "Upplåst". `{ all: true }` tar med allt.
 6. **Racet:** poster med `race: true` (uppdrag, brott, Skroten, Club Diamant, svarta marknaden, telefondeals, bilar, pimp, gränser, lönesteget, Kapo, turfpriset, Advokaten) räknas på `raceLevel(L, roomMin)` när minst två människor spelar. Se avsnitt 0. `isUnlocked(p, id, { roomMin })` och `lockInfo(p, id, { roomMin })` gör det; låst-UI:t visar då "rummets gräns: Nv 11 (lägsta spelaren + 10)".
-7. **Något nytt minst var fjärde nivå**, ända till 100 (testat). Dessutom växer skada, kritisk chans, respektvinst och gaturespekt lite på varje nivå (`levelStats`), och det visas i nivå-upp-rutan.
+7. **Något nytt minst var fjärde nivå**, ända till 100, och varje ny titel börjar med något nytt (båda testade). Dessutom växer skada, kritisk chans, respektvinst och gaturespekt lite på varje nivå (`levelStats`), och det visas i nivå-upp-rutan.
 
 **Kolumnen Status:** *befintligt* betyder att innehållet redan finns i koden och bara får en spärr. *Nytt* betyder att det måste byggas. *Bonus* betyder att en siffra ändras. *Kosmetiskt* betyder utseende. **Fas 1** är motorn plus allt som är billigt, **fas 2** är nytt innehåll som kräver grafik eller ny logik.
 
@@ -268,58 +320,58 @@ Tärning och events, minispel och kasino, inkomst per runda, sälja en verksamhe
 | 3 | Uppdraget Bilstöld · Skroten (sälja snodda bilar) | uppdrag | befintligt | 1 |
 | 4 | Tjänsten Ny frisyr (−2 stjärnor) hos Frisören | tjänst | befintligt | 1 |
 | 5 | Uppdraget Fly från snuten · svarta marknaden: Smuggelgods | uppdrag | befintligt | 1 |
-| **6** | **👀 HANGAROUND:** Pistol (1 500 kr) · gå med i ett gäng (kräver fortfarande +30 respekt) · Träna på gymmet · BMW E46 | titel | befintligt | 1 |
+| **6** | **🧢 SMÅHUSTLARE:** Pistol (1 500 kr) · gå med i ett gäng (kräver fortfarande +30 respekt) · Träna på gymmet · BMW E46 | titel | befintligt | 1 |
 | 7 | Skyddsväst hos Pang-Pelle (800 kr) · telefondeal: Tvätta pengar | utrustning | befintligt | 1 |
 | 8 | Crewplats 1 (Livvakt eller Spanare) · pimp-steg 2 | crew | befintligt | 1 |
 | 9 | Uppdraget Krossa rivalerna · svarta marknaden: Falska sedlar | uppdrag | befintligt | 1 |
 | 10 | Dejter vid Nattklubben · spela in en disslåt i studion · kritiska träffar mot NPC:er börjar (1 %) | aktivitet | befintligt | 1 |
-| **11** | **🎒 LANGARE:** butiksrån (råna kassan i verksamheter du inte äger) | titel | befintligt | 1 |
+| **11** | **💸 HUSTLARE:** butiksrån (råna kassan i verksamheter du inte äger) | titel | befintligt | 1 |
 | 12 | Gömstället Lägenheten i Orten · Mercedes AMG · telefondeal: Muta inspektören | fastighet | befintligt | 1 |
 | 13 | VIP-bord (tjänsten i Nattklubben VIP och nattklubbens VIP-bord) · svarta marknaden: Shady Crypto-deal | tjänst | befintligt | 1 |
 | 14 | Crewplats 2 · gömstället Sjöboden i Hamnen | crew | befintligt | 1 |
 | 15 | 4 uppdrag per runda | gräns | bonus | 1 |
-| **16** | **💸 HUSTLARE:** Uzi (4 000 kr) · gömstället Loftet i Industrin · pimp-steg 3 | titel | befintligt | 1 |
+| 16 | Uzi (4 000 kr) · gömstället Loftet i Industrin · pimp-steg 3 | utrustning | befintligt | 1 |
 | 17 | Svarta marknaden: Hacka konkurrenten | svarta marknaden | befintligt | 1 |
 | 18 | Skytt-rollen hos Rekryteraren · gömstället Radhuset i Västerort | crew | befintligt | 1 |
 | 20 | Bankrån (kräver fortfarande ett laddat skjutvapen) · tjänsten Hacka polisens register · Lamborghini | brott | befintligt | 1 |
-| 21 | Svarta marknaden: Insider-tips | svarta marknaden | befintligt | 1 |
+| **21** | **🔧 FIXARE:** Svarta marknaden: Insider-tips | titel | befintligt | 1 |
 | 22 | Crewplats 3 · gömstället Villan i Skogsbacken | crew | befintligt | 1 |
-| **23** | **🔨 TORPED:** Hagelgevär (6 000 kr) · Torpedslaget: dina slag knuffar folk 25 % längre | titel | befintligt + bonus | 1 |
+| 23 | Hagelgevär (6 000 kr) | vapen | befintligt | 1 |
 | 25 | Gömstället Takvåningen i Centrum · Pang-Pelle −10 % på vapen, ammo och väst | fastighet | befintligt + bonus | 1 |
 | 26 | Ny uppdragstyp Indrivning: hitta gäldenären, spöa honom och hämta skulden | uppdrag | nytt | 2 |
 | 28 | Club Diamant går att köpa och ta över · anställa Stora Sven · Rolls Royce | fastighet | befintligt | 1 |
 | 30 | Crewplats 4 (max). Allt som finns i spelet i dag är nu upplåst. | crew | befintligt | 1 |
-| **31** | **🪖 GÄNGSOLDAT:** Ring backup i telefonen: 2 från ditt gäng slåss för dig i 60 s (1 gång per runda, kräver gäng) | titel | nytt (enkelt) | 1 |
+| **31** | **🥊 TORPED:** Torpedslaget: dina slag knuffar folk 25 % längre · Ring backup i telefonen: 2 från ditt gäng slåss för dig i 60 s (1 gång per runda, kräver gäng) | titel | bonus + nytt (enkelt) | 1 |
 | 33 | Skrota 4 bilar per runda | gräns | bonus | 1 |
 | 35 | Langning 15 varor per runda · Muta snuten i telefonen: −1 stjärna, 1 000 kr per stjärna, 1 gång per runda | gräns, tjänst | bonus + nytt (enkelt) | 1 |
 | 38 | Pang-Pelle −20 % | bonus | bonus | 1 |
 | 40 | 5 uppdrag per runda | gräns | bonus | 1 |
-| **41** | **🏙️ KVARTERSBOSS:** veteraner hos Rekryteraren (+20 % hälsa och skada mot NPC:er) · respekt ≥ 80 ger ×1,45 i uppdragslön | titel | nytt (litet) + bonus | 1 |
+| **41** | **🎖️ VETERAN:** veteraner hos Rekryteraren (+20 % hälsa och skada mot NPC:er) · respekt ≥ 80 ger ×1,45 i uppdragslön | titel | nytt (litet) + bonus | 1 |
 | 44 | Ring backup två gånger per runda | bonus | bonus | 1 |
 | 45 | Guldpistol och kromad uzi (samma skada, bara utseende) | kosmetiskt | nytt | 2 |
 | 48 | Din gängbil vid HQ är bepansrad (+50 % hp) | bonus | bonus | 1 |
-| **51** | **🎩 KAPO:** Kapo-jobbet, ett jobb per runda från din egen boss med dubbel lön och dubbel XP | titel | nytt (litet) | 1 |
+| **51** | **🎩 KAPTEN:** Kapo-jobbet, ett jobb per runda från din egen boss med dubbel lön och dubbel XP | titel | nytt (litet) | 1 |
 | 55 | Crewet reser sig efter 12 s i stället för 25 | bonus | bonus | 1 |
 | 58 | Doktorn tar halva priset | bonus | bonus | 1 |
-| 60 | Langning 20 varor per runda och +20 % pris på ditt gängs turf | bonus | bonus | 1 |
-| **63** | **🍷 CONSIGLIERE:** Advokaten (BUSTED ger 1 runda kortare häkte, dock minst 1, och halva böterna) · misslyckade jobb kostar ingen respekt | titel | bonus | 1 |
+| 60 | Langning 20 varor per runda | gräns | bonus | 1 |
+| **61** | **🥃 UNDERBOSS:** +20 % pris på ditt gängs turf | titel | bonus | 1 |
+| 63 | Advokaten (BUSTED ger 1 runda kortare häkte, dock minst 1, och halva böterna) · misslyckade jobb kostar ingen respekt | bonus | bonus | 1 |
 | 65 | Elitrekryter hos Rekryteraren (+40 % hälsa och skada mot NPC:er) | crew | nytt (litet) | 1 |
 | 68 | Snuten tappar spåret 25 % snabbare (`LOST_AFTER × 0,75`) | bonus | bonus | 1 |
-| 70 | Privatchaufför: taxin är gratis och kör även med 1 stjärna | tjänst | bonus | 1 |
+| **71** | **💼 BOSS:** Privatchaufför: taxin är gratis och kör även med 1 stjärna | titel | bonus | 1 |
 | 73 | Crewet reser sig efter 8 s | bonus | bonus | 1 |
-| **75** | **🥃 UNDERBOSS:** Familjens skydd: respekten hos ditt gäng går aldrig under +50, och rivalens opps kommer hälften så ofta | titel | bonus | 1 |
+| 75 | Familjens skydd: respekten hos ditt gäng går aldrig under +50, och rivalens opps kommer hälften så ofta | perk | bonus | 1 |
 | 78 | 6 uppdrag per runda | gräns | bonus | 1 |
-| 80 | Gatans legend: vanligt folk (civila och metro, inte snutar, tuffingar eller rånare) slåss aldrig emot när du rånar dem | bonus | bonus | 1 |
-| 82 | Muta snuten: 500 kr per stjärna och två gånger per runda | bonus | bonus | 1 |
-| **85** | **🌹 GUDFADERN:** "Ett erbjudande man inte kan tacka nej till": alla gängbossar svarar och ger jobb, även rivalen · guldnamn och krona i stan, på kartan och i listorna · Gudfaderns svarta Rolls står vid HQ | titel | nytt | 1 (guldfälgarna fas 2) |
+| **81** | **💎 STORBOSS:** Gatans legend: vanligt folk (civila och metro, inte snutar, tuffingar eller rånare) slåss aldrig emot när du rånar dem | titel | bonus | 1 |
+| 85 | Muta snuten: 500 kr per stjärna och två gånger per runda | bonus | bonus | 1 |
 | 88 | Pang-Pelle −30 % | bonus | bonus | 1 |
 | 90 | Langning 25 varor per runda | gräns | bonus | 1 |
-| 90 | Rosen på kavajen och ett gyllene basebollträ | kosmetiskt | nytt | 2 |
-| 93 | Doktorn lappar ihop dig gratis | bonus | bonus | 1 |
+| **91** | **🍷 DON:** Doktorn lappar ihop dig gratis | titel | bonus | 1 |
 | 95 | Skrota 5 bilar per runda | gräns | bonus | 1 |
 | 95 | Staty av dig vid HQ som alla online ser | kosmetiskt | nytt | 2 |
 | 97 | Snuten tappar spåret dubbelt så snabbt (`LOST_AFTER × 0,5`) | bonus | bonus | 1 |
-| 100 | Don-stjärna i namnskylten och Legend-stjärnor (en per 25 000 XP över nivå 100) | kosmetiskt | nytt (litet) | 1 |
+| **100** | **🌹 GUDFADERN:** "Ett erbjudande man inte kan tacka nej till": alla gängbossar svarar och ger jobb, även rivalen · guldnamn och krona i stan, på kartan och i listorna · Gudfaderns svarta Rolls står vid HQ · Gudfader-stjärna i namnskylten och Legend-stjärnor (en per 25 000 XP över nivå 100) | titel | nytt | 1 (guldfälgarna fas 2) |
+| 100 | Rosen på kavajen och ett gyllene basebollträ | kosmetiskt | nytt | 2 |
 | 100 | Guldaura · valfri Prestige: börja om som Springpojke med en ⭐, och kosmetiken finns kvar | prestige | nytt | 2 |
 
 **Upplåsnings-id:n** i koden (`UNLOCKS` i `levels.js`). Allt som inte står i listan kräver nivå 1 (`requiredLevel` returnerar 1), till exempel `svc:eat`, `car:cykel` och uppdragen `delivery` och `vip`.
@@ -337,8 +389,8 @@ car:moped 2 · car:bmw 6 · car:mercedes 12 · car:lambo 20 · car:rolls 28   (c
 pimp:2 8 · pimp:3 16
 bm:smuggle 5 · bm:counterfeit 9 · bm:crypto_scam 13 · bm:hack 17 · bm:insider 21
 deal:launder 7 · deal:bribe 12
-perk:torpedo 23 · perk:backup 31 · perk:bribecop 35 · perk:kapo 51 · perk:lawyer 63
-perk:chauffeur 70 · perk:family 75 · perk:legend 80 · perk:offer 85 · perk:godcar 85
+perk:backup 31 · perk:torpedo 31 · perk:bribecop 35 · perk:kapo 51 · perk:lawyer 63
+perk:chauffeur 71 · perk:family 75 · perk:legend 81 · perk:offer 100 · perk:godcar 100
 ```
 
 Listan har också poster för bonusarna, så att nivå-upp-rutan och Karriär-kortet kan visa dem:
@@ -346,11 +398,27 @@ Listan har också poster för bonusarna, så att nivå-upp-rutan och Karriär-ko
 ```
 perk:crit 10 · cap:missions4 15 · perk:discount10 25 · cap:fence4 33 · cap:goods15 35
 perk:discount20 38 · cap:missions5 40 · perk:paytier 41 · perk:backup2 44 · cosm:goldguns 45 (fas 2)
-perk:armoredride 48 · perk:fastrecover 55 · perk:doctor 58 · cap:goods20 60 · perk:turfprice 60
-perk:nofailloss 63 · perk:heat 68 · perk:crewheal 73 · cap:missions6 78 · perk:bribecop2 82
-cosm:goldname 85 · perk:discount30 88 · cap:goods25 90 · cosm:rose 90 (fas 2) · perk:doctorfree 93
-cap:fence5 95 · cosm:statue 95 (fas 2) · perk:heat2 97 · cosm:donstar 100 · prestige 100 (fas 2)
+perk:armoredride 48 · perk:fastrecover 55 · perk:doctor 58 · cap:goods20 60 · perk:turfprice 61
+perk:nofailloss 63 · perk:heat 68 · perk:crewheal 73 · cap:missions6 78 · perk:bribecop2 85
+perk:discount30 88 · cap:goods25 90 · perk:doctorfree 91 · cap:fence5 95 · cosm:statue 95 (fas 2)
+perk:heat2 97 · cosm:goldname 100 · cosm:godstar 100 · cosm:rose 100 (fas 2) · prestige 100 (fas 2)
 ```
+
+**Så följde upplåsningarna med när banden byttes.** De gamla titlarna bar var sitt paket (Torped 23, Gängsoldat 31, Kvartersboss 41, Kapo 51, Consigliere 63, Underboss 75, Gudfadern 85). Nivåerna för vapen, crew, gränser och de flesta perks ligger kvar, eftersom PvP-skyddet, racet och pengabalansen är räknade på dem. Bara det som var knutet till en titel eller som behövdes för att varje ny titel ska börja med något nytt har flyttats:
+
+| Post | Före | Nu | Varför |
+|---|---|---|---|
+| `perk:torpedo` (Torpedslaget) | 23 | 31 | Torped-bandet börjar på 31. Hagelgevär står kvar på 23. |
+| `perk:turfprice` (+20 % turfpris) | 60 | 61 | Underboss börjar på 61 och hade inget nytt. |
+| `perk:chauffeur` (Privatchaufför) | 70 | 71 | Boss börjar på 71. |
+| `perk:legend` (Gatans legend) | 80 | 81 | Storboss börjar på 81. |
+| `perk:doctorfree` (gratis doktor) | 93 | 91 | Don börjar på 91. |
+| `perk:bribecop2` (Muta snuten ×2) | 82 | 85 | Håller ihop avståndet på högst fyra nivåer när Gudfadern-paketet lämnar 85. |
+| `perk:offer`, `cosm:goldname`, `perk:godcar` | 85 | 100 | Gudfadern är nu bara nivå 100 och bär sitt eget paket (Ett erbjudande, guldnamn och krona, svarta Rolls). |
+| `cosm:rose` (fas 2) | 90 | 100 | Rosen är Gudfaderns emblem. |
+| `cosm:donstar` blev `cosm:godstar` | 100 | 100 | "Don" är nu en egen titel (91–99); stjärnan hör till Gudfadern. |
+
+Kapo-jobbet (`perk:kapo`, nivå 51) heter fortfarande så: det är ett jobb åt den egna bossen och inte en titel, och det följer nu Kapten-bandet. Motsvarande tal i funktionerna (`knockMult` 31, `bribeCops` 85, `doctorMult` 91) och i texterna nedan är ändrade och testas mot upplåsningslistan.
 
 Varje post har `race: true` om den ger pengar i racet: alla av sorten `mission`, `crime`, `market`, `deal`, `car`, `pimp`, `cap` och `prop`, plus `perk:paytier`, `perk:kapo`, `perk:turfprice` och `perk:lawyer`.
 
@@ -364,8 +432,8 @@ crewMax(L)        = L ≥ 30 ? 4 : L ≥ 22 ? 3 : L ≥ 14 ? 2 : L ≥ 8 ? 1 : 0
 crewRecover(L)    = L ≥ 73 ? 8 : L ≥ 55 ? 12 : 25
 gunDiscount(L)    = L ≥ 88 ? 0.7 : L ≥ 38 ? 0.8 : L ≥ 25 ? 0.9 : 1
 backupPerRound(L) = L ≥ 44 ? 2 : L ≥ 31 ? 1 : 0
-bribeCops(L)      = L ≥ 82 ? { perRound: 2, perStar: 500 } : L ≥ 35 ? { 1, 1000 } : { 0, 1000 }
-doctorMult(L)     = L ≥ 93 ? 0 : L ≥ 58 ? 0.5 : 1
+bribeCops(L)      = L ≥ 85 ? { perRound: 2, perStar: 500 } : L ≥ 35 ? { 1, 1000 } : { 0, 1000 }
+doctorMult(L)     = L ≥ 91 ? 0 : L ≥ 58 ? 0.5 : 1
 lostTrackMult(L)  = L ≥ 97 ? 0.5 : L ≥ 68 ? 0.75 : 1
 ```
 
@@ -384,7 +452,7 @@ skott      = WEAPONS[id].dmg · dmgMult(L)
 ```
 
 - **Kritiska träffar** (spelaren mot NPC:er, aldrig i PvP): från nivå 10 är chansen `L/1000`, alltså 1 % till 10 % (`critChance`). En kritisk träff gör ×1,5 skada (`CRIT_MULT`) och visar en orange floater "KRITISK!" (`#fb923c`) med dubbel gnista. `npcDamage(bas, L, rnd)` returnerar `{ dmg, crit }`.
-- **Torpedslaget** (från nivå 23): knuffen när spelaren slår i `hitPed` blir 200 px/s i stället för 160 (`knockMult` = 1,25).
+- **Torpedslaget** (från nivå 31, Torped-bandet): knuffen när spelaren slår i `hitPed` blir 200 px/s i stället för 160 (`knockMult` = 1,25).
 - **Crewet** (mot NPC:er): `crewDmgMult(L) = 1 + 0,0025·(L − 1)`, högst +25 %. Veteraner (×1,2, nivå 41) och elit (×1,4, nivå 65) får sin klass (`crewTier(L)`, `CREW_TIERS`) men **bakas inte in** i hälsa och skada. Medlemmen sparar basskada, bashälsa och `tier`. Mot NPC:er gäller `crewNpcDamage(bas, L, tier)` = bas · crewDmgMult · klass, och skada från NPC:er delas med klassen (`crewNpcHurt`). I PvP skickas basskadan, och träffar från andra spelare dras av rakt. Annars gick klassen förbi ±10 %: en elitlivvakt gjorde 20–28 (25–35 med "Hårda nävar") och hade 126 hp mot en vanlig livvakts 14–20 och 90 hp.
 - **Påkörning med bil skalas inte**, så fysiken är oförändrad.
 
@@ -434,7 +502,7 @@ En kritisk träff (från nivå 10) kan sänka opps med ett pistolskott redan på
    pvpMult = 1 + 0,005 · clamp(Lanfallare − Lmål, −20, 20)          alltså 0,90–1,10
    ```
    Multiplikatorn läggs på **efter** taket. I dag kapas trä plus styrka 5 (53) till 45, och då skulle nivåbonusen annars försvinna. Nivån läses från värdens bild, alltså `lv` i den tvättade positionen och i andra hand `gameState.players`. Klienten kan aldrig skicka med sin nivå i själva träffen.
-3. **Nybörjarskydd** (`newbieShield`): om målet är på nivå 15 eller lägre (`NEWBIE_MAX_LEVEL`, Springpojke till Langare, alltså innan uzin) och anfallaren ligger minst 10 nivåer över (`NEWBIE_GAP`) gäller `sköld = 0,5`. Offret tappar då inga pengar (`lost = 0` i `pvpDefeat`, och värden kapar `amount` till 0), och anfallaren får 0 i PvP-XP. Skyddet försvinner i 30 s om nybörjaren själv slog den anfallaren först (`host.aggro` med nyckeln `'nybörjare>anfallare'`, skickas som `aggro`).
+3. **Nybörjarskydd** (`newbieShield`): om målet är på nivå 15 eller lägre (`NEWBIE_MAX_LEVEL`: Springpojke, Småhustlare och första halvan av Hustlare, alltså innan uzin på nivå 16) och anfallaren ligger minst 10 nivåer över (`NEWBIE_GAP`) gäller `sköld = 0,5`. Offret tappar då inga pengar (`lost = 0` i `pvpDefeat`, och värden kapar `amount` till 0), och anfallaren får 0 i PvP-XP. Skyddet försvinner i 30 s om nybörjaren själv slog den anfallaren först (`host.aggro` med nyckeln `'nybörjare>anfallare'`, skickas som `aggro`).
 4. **Crewet i PvP:** crewets träffar skickar basskadan (roll · egenskap, utan nivå och utan klass, se 6.1). Värden kapar crewets PvP-skada vid rollens max · 1,25 (till exempel livvakt 20 · 1,25 = 25) i stället för bara `HIT_RULES.melee.max` (45), så en klient inte kan skicka med klassen. Rollen finns i den tvättade positionen (`crew[i].r`).
 5. **Resultat:** själva skadeformeln ger nivå 100 mot nivå 1 högst +10 %, och samma nivå ger exakt dagens skada. Det finns inga kritiska träffar i PvP. Men vapen, väst och crewplatser låses upp med nivån (pistol 6, väst 7, uzi 16, hagel 23, crew 8–30), så **nivån spelar roll i PvP genom utrustningen**. Det är progressionen, och tre saker håller den i schack: nybörjarskyddet upp till nivå 15, att vapen på marken alltid går att låna, och att crewets klass bara gäller mot NPC:er.
 
@@ -457,11 +525,11 @@ Spelet har två sorters respekt, och båda växer med nivån.
 5. **Nytt lönesteg:** från nivå 41 ger respekt ≥ 80 ×1,45 i `rewardFor` (`respectPayMult`). Dagens steg är ×1,15 vid 20 och ×1,3 vid 50.
 6. **Perks:**
    - Nivå 75: det egna gängets respekt går aldrig under +50 (`respectFloor`; golvet läggs i `world.setRespect`).
-   - Nivå 85: `phoneAccess` returnerar alltid sant, så även rivalen svarar.
+   - Nivå 100 (Gudfadern): `phoneAccess` returnerar alltid sant, så även rivalen svarar.
 
 **Gaturespekt**, alltså att folk fruktar dig:
 
-- Chansen att någon slåss emot vid rån (`fight` i `tryRob`) multipliceras med `fearMult(L) = 1 − (L − 1)/250`, alltså ×0,6 på nivå 100. Från nivå 80 är den 0 för vanligt folk: `robFightChance(fight, L, ped)` tar **peden**, inte typen, och nollar bara när `isOrdinaryPed(ped)`, alltså `type` är `'civ'` eller `'metro'` och peden inte är snut, tuffing eller rånare. I `ai.js` har snutar, tuffingar och rånare också `type === 'civ'`, så typen ensam skulle stänga av motståndet för snutar på nivå 80. Utan ped gäller bara `fearMult`.
+- Chansen att någon slåss emot vid rån (`fight` i `tryRob`) multipliceras med `fearMult(L) = 1 − (L − 1)/250`, alltså ×0,6 på nivå 100. Från nivå 81 (Storboss) är den 0 för vanligt folk: `robFightChance(fight, L, ped)` tar **peden**, inte typen, och nollar bara när `isOrdinaryPed(ped)`, alltså `type` är `'civ'` eller `'metro'` och peden inte är snut, tuffing eller rånare. I `ai.js` har snutar, tuffingar och rånare också `type === 'civ'`, så typen ensam skulle stänga av motståndet för snutar på nivå 80. Utan ped gäller bara `fearMult`.
 - Risken att bli utslängd vid ett obeväpnat butiksrån blir `0,5 · fearMult(L)` (`shopRobKickChance`).
 - Nattens rånare kommer mer sällan: `muggerT = 80 + rnd·60 + 0,6·L` sekunder (`muggerInterval`).
 
@@ -484,7 +552,7 @@ Respektraderna flyttas till `y = 38 + i·22`, och hälsan till `hy = 16 + 4·22 
 
 När man får XP:
 - Raden blinkar vitt i 0,15 s.
-- Den vidgas i 3 s och visar `NIVÅ 23 TORPED · 1 240/2 320`.
+- Den vidgas i 3 s och visar `NIVÅ 23 FIXARE · 1 240/2 320`.
 - Från 90 % mot nästa nivå pulserar stapeln.
 - Mentorbonusen visas som `×1,25`.
 
@@ -499,8 +567,8 @@ När man får XP:
 | Fall | Hur det visas |
 |---|---|
 | Vanlig nivå (2,6 s) | "NIVÅ 24" i bandets färg, titeln under, och 1–2 rader "Upplåst: Uzi hos Pang-Pelle" plus "+1 till, se 📱". Bara poster i byggd fas (`r.unlocked`). En nivå utan upplåsning visar i stället det som växte, ur `levelStats`: "Skada +11,5 % · Kritisk 2,4 %". Ljudet `mission`. Partiklar med bandets emoji. |
-| Ny titel (4 s, blockerar inget) | Större text och en ton i bandets färg (15 %) över skärmen. Bandets emoji över titeln och raden "Ryktet sprider sig...". Klienten skickar dessutom `rank` till värden, som sprider det i flödet. |
-| Gudfadern (alla online) | Banner "👑 MEHMET ÄR GUDFADERN" hos alla, via `rank` med band 10. |
+| Ny titel (4 s, blockerar inget) | Större text och en ton i bandets färg (15 %) över skärmen. Bandets emoji och rankbild (`maskOf`) över titeln och raden "Ryktet sprider sig...". Klienten skickar dessutom `rank` till värden, som sprider det i flödet. |
+| Gudfadern (alla online) | Banner "👑 MEHMET ÄR GUDFADERN" hos alla, via `rank` med band 11 (nivå 100). |
 | Mitt i ett uppdrag eller en jakt | Kompakt variant högre upp (y = H·0,22, 44 px). Den stora tonen skjuts upp tills uppdraget är slut eller stjärnorna är 0, dock högst 20 s. |
 | Flera nivåer på en gång | "NIVÅ 23 → 25" med alla upplåsningar samlade. |
 
@@ -508,10 +576,10 @@ Vid nivå-upp i stan uppdaterar `world` direkt `maxMissions`, `maxGoods` och `ma
 
 **Namnskyltar** (`render.drawTags`, och motsvarande i 3D-vyn):
 - en ruta "[23]" i bandets färg före namnet
-- från nivå 85 guldnamn (`#ffd23f`) och 👑 ovanför
+- från nivå 100 (Gudfadern) guldnamn (`#ffd23f`) och 👑 ovanför
 - på minikartan får Gudfadern guldkant
 
-**Flödet:** "⬆️ Mehmet blev Torped (Nv 23)" när någon passerar ett titelband, och "💀 [85] Mehmet sänkte [12] Juan".
+**Flödet:** "⬆️ Mehmet blev Fixare (Nv 21)" när någon passerar ett titelband, och "💀 [85] Mehmet sänkte [12] Juan".
 
 **Respekt som syns:** "+15" i gängets färg bredvid respektraden i 2 s. I dag syns ändringen inte alls.
 
@@ -525,7 +593,7 @@ Vid nivå-upp i stan uppdaterar `world` direkt `maxMissions`, `maxGoods` och `ma
 Texterna kommer från `lockLabel(id)` och `lockInfo(spelare, id)`.
 
 - **Knappen** säger "🔒 Nivå 16 · Hustlare". Den är `disabled`, har mörk bakgrund och 1 px kant i färgen för det band som krävs. Under står i liten text "du: Nv 9 · 7 nivåer kvar". Är det rummets gräns som låser (`lockInfo(...).roomCapped`, se avsnitt 0) står det "rummets gräns: Nv 11 (lägsta spelaren + 10)".
-- **Pang-Pelle (`showGuns`):** låsta rader visar ändå statistiken. Pelle säger: "Psst... den säljer jag bara till folk med namn. Kom tillbaka som Hustlare."
+- **Pang-Pelle (`showGuns`):** låsta rader visar ändå statistiken. Pelle säger: "Psst... den säljer jag bara till folk med namn. Kom tillbaka på nivå 16."
 - **Rekryteraren (`showRecruit`):** "👥 1/1 · 🔒 plats 2 på nivå 14". Kandidater med låst roll eller nivå visar "🔒 Nivå 18 · Skytt".
 - **Gängtelefonen (`showPhone`):** sista raden blir "🔒 Fler jobb på nivå 9: Krossa rivalerna". Har man respekt men för låg nivå säger bossen: "Kom tillbaka på nivå 6, Springpojke."
 - **Platsmenyerna (`placeInfo`):** `disabled` och noten "Låses upp på nivå 20 · Hustlare". Det gäller butiksrån, tjänster, gömställen, banken och nattklubbens VIP-bord.
@@ -533,13 +601,13 @@ Texterna kommer från `lockLabel(id)` och `lockInfo(spelare, id)`.
 ### 8.3 Imperiet (DOM, `core.js`, `main.js`, `stan.js`)
 
 - **HUD:**
-  - Ett nytt första chip, `#hud-level`: "🔨 23 Torped" i bandets färg (`levelBadge`).
+  - Ett nytt första chip, `#hud-level`: "🔧 23 Fixare" i bandets färg (`levelBadge`).
   - En 4 px XP-stapel, `#hud-xp`, längs `.hud`:s underkant med titeln "1 240 / 2 320 XP till nivå 24".
   - Ett tryck på chipet öppnar Karriär-kortet (`window.game.showCareer()`).
 - **Toasts** får XP på slutet: "🥙 Köpte Mehmets Kebab! · +30 XP".
 - **Nivå-upp hemma:** toasten "⬆️ Nivå 7!" och `spawnParticles([emoji, '⬆️', '💰'], 16)`.
   - Vid ny titel visas ett **nytt element, `#overlay-level`**. `#overlay-event` används inte, eftersom razzia, sälj och vinst redan använder det.
-  - Kortet heter "BEFORDRAN! Du är nu Hangaround", är i bandets färg och listar det som just låstes upp.
+  - Kortet heter "BEFORDRAN! Du är nu Småhustlare", är i bandets färg och listar det som just låstes upp.
   - Kortet visas bara för nivåer över `p.lvSeen` (`unseenLevels`), och därefter sätts `lvSeen` (`markLevelSeen`).
 - **Befordran i stan** visas som overlay först när man kommer hem (`onCityClosed`). I stan visas den aldrig mitt i en jakt.
 - **Karriär-kortet** blir första kortet i Stan-panelen och är samma ruta som chipet öppnar. Det innehåller:
@@ -547,12 +615,12 @@ Texterna kommer från `lockLabel(id)` och `lockInfo(spelare, id)`.
   - raden "Skada +11 % · Kritisk 2,3 % · Respektvinst +22 %" (`levelStats(L)`)
   - hinkarna, "Gatukassan 45/120 (+4/min) · Kontoret 160/200 (+4/min)" (`bucketPeek`), så att man förstår varför ett rån gav 0 XP
   - "Nästa: Nivå 16 · Uzi hos Pang-Pelle (2 nivåer kvar)" för de 3 nästa upplåsningarna (`nextUnlocks`, bara byggd fas)
-  - titelstegen med alla 11 band: avklarade med ✔ och färg, det nuvarande lysande, kommande gråa med 2 nyckelupplåsningar var
+  - titelstegen med alla 12 band och deras rankbilder (`mask`): avklarade med ✔ och färg, det nuvarande lysande, kommande gråa med 2 nyckelupplåsningar var
   - en grå rad "Kommer snart" med fas 2-posterna (`comingSoon()`), utan nivåsiffror som lovar något
 - **Panelens siffror** ("Uppdrag kvar 2/4" och så vidare) använder `missionCap(L)`, `goodsCap(L)` och `fenceCap(L)` i stället för `gameState.max*PerRound`.
-- **Inloggningskorten** (`renderLoginScreen`) visar karriärens "🔨 Torped · Nv 23" som huvudrad, med en mindre rad "Förmögenhet: Kebab-Mogul" under.
+- **Inloggningskorten** (`renderLoginScreen`) visar karriärens "🔧 Fixare · Nv 23" som huvudrad, med en mindre rad "Förmögenhet: Kebab-Mogul" under.
 - **Övrigt:**
-  - Turindikatorn: "🔨23 Mehmets tur".
+  - Turindikatorn: "🔧23 Mehmets tur".
   - Dashboarden (`renderDashboard`): "Nv 23 · ⭐ 41".
   - Lobbyn: nivå och titel per spelare.
 - **Låsta saker i imperiet:**
@@ -626,7 +694,7 @@ export function roomMin()
 | `applyGain` (1951) | Ett låst vapen läggs i `this.borrowed` och floatern får "(lånad)" |
 | `visitClub` (1305) | Spärr `date` (nivå 10) |
 | `endDate(true)` (1343) | `gainXp('date')` |
-| `sellTo` (1415) | `gainXp(rivalTurf ? 'sellRival' : 'sell')`. Pris +20 % på eget turf från nivå 60 (`perk:turfprice`, med `{ roomMin }`). Opps-chansen ×0,5 för rivalen från nivå 75. `adjustRespect(..., level)`. |
+| `sellTo` (1415) | `gainXp(rivalTurf ? 'sellRival' : 'sell')`. Pris +20 % på eget turf från nivå 61 (`perk:turfprice`, med `{ roomMin }`). Opps-chansen ×0,5 för rivalen från nivå 75. `adjustRespect(..., level)`. |
 | `spawnOpps` (1451) | `oppsCount`, `oppsArmed`, `hp: 35` (oförändrat, se 6.2), `this.oppsWatch[gang] = true` |
 | `joinGang` (1510) | Nivåspärren ligger i `canJoin`. `gainXp('join')`. |
 | `answerPhone` (1797) | `phoneAccess(profile, gang, level)`. `createMission` får `types` (de upplåsta enligt `isUnlocked(p, 'mission:'+typ, { roomMin })`), `level` och `kapo` (eget gäng, `isUnlocked(p, 'perk:kapo', { roomMin })`, inte gjort denna runda; räknas inte mot `missionCap`). Saknade typer skickas med i eventet så att telefonen kan visa nästa. |
@@ -637,7 +705,7 @@ export function roomMin()
 | `hurtCrew` (1913) | `CREW_RECOVER` byts mot `crewRecover(L)`. Skada från en ped går genom `crewNpcHurt(dmg, c.tier)`; skada från en spelare dras av rakt. |
 | `doctor` (2092) | Priset `× doctorMult(L)` |
 | `callBackup` / `bribeCops` (nya) | Antal per runda och pris från `backupPerRound(L)` och `bribeCops(L)` |
-| `taxi` (2077) | Från nivå 70 (`perk:chauffeur`) är priset 0 och taxin kör även med 1 stjärna |
+| `taxi` (2077) | Från nivå 71 (`perk:chauffeur`) är priset 0 och taxin kör även med 1 stjärna |
 | `buyProperty` (2126) | Spärr `prop:stripclub`. `netAsk('buy', 'buyProp', { prop, money, lv })`. |
 | `placeInfo` (2413) | `rob` kräver `rob:shop`. Tjänsterna kräver `svc:*` om man inte äger verksamheten. `buyhouse` kräver `house:<id>`. `robbank` kräver `rob:bank`. `nightvip` kräver `svc:vip`. Låsta knappar får `disabled` och noten `lockLabel`. |
 | `placeAction` (2478) | XP för `buy` (`buyBiz`), `rob` (`shopRob`), tjänsterna (`service.*`) och `buyhouse` (`house`). `robbank` sätter `pendingHeistXp = XP.bank`. Spärrarna för `rob:shop` och `rob:bank` tar `{ roomMin }`. |
@@ -648,7 +716,7 @@ export function roomMin()
 | `pvpDefeat` (2036) | `lost = 0` om `newbieShield(lastAttacker-nivå, min nivå)` |
 | Nya: `callBackup()` (nivå 31), `bribeCops()` (nivå 35) | `callBackup`: 2 peds från det egna gänget (`gangPedOpts`) med `ped.ally = true` och 60 s livslängd. De går på närmaste ped som anfaller dig, annars följer de dig (en liten gren i `updatePeds`). `bribeCops`: `setStars(s − 1)` för 1 000 kr per stjärna. Båda högst 1 gång per runda (`cityDone`). |
 | `spawnGangRide` | `maxHp × 1,5` från nivå 48 (`perk:armoredride`) |
-| `setupOwnedCars` | Från nivå 85 en svart Rolls (`color '#0b0b0f'`, `v.godfather = true`) vid HQ |
+| `setupOwnedCars` | Från nivå 100 (`perk:godcar`) en svart Rolls (`color '#0b0b0f'`, `v.godfather = true`) vid HQ |
 
 ### 9.4 Övriga filer i stan
 
@@ -657,7 +725,7 @@ export function roomMin()
   - `applyRespect(respect, gang, success, level = 1)`: vinst via `scaleRespectDelta`. Vid misslyckande `failRespect(level)`.
   - `adjustRespect(respect, gang, delta, level = 1)`: positiva värden skalas med `scaleRespectDelta`.
   - `canJoin(profile, gang)` kräver dessutom `isUnlocked(profile, 'gang:join')`.
-  - `phoneAccess(profile, gang, level)` returnerar alltid sant från nivå 85 (`perk:offer`).
+  - `phoneAccess(profile, gang, level)` returnerar alltid sant från nivå 100 (`perk:offer`).
   - `createMission` väljer typ ur `ctx.types ?? MISSION_TYPES`.
   - Standardvärdena gör att de befintliga anropen och testerna fortsätter fungera.
 - **`weapons.js`:** `weaponPurchase(profile, id, kind, { level = 100, borrowed } = {})`.
@@ -674,7 +742,7 @@ export function roomMin()
   - `updateBrawl` ger `brawlWin` i grenen `fighters === 0 && F.quietT > 2`, precis där `F.on = false` sätts, och bara om spelaren deltog, `F.kos > 0` och spelaren inte blev utslängd. `calmDown` ger **ingen** XP: den körs när bråket rinner ut med folk kvar i slagsmål, alltså när ingen vann.
 - **`hud.js`:** XP-raden, flyttade rader, kön för nivå-upp (`onEvent('levelUp')` och `onEvent('xp')`), "+N" vid respekten och bannern för ny titel.
 - **`render.js`:** `drawTags` får nivårutan, guld och krona (nivån tas från `remote.lv` och hos dig själv från `world.level()`). `drawFloaters` får `f.size`. Samma namnskyltar i `render3d` när den grenen är klar.
-- **`minimap.js`:** guldkant och krona för nivå 85 och uppåt (fas 1, enkelt).
+- **`minimap.js`:** guldkant och krona för nivå 100 (fas 1, enkelt).
 - **`index.js`:**
   - `openCity` tar emot gränserna från `stan.js`.
   - `showGuns`, `showRecruit` och `showPhone` får låsta rader enligt 8.2.
@@ -713,7 +781,7 @@ export function roomMin()
 - **`authority.js`:**
   - `validateHit(att, tgt, kind, dmg, now, log, attackerId, mult = 1)` returnerar `dmg: min(rule.max, n) × mult`.
   - `PROPERTIES.stripclub.minLevel = requiredLevel('prop:stripclub')` (28).
-  - `validateBuy(owners, prop, buyer, money, level = 100)` nekar med "Kräver nivå 28 · Torped". Värden skickar köparens `raceLevel(lvOf(from), rummets lägsta)`.
+  - `validateBuy(owners, prop, buyer, money, level = 100)` nekar med "Kräver nivå 28 · Fixare". Värden skickar köparens `raceLevel(lvOf(from), rummets lägsta)`.
 - **`citynet.js`:**
   - `sanitizePos` får `lv: clampLevel(p.lv)`.
   - Ny hjälpare `lvOf(id)`: `host.players.get(id)?.lv`, i andra hand `levelOf(gameState.players…xp)`.
@@ -736,21 +804,22 @@ export function roomMin()
 | 4 | Spärrar av befintligt innehåll och låst-UI | 1 |
 | 5 | Formler för skada och respekt, opps- och snutskalning, PvP-ändringarna hos värden | 1 |
 | 6 | Nivå-upp-ceremonier, `rank` i flödet, namnskyltar, Karriär-kortet, inloggning och lobby | 1 |
-| 7 | Perks för nivå 31–85: backup, muta snuten, Kapo, veteraner och elit, advokat, chaufför, familjen, legenden, erbjudandet, Gudfaderns bil | 1 |
+| 7 | Perks för nivå 31–100: backup, muta snuten, Kapo, veteraner och elit, advokat, chaufför, familjen, legenden, erbjudandet, Gudfaderns bil | 1 |
 | 8 | Indrivning, skins, rosen, statyn, Prestige och Legend-stjärnor | 2 |
 
 ### 9.7 Tester
 
-- **`tests/levels.test.js`** (klar, 79 tester):
+- **`tests/levels.test.js`** (klar, 87 tester):
   - `XP_TOTAL[85] === 87 935`, `XP_TOTAL[100] === 138 475`, strikt växande `need` i femsteg och designens nyckelnivåer.
+  - Kurvan är komplett och strikt stigande för alla 100 nivåer, och varje nivå, titelband och tiotal nivåer kostar mer än det förra. Tidiga nivåer är snabba (Småhustlare inom cirka 20 minuter).
   - `levelFromXp` vid gränserna (44 ger 1, 45 ger 2, 138 475 ger 100), nivå 100 som tak och rundtur mot `xpForLevel`.
-  - Titelbanden täcker 1–100 utan luckor eller överlapp och har rätt titlar i ändarna.
-  - `UNLOCKS` är sorterade, unika, har giltiga nivåer och följer designens id-lista. Fas 2 firas aldrig som upplåst, och det finns något nytt i fas 1 minst var fjärde nivå ända till 100.
+  - Titelbanden följer masterpromptens ranktabell (12 band), täcker 1–100 utan luckor eller överlapp och har Springpojke 1–5 och Gudfadern 100 fast. Varje rang har eget emblem (emoji och färg), en maskbild (`mask`) och en stil som stiger från gata till exklusiv.
+  - `UNLOCKS` är sorterade, unika, har giltiga nivåer och följer designens id-lista. Fas 2 firas aldrig som upplåst, det finns något nytt i fas 1 minst var fjärde nivå ända till 100 och varje ny titel börjar med något nytt. En upplåsning som nämner en titel (Torpedslaget, veteranerna, Gudfaderns Rolls) ligger på den titelns band.
   - Racet: `raceLevel`, `roomMinLevel`, `isUnlocked`/`lockInfo` med `roomMin` och vilka poster som är `race`.
-  - Gränsfunktionerna och perkfunktionerna stämmer med upplåsningslistan.
+  - Gränsfunktionerna och perkfunktionerna (även `knockMult`, `failRespect`, `respectFloor` och Gatans legend) stämmer med upplåsningslistan.
   - `pvpMult` håller sig inom 0,9–1,1, `dmgMult(100) ≤ 1,5`, kritiska träffar, skadetabellen, att skadan märks mot opps och snutar, `levelStats` och crewets klass bara mot NPC:er.
-  - Nybörjarskyddet till och med nivå 15.
-  - `scaleRespectDelta` (förluster oförändrade), `robFightChance` med ped (snut, tuffing och rånare slåss fortfarande på nivå 80) och de andra respektformlerna.
+  - Nybörjarskyddet till och med nivå 15, precis före uzin på nivå 16.
+  - `scaleRespectDelta` (förluster oförändrade), `robFightChance` med ped (snut, tuffing och rånare slåss fortfarande på nivå 81) och de andra respektformlerna.
   - `bucketTake`: påfyllning, tak, delutdelning, klockan bakåt. `cooldownOk` flyttar en stämpel från framtiden.
   - `awardXp`: nivå-upp med upplåsningar, rykte och titelrespekt, respektsteg från titelrespekten, once (förbrukas inte av en tom hink), milstolpar, hinkar, spärrar för bankrån (10 min) och vinst (2 h), mentorbonus, AI, trasiga belopp och ärvda nyckelnamn (`toString`, `constructor`, `__proto__`).
   - `pvpXp`: 0 vid 30 nivåers skillnad och vid nybörjarskydd. `pvpXpGate`: par och timme, och 0-XP-kills stämplar ingenting. `pvpReward`.
@@ -786,7 +855,7 @@ export function roomMin()
 7. **Pågående arbete:** `git status` visar ändringar i `render3d/*` och de nya filerna `interiors-prison.js` och `render3d.js`, och barbråken byggs i `brawl.js`. Lägg krokarna för Kåken (rymnings-XP, och Advokaten som påverkar straffet), för barbråken (XP för knockout och vinst) och 3D-namnskyltarna **efter** de grenarna.
 8. **Nivå-upp mitt i strid:** i stan används bara kön och den kompakta varianten. Den stora BEFORDRAN-rutan visas först hemma.
 9. **Beslut ägaren behöver bekräfta:** att verksamheterna i Butik inte spärras, och att det som ger pengar räknas på rummets lägsta nivå + 10 när flera människor spelar. Se avsnitt 0.
-10. **Nya fas 1-perks efter nivå 40** (backup ×2, halva och gratis doktorn, snuten tappar spåret snabbare, crewet reser sig efter 8 s, 6 uppdrag, billigare mutor, −30 % hos Pang-Pelle, 25 varor, 5 bilar, Don-stjärnan) är bara siffror i befintlig kod, men de behöver kopplas in som allt annat i 9.3. Utan dem gick det 26 timmar mellan Gudfadern och nivå 100 utan en enda upplåsning.
+10. **Nya fas 1-perks efter nivå 40** (backup ×2, halva och gratis doktorn, snuten tappar spåret snabbare, crewet reser sig efter 8 s, 6 uppdrag, billigare mutor, −30 % hos Pang-Pelle, 25 varor, 5 bilar, Gudfader-stjärnan) är bara siffror i befintlig kod, men de behöver kopplas in som allt annat i 9.3. Utan dem gick det cirka 25 timmar (nivå 85 till 100) utan en enda upplåsning.
 
 ---
 
@@ -797,8 +866,8 @@ export function roomMin()
 | Grupp | Exporter |
 |---|---|
 | Konstanter | `MAX_LEVEL` (100), `XP_MAX` (10 000 000), `LEGEND_STAR_XP` (25 000), `MAX_AWARD` (1 000), `AI_TURN_XP` (120) |
-| Band | `RANKS` (11 frysta band `{ from, to, id, title, emoji, color, index }`), `rankOf(L)`, `rankIndex(L)`, `ranksBetween(from, to)`, `levelBadge(L)` → `"🔨 23 Torped"` |
-| Kurva | `XP_CUBIC` (0,0025), `XP_TOTAL` (index 1..100), `xpToNext(L)`, `xpForLevel(L)`, `levelOf(xp)` → heltal, `levelFromXp(xp)` → `{ xp, level, rank, rankIndex, title, emoji, color, xpInto, xpNeeded, xpLeft, progress, maxed, legendStars }` (alias `progress`), `legendStars(xp)`, `clampLevel(n)`, `cleanXp(xp)`, `playerLevel(spelare \| nivå)` |
+| Band | `RANKS` (12 frysta band `{ from, to, id, title, emoji, color, style, tier, mask: { name, desc, base, accent }, index }`), `RANK_STYLES` (`gata`, `hardingen`, `syndikat`, `exklusiv`), `rankOf(L)`, `rankIndex(L)`, `maskOf(L)` → rankbilden, `ranksBetween(from, to)`, `levelBadge(L)` → `"🔧 23 Fixare"` |
+| Kurva | `XP_CUBIC` (0,0025), `XP_TOTAL` (index 1..100), `xpToNext(L)`, `xpForLevel(L)`, `levelOf(xp)` → heltal, `levelFromXp(xp)` → `{ xp, level, rank (med mask), rankIndex, title, emoji, color, xpInto, xpNeeded, xpLeft, progress, maxed, legendStars }` (alias `progress`), `legendStars(xp)`, `clampLevel(n)`, `cleanXp(xp)`, `playerLevel(spelare \| nivå)` |
 | Upplåsningar | `UNLOCKS` (`{ id, level, kind, label, status, fas, race }`), `ACTIVE_FAS` (1), `isActiveUnlock(u)`, `comingSoon()`, `getUnlock(id)`, `requiredLevel(id)` (alias `unlockLevel`), `isUnlocked(spelare \| nivå, id, { roomMin })`, `unlocksAt(L, { all })`, `unlocksBetween(from, to, { all })`, `nextUnlocks(L, n = 3, { all })`, `lockLabel(id)`, `lockInfo(spelare \| nivå, id, { roomMin })` → `{ locked, need, rank, label, left, hint, roomCapped }` |
 | Racet | `RACE_GAP` (10), `raceLevel(L, roomMin)`, `roomMinLevel(spelare)` → lägsta mänskliga nivå eller `null` med färre än två människor |
 | Gränser och perks | `missionCap(L, base = 3)`, `goodsCap(L)`, `fenceCap(L)`, `crewMax(L)`, `crewRecover(L)`, `gunDiscount(L)`, `backupPerRound(L)`, `bribeCops(L)` → `{ perRound, perStar }`, `doctorMult(L)`, `lostTrackMult(L)` |
@@ -838,8 +907,10 @@ Utan `opts.career` håller modulen en karriär i minnet per spelarobjekt (en `We
 - **Bankrånets spärr på 10 min** ligger i källan `bank` och stämplas först när XP:n betalas ut. Ett bankrån som slutar med BUSTED eller WASTED förbrukar alltså inte spärren. `world` sätter `pendingHeistXp` varje gång.
 - **Knockout-källorna** följer `ped.type` i koden: `ko.civ` i stället för "civil". `ko.opps` finns som alias (5), men `koSource` ger `ko.gang` för opps, eftersom de är gängpeds.
 - **Extra upplåsningsposter** för bonusar och kosmetik (`perk:crit`, `cap:*`, `perk:discount10/20`, `perk:paytier`, `perk:armoredride`, `perk:fastrecover`, `perk:turfprice`, `perk:nofailloss`, `cosm:*`, `prestige`), så att nivå-upp-rutan kan visa allt i tabellen i avsnitt 5.
+- **Titelbanden** följer masterprompt v3 avsnitt 6 (12 band, Springpojke 1–5 och Gudfadern 100) i stället för designens ursprungliga elva (avsnitt 1). Rang-id:n är nya (`smahustlare`, `fixare`, `veteran`, `kapten`, `boss`, `storboss`, `don`), `underboss`, `torped`, `hustlare` och `gudfadern` finns kvar men gäller andra nivåer. Se avsnitt 5 för de upplåsningar som flyttades.
+- **Rankbilder** (`mask`, `style`, `tier`, `maskOf`, `RANK_STYLES`) är nya och bara data: etapp 1 ritar dem. `cosm:donstar` heter `cosm:godstar`.
 - **Tabellen i avsnitt 2:** nivå 2 → nästa är 60, inte 75.
-- **Kurvan:** den kubiska koefficienten är 0,0025, inte 0,004. Designens tider (Gudfadern cirka 43 h, nivå 100 cirka 70 h) stämde bara för en flitig spelare; nu stämmer de för en vanlig.
+- **Kurvan:** den kubiska koefficienten är 0,0025, inte 0,004. Designens tider (nivå 85 cirka 43 h, nivå 100 cirka 70 h) stämde bara för en flitig spelare; nu stämmer de för en vanlig.
 - **Opps-hälsan** skalas inte, och `npcHpMult` heter `copHpMult` och gäller bara snutar, med halva lutningen (L/600). Se 6.2.
 - **Nybörjarskyddet** gäller till och med nivå 15, inte 5. Se 6.3.
 - **Crewets klass** (veteran, elit) bakas inte in i hälsa och skada utan gäller bara mot NPC:er. Se 6.1.

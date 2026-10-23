@@ -72,8 +72,8 @@ function buildOverlay(touch) {
 
 function controlsHelp(touch) {
     return touch
-        ? `<div class="city-help"><b>🕹️ Joysticken</b> (tummen nere till vänster) gå / kör dit du drar · ända ut = spring · dra mot bilens bakände = backa · <b>👊</b> slå / skjut (blir <b>⤵</b> handbroms i bilen) · <b>E</b> gå in genom dörrar, in/ur bil, plocka upp · <b>💰</b> råna · <b>🔫</b> byt vapen · <b>👥</b> crew-order · <b>📯</b> tuta · <b>📱</b> telefon · <b>🔍</b> byt vy<br><small>Version ${escapeHtml(BUILD)}</small></div>`
-        : `<div class="city-help"><b>WASD/Pilar</b> kör/gå · <b>Musen</b> siktar, <b>vänsterklick</b> slår/skjuter, <b>hjulet</b> zoomar · <b>Shift</b> spring · <b>E</b> gå in genom dörrar, in/ur bil, plocka upp · <b>Space</b> handbroms / slå / skjut · <b>R</b> råna (till fots) / radio (i bil) · <b>Q</b> byt vapen · <b>M</b> karta · <b>T</b> telefon · <b>V</b> byt vy · <b>1 2 3</b> crew: följ / stanna / anfall · <b>H</b> tuta · <b>P</b> paus · <b>Esc</b> hem<br><small>Version ${escapeHtml(BUILD)}</small></div>`;
+        ? `<div class="city-help"><b>🕹️ Joysticken</b> (tummen nere till vänster) gå dit du drar — i förstaperson och följkamera är upp = framåt i bild · ända ut = spring (🏃 uthållighet) · <b>i bilen</b> kör dit du drar, dra bakåt = backa · <b>dra med ett finger på bilden</b> titta runt (3D) · <b>nyp</b> zooma — och vidare till nästa kamera · <b>👊</b> slå / skjut (blir <b>⤵</b> handbroms i bilen) · <b>E</b> gå in genom dörrar, in/ur bil, prata, plocka upp · <b>💰</b> råna · <b>🔫</b> byt vapen · <b>👥</b> crew-order · <b>📯</b> tuta · <b>📱</b> telefon · <b>🔍</b> byt kamera: förstaperson → följkamera → överblick<br><small>Version ${escapeHtml(BUILD)}</small></div>`
+        : `<div class="city-help"><b>W/S</b> gå framåt/bakåt dit du tittar · <b>A/D</b> sidsteg · <b>Musen</b> styr blicken (3D: klicka i bilden så fångas musen) — i överblicken siktar pekaren · <b>vänsterklick</b> / <b>Space</b> slå / skjut · <b>Shift</b> spring (🏃 uthållighet) · <b>E</b> gå in genom dörrar, in/ur bil, prata, plocka upp · <b>I bilen</b> W gas · S broms/back · A/D sväng · Space handbroms · musen tittar runt · <b>R</b> råna (till fots) / radio (i bil) · <b>Q</b> byt vapen · <b>V</b> eller <b>C</b> byt kamera: förstaperson → följkamera → överblick · <b>hjulet</b> zoomar — och vidare till nästa kamera · <b>M</b> karta · <b>T</b> telefon · <b>1 2 3</b> crew: följ / stanna / anfall · <b>H</b> tuta · <b>P</b> paus · <b>Esc</b> släpper musen i 3D (paus), annars hem · <b>🏠 HEM</b> åk hem<br><small>Version ${escapeHtml(BUILD)}</small></div>`;
 }
 
 export function openCity(profile, opts = {}) {
@@ -145,7 +145,7 @@ export function openCity(profile, opts = {}) {
     // Tryck på minikartan öppnar den stora kartan (och tryck var som helst stänger den)
     const onMapTap = (e) => {
         const r = session?.hud.mapRect;
-        if (!r || session.modalType) return;
+        if (!r || session.modalType || input.pinching) return; // ett nypfinger på minikartan öppnar inte kartan
         const b = canvas.getBoundingClientRect();
         const x = e.clientX - b.left, y = e.clientY - b.top;
         if (world.showMap || (x >= r.x && x <= r.x + r.size && y >= r.y && y <= r.y + r.size)) world.showMap = !world.showMap;
@@ -394,6 +394,7 @@ function showCityPhone() {
             ${sms && cityNetActive() ? `<button class="city-go place-act" data-act="sms">💬 SMS till andra spelare${sms.unread() ? ` (${sms.unread()} olästa)` : ''}</button>` : '<p class="phone-brief">💬 SMS till andra spelare fungerar när du spelar online.</p>'}
             <div class="phone-member">🚑 Doktorn</div>
             <button class="city-go place-act" data-act="doctor" ${money >= doc ? '' : 'disabled'}>🚑 Ring doktorn · ${doc.toLocaleString('sv-SE')} kr<small>Full hälsa för dig och crewet · kommer inte mitt i en strid</small></button>
+            <div class="phone-member">👮 Polisen · ${escapeHtml(w.policeLine())}</div>
             <div class="phone-member">🚕 Taxi · inte med snuten efter dig</div>
             <div class="place-actions">${taxi}</div>
             <div class="phone-member">👥 Crew (${(w.crew || []).length}/${CREW_MAX})</div>
@@ -620,7 +621,8 @@ function setCam(cam, { save = true } = {}) {
     if (save) saveCam(storage(), cam);
     if (is3D(cam)) ensure3D();
     camBanner(s);
-    updateLock(s);
+    // Till 3D med V/C/hjulet: ta musen direkt (tangenttrycket räknas som användarens gest en kort stund)
+    updateLock(s, is3D(cam));
 }
 function cycleCam() { session.pinch = null; setCam(nextCam(session.cam)); }
 
@@ -930,12 +932,14 @@ function frame(ts) {
 // ── Bilden: 3D (förstaperson/följkamera) med HUD:en ovanpå, eller 2D (överblick) ──
 // I 3D ser man långt längs gatorna: folk och bilar skapas och städas längre bort (world.manageSpawns),
 // där dimman redan tagit dem, så att de inte poppar upp mitt i bild. Lite tätare för att det inte ska kännas tomt.
-const VIEW_3D = { fps: { extra: 700, dense: 1.4 }, chase: { extra: 650, dense: 1.35 } };
+const VIEW_3D = { fps: { extra: 700, dense: 1.4 }, chase: { extra: 800, dense: 1.45 } };
 function drawFrame(s, dt) {
     const mode = shownCam(s), r = s.renderer, w = s.world;
     r.updateCamera(w, dt); // 2D-kameran följer med även i 3D: överblicken är redo direkt vid byte
     const three = is3D(mode);
     if (s.r3 && three !== s.r3Shown) { s.r3.setVisible(three); s.r3Shown = three; }
+    if (three !== s.cam3dClass) { s.overlay.classList.toggle('cam3d', three); s.cam3dClass = three; } // HUD-layouten i 3D (city.css)
+    r.zoomRate = s.pinch ? 14 : 0; // nyp: överblickens zoom följer fingrarna direkt
     if (three) {
         w.viewExtra = VIEW_3D[mode].extra; w.viewDense = VIEW_3D[mode].dense;
         s.r3.render(w, dt, mode, camOpts(s, mode));
@@ -945,7 +949,7 @@ function drawFrame(s, dt) {
         ctx.clearRect(0, 0, r.canvas.width, r.canvas.height);
         s.view3.mode = mode;
         s.hud.drawWorld3D(ctx, w, s.view3, { touch: s.touch, mode, lockHint: !s.touch && s.input.lockWanted && !s.input.locked });
-        s.hud.draw(ctx, w, s.view3, { touch: s.touch, cam: mode });
+        s.hud.draw(ctx, w, s.view3, { touch: s.touch, cam: mode, locked: !s.touch && s.input.locked });
         return;
     }
     // Utzoomat ser man längre: folk och bilar ska dyka upp utanför bild (world.manageSpawns)
