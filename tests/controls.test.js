@@ -12,6 +12,7 @@ import { generateCity } from '../src/city/map.js';
 import { mulberry32 } from '../src/city/rng.js';
 import { createPlayerState } from '../src/game/state.js';
 import { createVehicle } from '../src/city/vehicles.js';
+import { createPed } from '../src/city/ai.js';
 import { INTERIORS, circleClear, atInteriorExit } from '../src/city/interiors.js';
 import { TILE, MAP_W, MAP_H } from '../src/city/constants.js';
 
@@ -719,5 +720,43 @@ describe('Input: tangenter, fokus, pekarlås och blick', () => {
         key('Escape', 'keyup');
         key('Escape');
         expect(inp.pressed('exit')).toBe(true);
+    });
+});
+
+describe('Slag och skott vrider inte blicken (förstaperson får inte rycka)', () => {
+    const ped = (w, x, y) => {
+        const p = createPed(x, y, w.rnd, {});
+        w.peds.push(p);
+        return p;
+    };
+    it('ett slag mot någon snett framför träffar, men blicken står kvar', () => {
+        const w = openWorld();
+        w.player.angle = 0;
+        const target = ped(w, w.player.x + 16, w.player.y + 10); // ~32° till höger
+        const hp0 = target.hp;
+        w.update(DT, { ...IDLE, punch: true });
+        expect(target.hp).toBeLessThan(hp0);
+        expect(w.player.angle).toBe(0);
+    });
+    it('den som står en bit bakom träffas inte (det man inte ser slår man inte)', () => {
+        const w = openWorld();
+        w.player.angle = 0;
+        const behind = ped(w, w.player.x - 24, w.player.y);
+        const hp0 = behind.hp;
+        w.update(DT, { ...IDLE, punch: true });
+        expect(behind.hp).toBe(hp0);
+        expect(w.player.angle).toBe(0);
+    });
+    it('ett skott tar målet i siktkonen utan att vrida gubben', () => {
+        const w = openWorld();
+        w.profile.weapons = [...(w.profile.weapons || []), 'pistol'];
+        w.profile.weapon = 'pistol'; w.profile.ammo = { ...(w.profile.ammo || {}), pistol: 5 };
+        w.player.angle = -PI / 2;
+        ped(w, w.player.x + 30, w.player.y - 120); // ~14° till höger om blicken
+        w.update(DT, { ...IDLE, punch: true });
+        expect(w.bullets.length).toBeGreaterThan(0);
+        const b = w.bullets[0];
+        expect(Math.atan2(b.vy, b.vx)).not.toBeCloseTo(-PI / 2, 2); // kulan går mot målet
+        expect(w.player.angle).toBe(-PI / 2);
     });
 });

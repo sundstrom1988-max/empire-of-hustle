@@ -148,7 +148,6 @@ export function playerPunch(world) {
     p.protT = 0;
     const n = pickTarget(world, I);
     if (!n) { world.sfx('swing', 0.4); return false; }
-    p.angle = Math.atan2(n.y - p.y, n.x - p.x);
     world.sfx(w.id === 'bat' ? 'bat' : 'punch');
     hitNpc(world, n, dmg[0] + world.rnd() * (dmg[1] - dmg[0]) + (prof.strength || 0) * 3, 'player');
     return true;

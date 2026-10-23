@@ -42,6 +42,8 @@ const FIGHT_BACK = ['Råna MIG? Kom igen då!', 'Vad fan gör du?!', 'Du valde f
 const HAND_OVER = ['Okej okej, ta den!', 'Ta allt, skada mig inte!', 'Snälla, jag har barn!', 'Här, här!'];
 const MUGGER_LINES = ['Plånboken. NU.', 'Ge hit stålarna, bror!', 'Fel gata, fel tid.'];
 const COMBO_NAMES = ['KNOCKOUT!', 'DUBBEL!', 'TRIPPEL!', 'BOWLING!', 'STRIKE!!'];
+// Slag till fots: bara det som är framför dig (±80°) träffas, eller den som står tätt intill
+const MELEE_ARC = 1.4, MELEE_CLOSE = 16;
 const ROUGH_TURFS = new Set(['orten', 'industrin', 'hamnen', 'vasterort']);
 const DATE_NAMES = ['Jasmine', 'Bella', 'Nadia', 'Sanna', 'Leila', 'Moa', 'Yasmin', 'Felicia', 'Amira', 'Ronja'];
 // Tjänster inne i företagen (gratis i de du äger)
@@ -968,18 +970,22 @@ export class World {
     melee(w) {
         const p = this.player;
         const range = w.range + 4;
+        // Slaget går dit man tittar: bara det som är framför (eller tätt intill) träffas,
+        // och blicken vrids aldrig mot målet — i förstaperson skulle vyn rycka
+        const inFront = (x, y, d) => d <= MELEE_CLOSE || Math.abs(angleDiff(p.angle, Math.atan2(y - p.y, x - p.x))) <= MELEE_ARC;
         let best = null, bd = Infinity;
         for (const ped of this.peds) {
             if (ped.down > 0) continue;
             const dx = ped.x - p.x, dy = ped.y - p.y;
             const dd = Math.hypot(dx, dy);
-            if (dd > range) continue;
+            if (dd > range || !inFront(ped.x, ped.y, dd)) continue;
             const facing = Math.abs(angleDiff(p.angle, Math.atan2(dy, dx)));
-            const score = dd + (facing > 1.3 ? 14 : 0) - (ped.attack ? 10 : 0);
+            const score = dd + facing * 8 - (ped.attack ? 10 : 0);
             if (score < bd) { bd = score; best = ped; }
         }
         // En annan spelare (eller deras crew) inom räckhåll? Lite extra marginal: de syns en bit efter på nätet.
-        const rem = this.remoteInReach(p.x, p.y, range + 10);
+        let rem = this.remoteInReach(p.x, p.y, range + 10);
+        if (rem && !inFront(rem.x, rem.y, rem.d)) rem = null;
         if (rem && (!best || rem.d < bd)) {
             if (rem.prot) {
                 // Nyss tillbaka vid HQ (eller sitter i en meny): slaget biter inte — säg det
@@ -988,14 +994,12 @@ export class World {
                 return;
             }
             this.sfx(w.id === 'bat' ? 'bat' : 'punch');
-            p.angle = Math.atan2(rem.y - p.y, rem.x - p.x);
             this.net.request('hit', { target: rem.id, crew: rem.crew, kind: 'melee', dmg: w.dmg[0] + this.rnd() * (w.dmg[1] - w.dmg[0]) + (this.profile.strength || 0) * 3, src: -1 });
             this.spawnParticle('spark', rem.x, rem.y);
             return;
         }
         this.sfx(best ? (w.id === 'bat' ? 'bat' : 'punch') : 'swing', best ? 1 : 0.4);
         if (!best) return;
-        p.angle = Math.atan2(best.y - p.y, best.x - p.x);
         const civilian = !best.attack && best.type !== 'gang' && !best.cop;
         this.hitPed(best, w.dmg[0] + this.rnd() * (w.dmg[1] - w.dmg[0]) + (this.profile.strength || 0) * 3, 'player');
         if (civilian) this.crime('assault', { witnessed: this.copNear(450, true) });
@@ -1005,11 +1009,11 @@ export class World {
     shoot(id, w) {
         const p = this.player, prof = this.profile;
         prof.ammo[id] = (prof.ammo[id] || 0) - 1;
-        const aim = this.autoAim(p.x, p.y, p.angle, w.range, this.mouseAim ? 0.22 : 0.5);
-        if (aim !== null) p.angle = aim;
-        const sx = p.x + Math.cos(p.angle) * 12, sy = p.y + Math.sin(p.angle) * 12;
+        // Skottet tar närmaste mål i siktkonen, men gubben (och kameran) står kvar
+        const aim = this.autoAim(p.x, p.y, p.angle, w.range, this.mouseAim ? 0.22 : 0.5) ?? p.angle;
+        const sx = p.x + Math.cos(aim) * 12, sy = p.y + Math.sin(aim) * 12;
         for (let i = 0; i < w.pellets; i++) {
-            const a = p.angle + (this.rnd() - 0.5) * 2 * w.spread;
+            const a = aim + (this.rnd() - 0.5) * 2 * w.spread;
             this.bullets.push({ x: sx, y: sy, px: sx, py: sy, vx: Math.cos(a) * w.speed, vy: Math.sin(a) * w.speed, life: w.range / w.speed, dmg: w.dmg, from: 'player' });
         }
         p.muzzle = 0.07;
@@ -1224,7 +1228,6 @@ export class World {
         this.robCd = 0.6;
         if (!ped) { this.message('💰 Gå fram till någon för att råna dem (R).'); return false; }
         this.robCd = 1.2;
-        p.angle = Math.atan2(ped.y - p.y, ped.x - p.x);
         if (ped.robbed) { this.pedSay(ped, 'Du har redan tagit allt!', 2); return false; }
         const witnessed = this.copNear(450, true);
         const st = prof.cityStats;
