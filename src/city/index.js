@@ -958,7 +958,7 @@ function drawFrame(s, dt) {
     r.zoomRate = s.pinch ? 14 : 0; // nyp: överblickens zoom följer fingrarna direkt
     if (three) {
         const sv = spawnView(mode);
-        w.viewExtra = sv.extra; w.viewDense = sv.dense;
+        w.viewExtra = sv.extra; w.viewDense = sv.dense; w.viewBox = null;
         s.r3.render(w, dt, mode, camOpts(s, mode));
         // 2D-canvasen är genomskinlig ovanpå 3D: bara HUD:en och det som hör till platser i världen
         const ctx = r.ctx;
@@ -969,10 +969,11 @@ function drawFrame(s, dt) {
         s.hud.draw(ctx, w, s.view3, { touch: s.touch, cam: mode, locked: !s.touch && s.input.locked });
         return;
     }
-    // Utzoomat ser man längre: folk och bilar ska dyka upp utanför bild (world.manageSpawns)
-    const viewR = Math.hypot(r.w, r.h) / 2 / Math.min(r.cam.zoom, r.zTarget || 9);
-    const sv = spawnView('top', r.zoomMul || 1, viewR);
-    w.viewExtra = sv.extra; w.viewDense = sv.dense;
+    // Överblicken: det som är i bild (plus marginal) räknas som sett — där skapas och städas inget
+    // (world.manageSpawns). Samma ring och täthet som i 3D, även utzoomat.
+    w.viewExtra = 0; w.viewDense = 1;
+    const z = Math.min(r.cam.zoom, r.zTarget || 9);
+    w.viewBox = { cx: r.cam.x, cy: r.cam.y, hw: r.w / 2 / z + 60, hh: r.h / 2 / z + 60 };
     r.draw(w, dt);
     s.hud.draw(r.ctx, w, r, { touch: s.touch, cam: 'top' });
 }

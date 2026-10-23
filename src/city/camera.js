@@ -191,13 +191,11 @@ export function aimPoint(mouse, ps, player, zoom, dead = AIM_DEADZONE) {
 }
 
 // ── Hur långt bort folk och bilar skapas (world.viewExtra / world.viewDense) ──
-//  Bara överblicken utzoomad (zoomMul < 1) skjuter ut ringen: uppifrån syns hela området och inget
-//  skymmer, så nytt måste skapas bortom skärmens hörn (viewR = halva diagonalen i världs-px).
-//  Följkamera och förstaperson har samma värld som vanlig överblick (kontraktet avsnitt 1); att inget
-//  poppar upp mitt i 3D-bilden sköter världen själv: bara utom synhåll (world.js manageSpawns).
-export function spawnView(cam, zoomMul = 1, viewR = 0) {
-    if (cam !== 'top' || !(zoomMul < 1)) return { extra: 0, dense: 1 };
-    return { extra: Math.max(viewR * (1 - zoomMul), viewR + 40 - 520), dense: Math.min(1.6, 1 / (zoomMul * zoomMul)) };
+//  Samma ring och täthet i alla kameralägen och zoomnivåer (kontraktet avsnitt 1). Att inget
+//  poppar upp i bild sköter världen själv: inget skapas eller städas där spelaren ser det — fri
+//  sikt i 3D, och skärmens rektangel i överblicken (world.viewBox från index.js).
+export function spawnView() {
+    return { extra: 0, dense: 1 };
 }
 
 // ── Tryck på minikartan (canvasens pointerdown) ──

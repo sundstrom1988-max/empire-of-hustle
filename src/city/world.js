@@ -683,8 +683,8 @@ export class World {
         this.spawnT = 0.25;
         const p = this.player;
         const dist = e => Math.hypot(e.x - p.x, e.y - p.y);
-        // Överblicken utzoomad (LÅNGT) ser man längre: då ska folk och bilar dyka upp utanför bild,
-        // inte mitt i den (index.js; 0 och 1 i följkamera, förstaperson och vanlig överblick)
+        // Samma ring i alla kameralägen och zoomnivåer (viewExtra 0, viewDense 1): det som syns i
+        // bild skapas och städas inte (seen nedan), så utzoomat blir det inte glesare runt spelaren
         const ex = this.viewExtra || 0;
         const far = base => base + ex;
         const dense = this.viewDense || 1;
@@ -694,7 +694,10 @@ export class World {
         // övertoning (taxi, dejt) — annars skulle parkeringarna runt en stillastående spelare stå tomma.
         const blind = !this.spawnedOnce || !!this.fade;
         this.spawnedOnce = true;
-        const seen = e => !blind && lineClear(this.city, e.x, e.y, p.x, p.y);
+        // Överblicken ser allt i bild (index.js viewBox, världskoordinater); i 3D är sikten fri sikt längs gatan
+        const box = this.viewBox;
+        const inBox = e => !!box && Math.abs(e.x - box.cx) < box.hw && Math.abs(e.y - box.cy) < box.hh;
+        const seen = e => !blind && (inBox(e) || lineClear(this.city, e.x, e.y, p.x, p.y));
         const gone = (e, d) => d > SIGHT_FAR || !seen(e); // utom synhåll, eller bortom 3D-dimman
 
         // Städa bort det som är långt borta (polisens bilar sköter dispatchern om nedan)
@@ -748,7 +751,7 @@ export class World {
                 // (så att en parkering längs gatan man kör på hinner fyllas innan man är där)
                 const d = Math.hypot(spot.x - p.x, spot.y - p.y);
                 const hidden = d >= far(700) && d <= far(1300) && !seen(spot);
-                if (!hidden && !(d >= far(SIGHT_HAZE) && d <= far(2300) && seen(spot))) return;
+                if (!hidden && !(d >= far(SIGHT_HAZE) && d <= far(2300) && seen(spot) && !inBox(spot))) return; // dimman finns bara i 3D
                 const v = createVehicle(pickTrafficType(districtAt(this.city, spot.x, spot.y), this.rnd), spot.x, spot.y, spot.angle, { parked: true, rnd: this.rnd });
                 v.spotKey = i;
                 this.parkedSpots.set(i, v);
@@ -1852,7 +1855,7 @@ export class World {
         }
         if (!v && m.guns?.door && this.enterZone('door-guns', m.guns.door.x, m.guns.door.y, 20)) this.enterInterior('gunshop', m.guns);
         if (!v && m.stripclub?.door && this.enterZone('door-stripclub', m.stripclub.door.x, m.stripclub.door.y, 20)) this.enterInterior('stripclub', m.stripclub);
-        if (v && m.club && this.enterZone('club', m.club.x, m.club.y, 70, speed < 220)) this.visitClub();
+        if (v && m.club && this.enterZone('club', m.club.x, m.club.y, 70, speed < 220, '🍾 Sakta ner vid entrén — hon hoppar inte in i farten.')) this.visitClub();
         if (!v && m.club && this.enterZone('club-foot', m.club.x, m.club.y, 26)) this.enterNightclub();
         // Gå in genom dörren (mot husväggen). Ditt eget gömställe har garage du kan köra in i.
         for (const d of this.doors()) {
@@ -2165,7 +2168,8 @@ export class World {
         const m = this.city.markers;
         const list = [['🏠 HQ', m.home], ['💎 Club Diamant', m.stripclub], ['🔫 Pang-Pelle', m.guns], ['🏦 Banken', m.bank], ['🍾 Nattklubben', m.club]];
         for (const h of m.houses || []) if (this.ownsHouse(h)) list.push([`🏡 ${h.name}`, h]);
-        const p = this.player;
+        // Inne i ett rum är spelarens x/y rummets koordinater: priset räknas från dörren ute
+        const I = this.interior, p = I ? I.door : this.player;
         return list.filter(([, o]) => o).map(([label, o], i) => {
             const t = o.door ? { x: o.door.x - DX[o.door.side] * 30, y: o.door.y - DY[o.door.side] * 30 } : { x: o.x, y: o.y };
             const price = Math.round((120 + Math.hypot(t.x - p.x, t.y - p.y) / 12) / 10) * 10;
@@ -2993,6 +2997,8 @@ export class World {
             if (!spot) continue;
             const dx = spot.x - p.x, dy = spot.y - p.y, d = Math.hypot(dx, dy);
             if (d < 500 || (d < Math.max(view(1000), SIGHT_FAR) && lineClear(this.city, spot.x, spot.y, p.x, p.y))) continue;   // syns inte dyka upp
+            const box = this.viewBox;                                                                  // överblicken: inte i bild
+            if (box && Math.abs(spot.x - box.cx) < box.hw && Math.abs(spot.y - box.cy) < box.hh) continue;
             if (sp > 60 && (dx * pv.vx + dy * pv.vy) / (d * sp) > 0.3 && d < 1400) continue;          // inte framför bilen
             const dId = districtAt(this.city, spot.x, spot.y);
             if (all.filter(v => districtAt(this.city, v.x, v.y) === dId).length >= C.districtCars) continue;

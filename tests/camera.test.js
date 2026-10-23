@@ -692,14 +692,37 @@ describe('blicken syns varje bildruta, även över 60 Hz', () => {
 // viewDense 1,4) — nästan inga bilar inom 1000 px i följkamera/förstaperson mot ~11 i överblick.
 // Nu är världen densamma i alla lägen, och inget civilt skapas eller städas där spelaren ser det.
 describe('folk och bilar: samma värld i alla kameralägen', () => {
-    it('följkamera och förstaperson skjuter inte ut ringen (bara överblick LÅNGT gör det)', () => {
+    it('ingen kamera eller zoomnivå skjuter ut ringen — inte heller överblick LÅNGT', () => {
         expect(spawnView('fps')).toEqual({ extra: 0, dense: 1 });
         expect(spawnView('chase')).toEqual({ extra: 0, dense: 1 });
         expect(spawnView('top', 1, 700)).toEqual({ extra: 0, dense: 1 });
         expect(spawnView('top', 1.35, 500)).toEqual({ extra: 0, dense: 1 });
-        const far = spawnView('top', 0.66, 1100);
-        expect(far.extra).toBeGreaterThan(0);
-        expect(far.dense).toBeGreaterThan(1);
+        expect(spawnView('top', 0.66, 1100)).toEqual({ extra: 0, dense: 1 });
+    });
+
+    // Omkörningen efter granskningen: i överblick LÅNGT var det 2,9 bilar inom 1500 px mot ~16,7 i de
+    // andra lägena, för att ringen sköts ut. Nu räknas skärmen (viewBox) som sett i stället.
+    it('överblick LÅNGT: inget skapas i bild, och det blir lika tätt runt spelaren som i 3D', () => {
+        const run = (box) => {
+            const w = new World(city, createPlayerState('kimit'), { round: 2, rnd: mulberry32(5) });
+            w.state = 'play';
+            const p = w.player;
+            w.viewExtra = 0; w.viewDense = 1; w.viewBox = box ? { cx: p.x, cy: p.y, hw: box.hw, hh: box.hh } : null;
+            let inView = 0;
+            const before = new Set();
+            for (let i = 0; i < 25 * 60; i++) {
+                w.vehicles.forEach(v => before.add(v));
+                w.update(1 / 60, { throttle: 0, steer: 0, handbrake: false, fwd: 0, strafe: 0, mx: 0, my: 0, run: false, action: false, horn: false, punch: false, attack: false, rob: false, weapon: false });
+                if (box && i > 60) for (const v of w.vehicles) if (!before.has(v) && Math.abs(v.x - p.x) < box.hw && Math.abs(v.y - p.y) < box.hh) inView++;
+                if (box) { w.viewBox.cx = p.x; w.viewBox.cy = p.y; }
+            }
+            const near = w.vehicles.filter(v => v.driver === 'traffic' && Math.hypot(v.x - p.x, v.y - p.y) < 1500).length;
+            return { inView, near };
+        };
+        const langt = run({ hw: 1050, hh: 600 });   // ungefär överblick LÅNGT i 1280×720
+        const fps = run(null);
+        expect(langt.inView).toBe(0);
+        expect(langt.near).toBeGreaterThanOrEqual(Math.floor(fps.near * 0.6));
     });
 
     const city = generateCity(1337);

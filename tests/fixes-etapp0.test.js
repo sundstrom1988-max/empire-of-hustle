@@ -133,3 +133,23 @@ describe('Zoner med fartvillkor', () => {
         expect(slow.paid).toBe(150);
     });
 });
+
+// Omkörningen av checklistan: taxipriset inifrån ett rum räknades på rummets koordinater (340–380 kr
+// oavsett var i stan rummet låg). Det ska vara samma pris som ute vid dörren.
+describe('taxi inifrån ett rum: priset räknas från dörren', () => {
+    it('samma pris inne som precis utanför dörren', async () => {
+        const { World } = await import('../src/city/world.js');
+        const { generateCity } = await import('../src/city/map.js');
+        const { mulberry32 } = await import('../src/city/rng.js');
+        const { createPlayerState } = await import('../src/game/state.js');
+        const city = generateCity(1337);
+        const w = new World(city, createPlayerState('kimit'), { round: 2, rnd: mulberry32(4) });
+        const m = city.markers;
+        w.enterInterior('stripclub', m.stripclub);
+        expect(w.interior).toBeTruthy();
+        const inside = w.taxiDestinations().map(d => d.price);
+        w.exitInterior();
+        const outside = w.taxiDestinations().map(d => d.price);
+        inside.forEach((pr, i) => expect(Math.abs(pr - outside[i])).toBeLessThanOrEqual(10));
+    });
+});
