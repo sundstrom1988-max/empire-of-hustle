@@ -1,7 +1,8 @@
-import { CHARACTERS, SHOPS, EVENTS, PITCH_SUCCESS, PITCH_FAIL, CARS } from '../data/gameData.js';
-import { gameState, currentPlayer, formatNum, createPlayerState, saveGame } from '../game/state.js';
-import { playSound, spawnParticles, showToast, startMusic } from '../utils/effects.js';
-import { syncState } from '../multiplayer/sync.js';
+import { SHOPS, EVENTS, PITCH_SUCCESS, PITCH_FAIL, CARS } from '../data/gameData.js';
+import { PROPERTIES } from '../multiplayer/authority.js';
+import { gameState, currentPlayer, formatNum, saveGame, jailPlayer, isMyTurn } from '../game/state.js';
+import { playSound, spawnParticles, showToast } from '../utils/effects.js';
+import { syncState, isRoomHost } from '../multiplayer/sync.js';
 import { checkEvidence, showHeistButton } from '../features/gargamel.js';
 
 // ── HUD ──
@@ -9,13 +10,31 @@ export function updateHUD() {
     const p = currentPlayer();
     if (!p) return;
     const el = (id) => document.getElementById(id);
-    if (el('hud-name')) el('hud-name').textContent = `${p.char.icon} ${p.char.name}`;
+    if (el('hud-name')) el('hud-name').textContent = `${p.char.icon} ${p.char.name}${p.inJail ? ' 🔒' : ''}`;
     if (el('hud-money')) el('hud-money').textContent = `💰 ${formatNum(p.money)}`;
     if (el('hud-rep')) el('hud-rep').textContent = `⭐ ${p.rep}`;
     if (el('hud-round')) el('hud-round').textContent = `📅 Runda ${gameState.round}`;
     if (el('hud-biz')) el('hud-biz').textContent = `🏢 ${p.owned.length}`;
     const container = el('hud-name');
     if (container) container.style.color = p.char.color;
+    updateTurnLock();
+}
+
+// Visar vems tur det är och spärrar knapparna när det inte är din tur.
+export function updateTurnLock() {
+    const screen = document.getElementById('screen-game');
+    const banner = document.getElementById('wait-banner');
+    if (!screen || !banner) return;
+    const p = currentPlayer();
+    let msg = '';
+    if (gameState.gameOver) msg = '🏁 Spelet är slut';
+    else if (gameState.aiThinking && p) msg = `🤖 ${p.char.name} gör sitt drag...`;
+    else if (!isMyTurn() && p) msg = `⏳ Väntar på ${p.char.icon} ${p.char.name}...`;
+    screen.classList.toggle('locked', !!msg);
+    // Online är stan gemensam: man kan åka dit även när det är någon annans tur
+    screen.classList.toggle('shared-city', !!gameState.isOnline && !gameState.gameOver);
+    banner.textContent = msg;
+    banner.style.display = msg ? 'block' : 'none';
 }
 
 // ── Tabs ──
@@ -31,7 +50,7 @@ export function switchTab(id, btn) {
 export function renderEmpire() {
     const p = currentPlayer();
     const el = document.getElementById('empire-list');
-    if (!el) return;
+    if (!el || !p) return;
     if (p.owned.length === 0) {
         el.innerHTML = '<p style="color:rgba(255,255,255,0.3);text-align:center;padding:40px 0;">Inga företag ännu! Gå till Butik och köp. 🛒</p>';
         return;
@@ -194,10 +213,7 @@ export function policeRaid() {
     p.rep = Math.max(0, p.rep - lostRep);
     p.owned = [];
     p.levels = {};
-    p.inJail = true;
-    p.jailRoundsLeft = 3;
-    p.jailReason = '🚨 RAZZIA — Polisen tog allt!';
-    p.jailRecord.push({ deal: '🚨 RAZZIA', round: gameState.round });
+    jailPlayer(p, '🚨 RAZZIA — Polisen tog allt!', 3);
 
     // Show dramatic overlay
     const overlay = document.getElementById('overlay-event');
@@ -255,7 +271,7 @@ export function calcIncome(biz, level, player) {
 export function renderShop() {
     const p = currentPlayer();
     const el = document.getElementById('shop-grid');
-    if (!el) return;
+    if (!el || !p) return;
     el.innerHTML = SHOPS.map(s => {
         const owned = p.owned.includes(s.id);
         const afford = p.money >= s.price;
@@ -272,8 +288,9 @@ export function renderShop() {
 export function buyShop(id) {
     const p = currentPlayer();
     const biz = SHOPS.find(s => s.id === id);
-    if (p.money < biz.price || p.owned.includes(id)) return;
+    if (!biz || p.money < biz.price || p.owned.includes(id)) return;
     p.money -= biz.price; p.owned.push(id); p.levels[id] = 1;
+    p.totalSpent = (p.totalSpent || 0) + biz.price;
     playSound('coin'); updateHUD(); renderShop(); renderEmpire();
     showToast(`${biz.icon} Köpte ${biz.name}!`);
     spawnParticles([biz.icon, '💰', '🔥'], 12);
@@ -283,6 +300,7 @@ export function buyShop(id) {
 // ── Pitch ──
 export function doPitch() {
     const p = currentPlayer();
+    if (p.inJail) { showToast('🔒 Inga investerare besöker häktet!'); return; }
     if (p.pitchesThisRound >= gameState.maxPitchesPerRound) { showToast('Max pitchar denna runda!'); return; }
     p.pitchesThisRound++;
     let chance = 0.45;
@@ -338,14 +356,25 @@ export function rollDice() {
 }
 
 // ── Turn System ──
-export function endTurn() {
+// fromAI = true när AI:n avslutar sin egen tur (den går förbi tur-låset).
+export function endTurn(fromAI = false) {
+    if (gameState.gameOver) return;
     const p = currentPlayer();
+    if (!p) return;
+    if (!fromAI && (gameState.aiThinking || !isMyTurn())) return;
+    // Spärren gäller den som själv är ute i stan. Online kör värden AI-turerna även när värden är
+    // i stan: annars fastnade AI:ns tur (och ensureAITurn körde om den vid varje synk).
+    if (!fromAI && window.city?.isOpen?.()) { showToast('🚗 Åk hem från stan först!'); return; }
     // Collect income
     let totalIncome = 0;
     p.owned.forEach(id => {
         const biz = SHOPS.find(s => s.id === id);
         totalIncome += calcIncome(biz, p.levels[id] || 1, p);
     });
+    // Delade fastigheter i stan (ägaren bestäms av värden)
+    for (const [prop, own] of Object.entries(gameState.cityOwners || {})) {
+        if (own && own.owner === p.charKey && PROPERTIES[prop]) totalIncome += PROPERTIES[prop].income;
+    }
     p.money += totalIncome;
     p.totalEarned = (p.totalEarned || 0) + totalIncome;
     if (totalIncome > 0) showToast(`💰 Inkomst: +${formatNum(totalIncome)}`);
@@ -355,38 +384,73 @@ export function endTurn() {
     // Jail countdown
     if (p.inJail) {
         p.jailRoundsLeft--;
-        if (p.jailRoundsLeft <= 0) { p.inJail = false; showToast(`🔓 ${p.char.name} är fri!`); }
+        if (p.jailRoundsLeft <= 0) { p.inJail = false; p.jailRoundsLeft = 0; showToast(`🔓 ${p.char.name} är fri!`); }
     }
     // Reset round limits
     p.dealsThisRound = 0; p.rollsThisRound = 0; p.pitchesThisRound = 0;
+    p.missionsThisRound = 0; p.fencedThisRound = 0; p.goodsBoughtThisRound = 0; p.dateThisRound = false;
+    p.cityPickupsTaken = []; p.cityCollected = []; p.cityDone = [];
     // Check evidence timers (Gargamel heist)
     checkEvidence();
+    // Check win before handing the turn over
+    if (p.money >= gameState.winAmount) {
+        gameState.gameOver = true;
+        gameState.winnerKey = p.charKey;
+        saveGame();
+        updateHUD();
+        showWin(p);
+        if (gameState.isOnline) syncState(true);
+        return;
+    }
     // Next player
+    gameState.turnSeq = (gameState.turnSeq || 0) + 1;
     gameState.currentPlayerIdx = (gameState.currentPlayerIdx + 1) % gameState.players.length;
     if (gameState.currentPlayerIdx === 0) gameState.round++;
-    // Check AI
     const next = currentPlayer();
-    if (next.isAI) { setTimeout(() => doAITurn(), 1000); }
-    // Check win
-    if (p.money >= gameState.winAmount) { showWin(p); return; }
+    // Online kör alltid värden AI-turer, så de inte fastnar om en gäst går
+    const runAIHere = next.isAI && (!gameState.isOnline || isRoomHost());
+    if (runAIHere) gameState.aiThinking = true;
     updateHUD(); renderEmpire(); renderShop();
+    window.game?.refreshUI?.();
     // Refresh heist button visibility
     showHeistButton();
     saveGame();
     updateTurnBar();
-    if (gameState.isOnline) syncState();
+    if (gameState.isOnline) syncState(true);
+    if (runAIHere) setTimeout(() => runAITurn(), 900);
+}
+
+// Värden startar AI-turen om den är på tur och ingen kör den
+export function ensureAITurn() {
+    const p = currentPlayer();
+    if (!p || !p.isAI || gameState.aiThinking || gameState.gameOver) return;
+    if (gameState.isOnline && !isRoomHost()) return;
+    runAITurn();
 }
 
 export function updateTurnBar() {
     const el = document.getElementById('turn-indicator');
     if (!el) return;
     const p = currentPlayer();
+    if (!p) return;
+    if (gameState.players.length < 2) { el.style.display = 'none'; return; }
     el.style.display = 'block';
     el.innerHTML = `<span>${p.char.icon} ${p.char.name}s tur</span> · <span>Runda ${gameState.round}</span>`;
     el.style.borderColor = p.char.color;
 }
 
+// Visar vinnaren för alla, även online-spelare som bara fick vinsten via synk
+let winShown = false;
+export function showWinIfOver() {
+    if (!gameState.gameOver || !gameState.winnerKey) return;
+    const p = gameState.players.find(pl => pl.charKey === gameState.winnerKey);
+    if (p) showWin(p);
+}
+
 function showWin(p) {
+    gameState.gameOver = true;
+    if (winShown) return;
+    winShown = true;
     playSound('win');
     spawnParticles([p.char.icon, '👑', '🏆', '💎', '🎉'], 30);
     const overlay = document.getElementById('overlay-event');
@@ -402,22 +466,48 @@ function showWin(p) {
 }
 
 // ── AI ──
-function doAITurn() {
+export function runAITurn() {
     const p = currentPlayer();
+    if (!p || !p.isAI || gameState.gameOver) { gameState.aiThinking = false; updateTurnLock(); return; }
+    gameState.aiThinking = true;
+    updateTurnLock();
     showToast(`🤖 ${p.char.name} tänker...`);
     setTimeout(() => {
-        // Buy cheapest affordable shop
-        const canBuy = SHOPS.filter(s => !p.owned.includes(s.id) && p.money >= s.price).sort((a, b) => a.price - b.price);
-        if (canBuy.length > 0 && Math.random() < 0.6) {
-            const biz = canBuy[0]; p.money -= biz.price; p.owned.push(biz.id); p.levels[biz.id] = 1;
-            showToast(`🤖 ${p.char.name} köpte ${biz.name}!`);
+        try {
+            if (p.inJail) {
+                // Betala borgen om det finns råd, annars sitt av tiden
+                if (p.bail > 0 && p.money > p.bail * 3) {
+                    p.money -= p.bail; p.inJail = false; p.jailRoundsLeft = 0;
+                    showToast(`🤖 ${p.char.name} betalade borgen!`);
+                }
+            } else {
+                // Uppgradera billigaste företaget om det är lönsamt, annars köp nytt
+                const canBuy = SHOPS.filter(s => !p.owned.includes(s.id) && p.money >= s.price).sort((a, b) => b.price - a.price);
+                if (canBuy.length > 0 && Math.random() < 0.7) {
+                    const biz = canBuy[0]; p.money -= biz.price; p.owned.push(biz.id); p.levels[biz.id] = 1;
+                    showToast(`🤖 ${p.char.name} köpte ${biz.name}!`);
+                } else if (p.owned.length > 0 && Math.random() < 0.5) {
+                    const id = p.owned[Math.floor(Math.random() * p.owned.length)];
+                    const biz = SHOPS.find(s => s.id === id);
+                    const lv = p.levels[id] || 1;
+                    const cost = Math.floor(biz.price * lv * 0.6);
+                    if (p.money >= cost * 1.5) { p.money -= cost; p.levels[id] = lv + 1; showToast(`🤖 ${p.char.name} uppgraderade ${biz.name}!`); }
+                }
+                // Roll dice
+                if (Math.random() < 0.7) {
+                    const pool = EVENTS.filter(e => e.type !== 'razzia');
+                    const ev = pool[Math.floor(Math.random() * pool.length)];
+                    const amt = Math.floor(ev.minAmt + Math.random() * (ev.maxAmt - ev.minAmt));
+                    if (ev.type === 'gain') p.money += amt;
+                    else if (ev.type === 'loss') p.money = Math.max(0, p.money - amt);
+                    else if (ev.type === 'rep') p.rep += amt;
+                    else if (ev.type === 'rep_loss') p.rep = Math.max(0, p.rep - amt);
+                }
+            }
+        } catch (e) {
+            console.error('AI-fel:', e);
         }
-        // Roll dice
-        if (Math.random() < 0.7) {
-            const ev = EVENTS[Math.floor(Math.random() * EVENTS.length)];
-            const amt = Math.floor(ev.minAmt + Math.random() * (ev.maxAmt - ev.minAmt));
-            if (ev.type === 'gain') p.money += amt; else if (ev.type === 'loss') p.money = Math.max(0, p.money - amt);
-        }
-        endTurn();
-    }, 1500);
+        gameState.aiThinking = false;
+        endTurn(true);
+    }, 1400);
 }

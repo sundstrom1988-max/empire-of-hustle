@@ -3,11 +3,11 @@
 //  Syns BARA för Gargamel. Andra vet inget.
 // ═══════════════════════════════════════════
 
-import { gameState, currentPlayer, formatNum } from '../game/state.js';
+import { gameState, currentPlayer, formatNum, jailPlayer } from '../game/state.js';
 import { CHARACTERS, SHOPS } from '../data/gameData.js';
 import { updateHUD } from '../game/core.js';
 import { playSound, showToast, spawnParticles } from '../utils/effects.js';
-import { syncState } from '../multiplayer/sync.js';
+import { syncState, sendEffect } from '../multiplayer/sync.js';
 
 // ── Mystiska meddelanden som offret ser ──
 const MYSTERIOUS_STEAL = [
@@ -213,10 +213,7 @@ export function doHeist(type) {
     if (!success) {
         // Misslyckad — 20% chans att hamna i häktet
         if (Math.random() < 0.20) {
-            p.inJail = true;
-            p.jailRoundsLeft = 2;
-            p.jailReason = 'Misstänkt för mörka affärer';
-            p.jailRecord.push({ deal: 'Mörka affärer', round: gameState.round });
+            jailPlayer(p, 'Misstänkt för mörka affärer', 2);
             showToast('🚔 Gripen! Misstänkt för mörka affärer...');
             playSound('jail');
         } else {
@@ -238,6 +235,7 @@ export function doHeist(type) {
             const pct = 0.10 + Math.random() * 0.15; // 10-25%
             stolenValue = Math.floor(target.money * pct);
             target.money -= stolenValue;
+            sendEffect(target.charKey, { money: -stolenValue });
             p.money += stolenValue;
             p.totalEarned = (p.totalEarned || 0) + stolenValue;
             mysteriousMsg = MYSTERIOUS_STEAL[Math.floor(Math.random() * MYSTERIOUS_STEAL.length)];
@@ -247,6 +245,7 @@ export function doHeist(type) {
         }
         case 'sabotage': {
             target.sabotagedRounds = (target.sabotagedRounds || 0) + 1;
+            sendEffect(target.charKey, { sabotagedRounds: 1 });
             stolenValue = Math.floor(target.money * 0.05); // for sweep cost calc
             mysteriousMsg = MYSTERIOUS_SABOTAGE[Math.floor(Math.random() * MYSTERIOUS_SABOTAGE.length)];
             spawnParticles(['🌑', '🏢', '💥'], 6);
@@ -256,6 +255,7 @@ export function doHeist(type) {
         case 'smear': {
             const repLoss = 3 + Math.floor(Math.random() * 4); // 3-6
             target.rep = Math.max(0, target.rep - repLoss);
+            sendEffect(target.charKey, { rep: -repLoss });
             stolenValue = repLoss * 200; // for sweep cost calc
             mysteriousMsg = MYSTERIOUS_SMEAR[Math.floor(Math.random() * MYSTERIOUS_SMEAR.length)];
             spawnParticles(['🌑', '⭐', '👻'], 6);

@@ -1,0 +1,622 @@
+/* ═══════════════════════════════════════════
+   STAN — overlay, touchkontroller och dialoger
+   ═══════════════════════════════════════════ */
+
+body.city-open {
+    overflow: hidden;
+}
+
+body.city-open .phone-toggle,
+body.city-open .cbd-leaf {
+    display: none !important;
+}
+
+.city-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
+    background: #000;
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-touch-callout: none;
+}
+
+.city-canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+}
+
+.city-topbar {
+    position: absolute;
+    top: 8px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    gap: 6px;
+    z-index: 2;
+}
+
+.city-btn {
+    font-family: 'Bungee', Impact, sans-serif;
+    font-size: 12px;
+    color: #fff;
+    background: rgba(0, 0, 0, 0.6);
+    border: 2px solid rgba(255, 210, 63, 0.6);
+    border-radius: 6px;
+    padding: 6px 10px;
+    min-height: 34px;
+}
+
+.city-home {
+    color: #111;
+    background: var(--gta-yellow, #ffd23f);
+    border-color: #000;
+}
+
+/* ── Touch ── */
+.city-touch {
+    position: absolute;
+    inset: auto 0 0 0;
+    height: 0;
+    z-index: 2;
+}
+
+.ct-pad {
+    position: absolute;
+    bottom: 18px;
+    display: grid;
+    gap: 10px;
+}
+
+/* Höger tumme: 👊 störst i hörnet, E bredvid, småknapparna i en båge ovanför */
+.ct-right {
+    right: 12px;
+    grid-template-columns: repeat(4, 48px);
+    grid-template-rows: 48px 84px;
+    grid-template-areas:
+        "rob wpn crew horn"
+        "act act hb hb";
+    column-gap: 8px;
+    row-gap: 10px;
+    align-items: end;
+    justify-items: center;
+}
+
+.ct-pad button {
+    width: 48px;
+    height: 48px;
+    padding: 0;
+    border-radius: 50%;
+    border: 3px solid rgba(255, 255, 255, 0.35);
+    background: rgba(20, 20, 30, 0.45);
+    color: #fff;
+    font-family: 'Bungee', Impact, sans-serif;
+    font-size: 18px;
+    line-height: 1;
+    touch-action: none;
+    transition: none;
+}
+
+.ct-pad button.pressed {
+    background: rgba(255, 210, 63, 0.55);
+    border-color: var(--gta-yellow, #ffd23f);
+    transform: scale(0.94);
+}
+
+.ct-right .ct-rob { grid-area: rob; transform: translateY(14px); }
+.ct-right .ct-wpn { grid-area: wpn; transform: translateY(2px); }
+.ct-right .ct-crew { grid-area: crew; }
+.ct-right .ct-horn { grid-area: horn; font-size: 17px; }
+.ct-right .ct-rob.pressed { transform: translateY(14px) scale(0.94); }
+.ct-right .ct-wpn.pressed { transform: translateY(2px) scale(0.94); }
+.ct-right .ct-act { grid-area: act; width: 68px; height: 68px; justify-self: end; font-size: 26px; background: rgba(34, 197, 94, 0.45); }
+.ct-right .ct-hb { grid-area: hb; width: 84px; height: 84px; justify-self: end; font-size: 30px; }
+.ct-right .ct-hb.ct-fight { background: rgba(239, 68, 68, 0.5); border-color: rgba(254, 202, 202, 0.7); font-size: 34px; }
+.ct-right .ct-hb.pressed { background: rgba(255, 210, 63, 0.6); border-color: var(--gta-yellow, #ffd23f); }
+
+/* ── Joystick: flytande, nere till vänster ── */
+.ct-stick {
+    position: absolute;
+    left: 0;
+    bottom: 0;
+    width: 45%;
+    height: 60%;
+    z-index: 1;
+    touch-action: none;
+}
+
+.ct-stick-base {
+    --r: 62px;
+    position: absolute;
+    left: calc(var(--r) + 22px);            /* vila: där tummen brukar sitta */
+    top: calc(100% - var(--r) - 30px);
+    width: calc(var(--r) * 2);
+    height: calc(var(--r) * 2);
+    margin: calc(var(--r) * -1) 0 0 calc(var(--r) * -1);
+    border-radius: 50%;
+    border: 3px solid rgba(255, 255, 255, 0.35);
+    background:
+        url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100' fill='none' stroke='white' stroke-width='5' stroke-linecap='round' stroke-linejoin='round' opacity='.55'%3E%3Cpath d='M42 13l8-7 8 7M42 87l8 7 8-7M13 42l-7 8 7 8M87 42l7 8-7 8'/%3E%3C/svg%3E") center / 100% no-repeat,
+        radial-gradient(circle, rgba(20, 20, 30, 0.2) 0 42%, rgba(20, 20, 30, 0.5) 72%, rgba(255, 255, 255, 0.1) 100%);
+    box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.35), inset 0 0 18px rgba(0, 0, 0, 0.45);
+    opacity: 0.38;
+    pointer-events: none;
+    transition: opacity 0.2s, left 0.12s ease-out, top 0.12s ease-out;
+}
+
+.ct-stick-base.on {
+    opacity: 1;
+    transition: none;
+}
+
+/* Fullt utslag = spring */
+.ct-stick-base.run {
+    border-color: var(--gta-yellow, #ffd23f);
+    box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.35), 0 0 16px rgba(255, 210, 63, 0.55), inset 0 0 18px rgba(0, 0, 0, 0.45);
+}
+
+.ct-stick-knob {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 58px;
+    height: 58px;
+    margin: -29px 0 0 -29px;
+    border-radius: 50%;
+    border: 3px solid rgba(255, 255, 255, 0.7);
+    background: radial-gradient(circle at 36% 30%, rgba(255, 255, 255, 0.5), rgba(55, 55, 70, 0.85) 70%);
+    box-shadow: 0 3px 0 rgba(0, 0, 0, 0.5), 0 0 0 2px rgba(0, 0, 0, 0.35);
+    transition: transform 0.12s ease-out;
+}
+
+.ct-stick-base.on .ct-stick-knob {
+    border-color: var(--gta-yellow, #ffd23f);
+    background: radial-gradient(circle at 36% 30%, #fff3b0, rgba(255, 210, 63, 0.85) 65%);
+    transition: none;
+}
+
+/* ── Titt-joysticken: höger tumme, bara i 3D (förstaperson/följkamera) ──
+   Fast bas ovanför knappklungan. Utslaget vrider blicken så länge den hålls ute. */
+.ct-look {
+    display: none;
+    position: absolute;
+    right: 14px;
+    bottom: 196px;
+    width: 112px;
+    height: 112px;
+    z-index: 2;
+    touch-action: none;
+}
+
+.city-overlay.cam3d .ct-look { display: block; }
+
+.ct-look-base {
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    border: 3px solid rgba(255, 255, 255, 0.35);
+    background:
+        url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100' fill='none' stroke='white' stroke-width='5' stroke-linecap='round' stroke-linejoin='round' opacity='.5'%3E%3Cpath d='M30 22a34 34 0 0 1 40 0M30 78a34 34 0 0 0 40 0M22 30a34 34 0 0 0 0 40M78 30a34 34 0 0 1 0 40'/%3E%3C/svg%3E") center / 100% no-repeat,
+        radial-gradient(circle, rgba(20, 20, 30, 0.2) 0 42%, rgba(20, 20, 30, 0.5) 72%, rgba(255, 255, 255, 0.1) 100%);
+    box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.35), inset 0 0 18px rgba(0, 0, 0, 0.45);
+    opacity: 0.55;
+    pointer-events: none;
+}
+
+.ct-look-base.on { opacity: 1; border-color: #7dd3fc; }
+
+.ct-look-knob {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 46px;
+    height: 46px;
+    margin: -23px 0 0 -23px;
+    border-radius: 50%;
+    border: 3px solid rgba(255, 255, 255, 0.7);
+    background: radial-gradient(circle at 36% 30%, rgba(255, 255, 255, 0.5), rgba(55, 55, 70, 0.85) 70%);
+    box-shadow: 0 3px 0 rgba(0, 0, 0, 0.5), 0 0 0 2px rgba(0, 0, 0, 0.35);
+    transition: transform 0.12s ease-out;
+}
+
+.ct-look-knob::after {
+    content: '👁️';
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    font-size: 18px;
+}
+
+.ct-look-base.on .ct-look-knob {
+    border-color: #7dd3fc;
+    background: radial-gradient(circle at 36% 30%, #e0f2fe, rgba(56, 189, 248, 0.85) 65%);
+    transition: none;
+}
+
+/* Liggande telefon: låg skärm — knapparna i en rad så minikartan får plats ovanför */
+@media (max-height: 500px) and (orientation: landscape) {
+    .ct-stick { width: 40%; }
+    .ct-right {
+        grid-template-columns: repeat(4, 46px) 68px 84px;
+        grid-template-rows: 84px;
+        grid-template-areas: "rob wpn crew horn act hb";
+        align-items: center;
+    }
+    .ct-pad button { width: 46px; height: 46px; }
+    .ct-right .ct-rob, .ct-right .ct-wpn { transform: none; }
+    .ct-right .ct-rob.pressed, .ct-right .ct-wpn.pressed { transform: scale(0.94); }
+    .ct-right .ct-act { width: 68px; height: 68px; align-self: end; }
+    .ct-right .ct-hb { width: 84px; height: 84px; }
+    /* Till vänster om minikartan (x W−104 … W−12, y 118 … 226 med etiketten) och ovanför
+       knappraden (överkant H−102): förut låg den över kartans nedre del, och ett tryck där
+       träffade joysticken i stället för kartan */
+    .ct-look { width: 92px; height: 92px; right: 118px; bottom: 112px; }
+}
+
+/* Små telefoner: lite mindre joystick och knappar så de inte möts */
+@media (max-width: 370px) {
+    .ct-stick-base { --r: 54px; }
+    .ct-stick-knob { width: 50px; height: 50px; margin: -25px 0 0 -25px; }
+    .ct-right { grid-template-columns: repeat(4, 44px); grid-template-rows: 44px 76px; column-gap: 6px; }
+    .ct-pad button { width: 44px; height: 44px; font-size: 16px; }
+    .ct-right .ct-act { width: 62px; height: 62px; }
+    .ct-right .ct-hb { width: 76px; height: 76px; }
+    .ct-look { width: 100px; height: 100px; bottom: 178px; }
+}
+
+/* ── Modaler ── */
+.city-modal {
+    position: absolute;
+    inset: 0;
+    z-index: 5;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.55);
+    padding: 16px;
+}
+
+.city-modal[hidden] {
+    display: none;
+}
+
+.city-card {
+    width: min(520px, 100%);
+    max-height: 100%;
+    overflow-y: auto;
+    background: #111217;
+    border: 3px solid #000;
+    outline: 2px solid var(--gta-yellow, #ffd23f);
+    border-radius: 8px;
+    box-shadow: 8px 8px 0 #000;
+    padding: 22px 20px;
+    text-align: center;
+    color: #fff;
+}
+
+.city-logo {
+    font-family: 'Bungee', Impact, sans-serif;
+    font-size: clamp(34px, 9vw, 56px);
+    line-height: 1;
+    color: var(--gta-yellow, #ffd23f);
+    text-shadow: -3px -3px 0 #000, 3px -3px 0 #000, -3px 3px 0 #000, 3px 3px 0 #000, 6px 7px 0 rgba(0, 0, 0, 0.6);
+    transform: rotate(-2deg);
+    margin-bottom: 12px;
+}
+
+.city-logo.small {
+    font-size: 36px;
+}
+
+.city-tag {
+    font-size: 14px;
+    line-height: 1.5;
+    color: rgba(255, 255, 255, 0.8);
+    margin-bottom: 14px;
+}
+
+.city-help {
+    font-size: 12px;
+    line-height: 1.8;
+    color: rgba(255, 255, 255, 0.6);
+    background: rgba(255, 255, 255, 0.04);
+    border-radius: 6px;
+    padding: 10px;
+    margin-bottom: 16px;
+}
+
+.city-help b {
+    color: var(--gta-yellow, #ffd23f);
+    font-family: 'Bungee', Impact, sans-serif;
+    font-weight: 400;
+}
+
+.city-row {
+    display: flex;
+    gap: 10px;
+    justify-content: center;
+    flex-wrap: wrap;
+}
+
+.city-go {
+    font-size: 16px;
+    padding: 12px 22px;
+}
+
+.city-go small {
+    font-size: 10px;
+    opacity: 0.6;
+}
+
+.city-go.alt {
+    background: #e5e7eb;
+}
+
+.city-go:disabled {
+    background: #444;
+    color: #999;
+    cursor: not-allowed;
+}
+
+.city-warn {
+    margin-top: 12px;
+    color: #f87171;
+    font-size: 13px;
+}
+
+/* Telefonsamtal från gänget */
+.city-card.phone {
+    outline-color: var(--gang);
+    text-align: left;
+}
+
+.phone-head {
+    font-family: 'Bungee', Impact, sans-serif;
+    font-size: 14px;
+    color: var(--gang);
+    margin-bottom: 6px;
+}
+
+.phone-head span {
+    color: rgba(255, 255, 255, 0.6);
+}
+
+.phone-title {
+    font-family: 'Bungee', Impact, sans-serif;
+    font-size: 26px;
+    color: var(--gta-yellow, #ffd23f);
+    text-shadow: 2px 2px 0 #000;
+    margin-bottom: 10px;
+}
+
+.phone-brief {
+    font-family: 'VT323', 'Courier New', monospace;
+    font-size: 21px;
+    line-height: 1.2;
+    color: #bef264;
+    background: #0c1a08;
+    border: 2px solid #4d7c0f;
+    border-radius: 4px;
+    padding: 10px 12px;
+    margin-bottom: 12px;
+}
+
+.phone-reward {
+    font-family: 'Bungee', Impact, sans-serif;
+    font-size: 15px;
+    margin-bottom: 16px;
+}
+
+/* Smala skärmar: knapparna under HUD-kolumnen så de inte krockar med pengarna */
+@media (max-width: 560px) {
+    .city-topbar {
+        top: 196px;
+        left: 10px;
+        transform: none;
+    }
+
+    .city-btn {
+        font-size: 11px;
+        padding: 5px 8px;
+    }
+}
+
+/* Gängmedlemskap i telefonen */
+.phone-member {
+    font-family: 'Bungee', Impact, sans-serif;
+    font-size: 12px;
+    color: rgba(255, 255, 255, 0.75);
+    background: rgba(255, 255, 255, 0.05);
+    border-left: 3px solid var(--gang);
+    padding: 8px 10px;
+    margin-bottom: 14px;
+}
+
+.phone-member.join {
+    color: var(--gang);
+}
+
+.city-go.join {
+    background: var(--gang);
+    color: #111;
+}
+
+/* Pang-Pelles vapenlåda */
+.gun-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-bottom: 14px;
+}
+
+.gun-row {
+    display: grid;
+    grid-template-columns: 34px 1fr auto;
+    align-items: center;
+    gap: 10px;
+    background: rgba(255, 255, 255, 0.05);
+    border-left: 3px solid var(--gang);
+    border-radius: 4px;
+    padding: 8px 10px;
+}
+
+.gun-icon {
+    font-size: 24px;
+    text-align: center;
+}
+
+.gun-name {
+    font-family: 'Bungee', Impact, sans-serif;
+    font-size: 13px;
+}
+
+.gun-name small {
+    display: block;
+    font-family: system-ui, sans-serif;
+    font-size: 11px;
+    color: rgba(255, 255, 255, 0.6);
+}
+
+.gun-row .city-go {
+    font-size: 12px;
+    padding: 8px 12px;
+    white-space: nowrap;
+}
+
+/* Inne på ett ställe */
+.place-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-bottom: 14px;
+}
+
+.place-act {
+    text-align: left;
+    font-size: 14px;
+    padding: 10px 14px;
+}
+
+.place-act small {
+    display: block;
+    margin-top: 3px;
+    font-family: system-ui, sans-serif;
+    font-size: 11px;
+    opacity: 0.75;
+}
+
+/* Mus: sikte i stan (inte på mobil) */
+.city-overlay:not(.touch) .city-canvas { cursor: crosshair; }
+
+/* 3D (förstaperson/följkamera) på smal skärm: knapparna som en kolumn vid högerkanten under
+   den mindre minikartan (hud.js minimapRect compact) — inte en rad tvärs över bilden */
+@media (max-width: 560px) {
+    .city-overlay.cam3d .city-topbar {
+        top: 246px;
+        left: auto;
+        right: 8px;
+        flex-direction: column;
+        align-items: flex-end;
+        gap: 6px;
+    }
+
+    .city-overlay.cam3d .city-btn {
+        min-width: 40px;
+        min-height: 32px;
+        padding: 4px 7px;
+    }
+}
+
+/* ── Pausmenyn: kameraläge och blick ── */
+.city-settings {
+    text-align: left;
+    background: rgba(255, 255, 255, 0.04);
+    border-radius: 6px;
+    padding: 10px 12px;
+    margin-bottom: 12px;
+}
+
+.cs-title {
+    font-family: 'Bungee', Impact, sans-serif;
+    font-size: 13px;
+    color: var(--gta-yellow, #ffd23f);
+    margin-bottom: 8px;
+}
+
+.cs-title small {
+    font-family: system-ui, sans-serif;
+    font-size: 11px;
+    color: rgba(255, 255, 255, 0.55);
+    margin-left: 6px;
+}
+
+.cs-cams {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 6px;
+    margin-bottom: 10px;
+}
+
+.cs-cam {
+    font-family: 'Bungee', Impact, sans-serif;
+    font-size: 11px;
+    color: #fff;
+    background: rgba(0, 0, 0, 0.5);
+    border: 2px solid rgba(255, 255, 255, 0.25);
+    border-radius: 6px;
+    padding: 8px 4px;
+    min-height: 42px;
+    cursor: pointer;
+}
+
+.cs-cam.on {
+    background: var(--gta-yellow, #ffd23f);
+    color: #111;
+    border-color: #000;
+}
+
+.cs-row {
+    display: grid;
+    grid-template-columns: 1fr 1.2fr 44px;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    color: rgba(255, 255, 255, 0.8);
+    margin: 6px 0;
+}
+
+.cs-row input[type="range"] {
+    width: 100%;
+    accent-color: var(--gta-yellow, #ffd23f);
+}
+
+.cs-row b {
+    font-family: 'Bungee', Impact, sans-serif;
+    font-weight: 400;
+    color: var(--gta-yellow, #ffd23f);
+    text-align: right;
+}
+
+.cs-check {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    color: rgba(255, 255, 255, 0.8);
+    margin: 8px 0 2px;
+}
+
+.cs-check input {
+    width: 18px;
+    height: 18px;
+    accent-color: var(--gta-yellow, #ffd23f);
+}
+
+@media (max-width: 560px) {
+    .cs-row { grid-template-columns: 1fr 44px; row-gap: 2px; }
+    .cs-row input[type="range"] { grid-column: 1 / -1; grid-row: 2; }
+    .cs-cam { font-size: 10px; }
+}

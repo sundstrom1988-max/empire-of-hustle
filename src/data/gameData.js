@@ -1,6 +1,6 @@
 // Game data constants
 export const CHARACTERS = {
-    kimit: { name: 'Dr. KimIT', icon: '👨‍⚕️', img: '1207.png', color: '#ff4fd8', ability: 'income_boost', abilityVal: 0.20, desc: '+20% inkomst' },
+    kimit: { name: 'Dr. KimIT', icon: '👨‍⚕️', img: null, color: '#ff4fd8', ability: 'income_boost', abilityVal: 0.20, desc: '+20% inkomst' },
     gargamel: { name: 'Gargamel', icon: '🧙‍♂️', img: null, color: '#7c3aed', ability: 'steal', abilityVal: 0.10, desc: 'Stjäl 10% var 5:e runda' },
     mehmet: { name: 'Mehmet', icon: '🥙', img: null, color: '#22c55e', ability: 'pitch_boost', abilityVal: 0.15, desc: '+15% pitch-chans' },
     juan: { name: 'Juan', icon: '🌮', img: null, color: '#f97316', ability: 'market_luck', abilityVal: 0.15, desc: '-15% risk svarta marknaden' },
@@ -109,15 +109,6 @@ export const CARS = [
         ]
     }
 ];
-
-export const SOUNDS = {
-    bgMusic: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-8.mp3',
-    laugh: 'https://www.myinstants.com/media/sounds/sitcom-laughing-sound-effect.mp3',
-    coin: 'https://www.myinstants.com/media/sounds/coins.mp3',
-    dice: 'https://www.myinstants.com/media/sounds/shake-and-roll-dice.mp3',
-    jail: 'https://www.myinstants.com/media/sounds/metal-pipe.mp3',
-    win: 'https://www.myinstants.com/media/sounds/tada-fanfare-a.mp3'
-};
 
 export const PHONE_DEALS = [
     { id: 'tip', name: 'Insider-tips via SMS', desc: 'Anonym källa skickar börs-info', cost: 400, reward: [800, 2500], risk: 15 },

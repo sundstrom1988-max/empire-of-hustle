@@ -1,0 +1,716 @@
+/* ═══════════════════════════════════════════
+   SMS — mörkt telefon-UI (följer .phone-ui i components.css)
+   Prefix sms- så inget krockar med .phone-sms / .chat-msg
+   ═══════════════════════════════════════════ */
+
+.sms-app,
+.sms-overlay,
+.sms-toast {
+    --sms-bg: rgba(10, 10, 20, 0.985);
+    --sms-card: rgba(255, 255, 255, 0.05);
+    --sms-card-hover: rgba(255, 255, 255, 0.09);
+    --sms-line: rgba(255, 255, 255, 0.1);
+    --sms-dim: rgba(255, 255, 255, 0.55);
+    --sms-faint: rgba(255, 255, 255, 0.34);
+    --sms-accent: var(--mehmet, #22c55e);
+    --sms-out-from: var(--kimit, #ff4fd8);
+    --sms-out-to: var(--gargamel, #7c3aed);
+    --sms-warn: var(--gold, #fbbf24);
+    --sms-bad: var(--danger, #ef4444);
+    --sms-font: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    --sms-head-font: 'Bungee', Impact, 'Arial Black', sans-serif;
+    font-family: var(--sms-font);
+    color-scheme: dark;
+}
+
+/* ── App-yta (samma markup i telefonen och i overlayen) ── */
+.sms-app {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    min-width: 0;
+    color: #fff;
+    font-size: 14px;
+    line-height: 1.35;
+    text-align: left;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.sms-app button,
+.sms-app input {
+    font-family: inherit;
+}
+
+.sms-app button:focus-visible,
+.sms-app input:focus-visible {
+    outline: 2px solid var(--sms-accent);
+    outline-offset: 2px;
+}
+
+/* Inuti imperie-telefonen: fast höjd, ryms i .phone-ui (max 520px) */
+.sms-embedded {
+    height: clamp(240px, calc(70vh - 150px), 400px);
+    border: 1px solid var(--sms-line);
+    border-radius: 14px;
+    background: rgba(255, 255, 255, 0.02);
+    overflow: hidden;
+}
+
+.sms-in-overlay {
+    flex: 1;
+    height: 100%;
+}
+
+/* ── Huvud ── */
+.sms-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 0 0 auto;
+    min-height: 56px;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--sms-line);
+}
+
+.sms-embedded .sms-head {
+    min-height: 48px;
+    padding: 6px 10px;
+}
+
+.sms-head-main {
+    flex: 1;
+    min-width: 0;
+}
+
+.sms-title {
+    font-family: var(--sms-head-font);
+    font-size: 16px;
+    letter-spacing: 0.5px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.sms-name {
+    font-weight: 700;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.sms-sub {
+    font-size: 11px;
+    color: var(--sms-dim);
+}
+
+.sms-icon-btn {
+    flex: 0 0 auto;
+    width: 40px;
+    height: 40px;
+    display: grid;
+    place-items: center;
+    border: none;
+    border-radius: 50%;
+    background: var(--sms-card);
+    color: #fff;
+    font-size: 16px;
+    cursor: pointer;
+}
+
+.sms-icon-btn:hover {
+    background: var(--sms-card-hover);
+}
+
+.sms-chip-btn {
+    flex: 0 0 auto;
+    padding: 8px 12px;
+    border: 1px solid var(--sms-line);
+    border-radius: 999px;
+    background: var(--sms-card);
+    color: #fff;
+    font-size: 12px;
+    font-weight: 700;
+    white-space: nowrap;
+    cursor: pointer;
+}
+
+.sms-chip-btn:hover {
+    background: var(--sms-card-hover);
+}
+
+.sms-chip-btn.on {
+    border-color: rgba(239, 68, 68, 0.5);
+    color: #fca5a5;
+}
+
+/* ── Listor ── */
+.sms-body,
+.sms-msgs {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+}
+
+.sms-body {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 8px;
+}
+
+.sms-caption {
+    padding: 6px 6px 2px;
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--sms-faint);
+}
+
+.sms-hint {
+    padding: 18px 12px;
+    text-align: center;
+    font-size: 13px;
+    color: var(--sms-dim);
+}
+
+.sms-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid var(--sms-line);
+    border-radius: 14px;
+    background: var(--sms-card);
+    color: #fff;
+    text-align: left;
+    cursor: pointer;
+}
+
+.sms-row:hover {
+    background: var(--sms-card-hover);
+}
+
+/* Kontaktlistan: offline = nedtonad */
+.sms-row.contact.off {
+    opacity: 0.55;
+}
+
+.sms-preview.on {
+    color: var(--sms-accent);
+}
+
+.sms-row.unread {
+    box-shadow: inset 3px 0 0 var(--sms-accent);
+}
+
+.sms-row.unread .sms-name,
+.sms-row.unread .sms-preview {
+    color: #fff;
+    font-weight: 700;
+}
+
+.sms-avatar {
+    position: relative;
+    flex: 0 0 auto;
+    width: 44px;
+    height: 44px;
+    display: grid;
+    place-items: center;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.07);
+    font-size: 26px;
+    line-height: 1;
+}
+
+.sms-avatar-sm {
+    width: 38px;
+    height: 38px;
+    font-size: 22px;
+}
+
+.sms-dot {
+    position: absolute;
+    right: -1px;
+    bottom: -1px;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    border: 2px solid #0a0a14;
+    background: #6b7280;
+}
+
+.sms-avatar.on .sms-dot {
+    background: var(--sms-accent);
+}
+
+.sms-row-main {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.sms-row-top,
+.sms-row-bottom {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    min-width: 0;
+}
+
+.sms-time {
+    flex: 0 0 auto;
+    font-size: 11px;
+    color: var(--sms-faint);
+}
+
+.sms-preview {
+    min-width: 0;
+    font-size: 12.5px;
+    color: var(--sms-dim);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.sms-badge {
+    flex: 0 0 auto;
+    min-width: 20px;
+    height: 20px;
+    padding: 0 6px;
+    display: grid;
+    place-items: center;
+    border-radius: 10px;
+    background: var(--sms-bad);
+    color: #fff;
+    font-size: 11px;
+    font-weight: 800;
+}
+
+/* ── Samtal ── */
+.sms-msgs {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 12px 10px;
+}
+
+.sms-day {
+    align-self: center;
+    margin: 6px 0;
+    padding: 3px 10px;
+    border-radius: 999px;
+    background: var(--sms-card);
+    font-size: 10.5px;
+    color: var(--sms-faint);
+}
+
+.sms-msg {
+    display: flex;
+    flex-direction: column;
+    max-width: 82%;
+    animation: sms-msg-in 0.2s ease-out;
+}
+
+.sms-msg.in {
+    align-self: flex-start;
+    align-items: flex-start;
+}
+
+.sms-msg.out {
+    align-self: flex-end;
+    align-items: flex-end;
+}
+
+.sms-bubble {
+    padding: 8px 13px;
+    border-radius: 18px;
+    font-size: 14.5px;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+}
+
+.sms-msg.in .sms-bubble {
+    border: 1px solid var(--sms-line);
+    border-bottom-left-radius: 6px;
+    background: rgba(255, 255, 255, 0.08);
+}
+
+.sms-msg.out .sms-bubble {
+    border-bottom-right-radius: 6px;
+    background: linear-gradient(135deg, var(--sms-out-from), var(--sms-out-to));
+    box-shadow: 0 2px 10px rgba(124, 58, 237, 0.3);
+}
+
+.sms-msg.out.pending .sms-bubble {
+    opacity: 0.7;
+}
+
+.sms-msg.out.failed .sms-bubble {
+    border: 1px solid rgba(239, 68, 68, 0.55);
+    background: rgba(239, 68, 68, 0.16);
+    box-shadow: none;
+}
+
+.sms-meta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 3px 8px;
+    margin-top: 3px;
+    padding: 0 4px;
+    font-size: 10.5px;
+    color: var(--sms-faint);
+}
+
+.sms-msg.in .sms-meta {
+    justify-content: flex-start;
+}
+
+.sms-state.ok {
+    color: var(--sms-accent);
+}
+
+.sms-state.bad,
+.sms-why {
+    color: var(--sms-warn);
+}
+
+.sms-retry {
+    padding: 2px 4px;
+    border: none;
+    background: none;
+    color: var(--sms-warn);
+    font-size: 11px;
+    font-weight: 700;
+    text-decoration: underline;
+    cursor: pointer;
+}
+
+/* ── Skrivfält ── */
+.sms-foot {
+    flex: 0 0 auto;
+    padding: 6px 10px 10px;
+    border-top: 1px solid var(--sms-line);
+    background: rgba(0, 0, 0, 0.22);
+}
+
+.sms-foot-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    min-height: 18px;
+    padding: 0 6px 4px;
+    font-size: 11px;
+}
+
+.sms-error {
+    color: var(--sms-bad);
+    font-weight: 700;
+}
+
+.sms-count {
+    margin-left: auto;
+    color: var(--sms-faint);
+}
+
+.sms-count.warn {
+    color: var(--sms-warn);
+}
+
+.sms-count.over {
+    color: var(--sms-bad);
+    font-weight: 800;
+}
+
+.sms-compose {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.sms-input {
+    flex: 1;
+    min-width: 0;
+    padding: 11px 15px;
+    border: 1px solid var(--sms-line);
+    border-radius: 22px;
+    background: rgba(255, 255, 255, 0.07);
+    color: #fff;
+    font-size: 16px; /* 16px hindrar iOS från att zooma in */
+    outline: none;
+}
+
+.sms-input::placeholder {
+    color: var(--sms-faint);
+}
+
+.sms-input:focus {
+    border-color: var(--sms-accent);
+}
+
+.sms-app .sms-input:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.22);
+}
+
+.sms-send {
+    flex: 0 0 auto;
+    width: 44px;
+    height: 44px;
+    display: grid;
+    place-items: center;
+    border: none;
+    border-radius: 50%;
+    background: var(--sms-accent);
+    color: #fff;
+    font-size: 18px;
+    cursor: pointer;
+}
+
+.sms-send:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+}
+
+.sms-foot-blocked {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 10px 12px;
+}
+
+.sms-blocked-text {
+    font-size: 12px;
+    color: var(--sms-dim);
+}
+
+/* ── Tomt läge ── */
+.sms-empty {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 28px 24px;
+    text-align: center;
+    color: var(--sms-dim);
+}
+
+.sms-empty-icon {
+    font-size: 48px;
+    line-height: 1;
+}
+
+.sms-empty strong {
+    color: #fff;
+    font-size: 15px;
+}
+
+.sms-empty p {
+    max-width: 280px;
+    font-size: 12.5px;
+}
+
+/* ── Overlay (Stan och andra helskärmsvyer) ── */
+.sms-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 3000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 16px;
+    touch-action: manipulation;
+}
+
+.sms-backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.62);
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+}
+
+.sms-panel {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    width: min(420px, 100%);
+    height: min(680px, 100%);
+    overflow: hidden;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 26px;
+    background: var(--sms-bg);
+    backdrop-filter: blur(30px);
+    -webkit-backdrop-filter: blur(30px);
+    box-shadow: 0 24px 90px rgba(0, 0, 0, 0.85);
+    animation: sms-pop 0.28s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* Mobil: hela skärmen */
+@media (max-width: 520px) {
+    .sms-overlay {
+        padding: 0;
+    }
+
+    .sms-panel {
+        width: 100%;
+        height: 100%;
+        border: none;
+        border-radius: 0;
+        padding-top: env(safe-area-inset-top);
+        padding-bottom: env(safe-area-inset-bottom);
+    }
+}
+
+/* Låg skärm (mobil på sidan, eller tangentbord uppe): helskärm och tätare rader */
+@media (max-height: 520px) {
+    .sms-overlay {
+        padding: 0;
+    }
+
+    .sms-panel {
+        width: min(560px, 100%);
+        height: 100%;
+        border-radius: 0;
+    }
+
+    .sms-head {
+        min-height: 46px;
+        padding: 4px 10px;
+    }
+
+    .sms-icon-btn {
+        width: 34px;
+        height: 34px;
+    }
+
+    .sms-avatar-sm {
+        width: 32px;
+        height: 32px;
+        font-size: 19px;
+    }
+
+    .sms-msgs {
+        padding: 6px 10px;
+    }
+
+    .sms-foot {
+        padding: 2px 10px 6px;
+    }
+
+    .sms-foot-row {
+        min-height: 14px;
+        padding-bottom: 1px;
+    }
+
+    .sms-input {
+        padding: 8px 14px;
+    }
+
+    .sms-send {
+        width: 38px;
+        height: 38px;
+    }
+}
+
+/* ── Notis ── */
+.sms-toast {
+    position: fixed;
+    top: max(8px, env(safe-area-inset-top));
+    left: 50%;
+    z-index: 3100;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    max-width: min(340px, calc(100vw - 24px));
+    padding: 7px 14px 7px 10px;
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    border-radius: 16px;
+    background: rgba(12, 12, 24, 0.96);
+    box-shadow: 0 8px 30px rgba(0, 0, 0, 0.6);
+    color: #fff;
+    font-size: 13px;
+    line-height: 1.25;
+    transform: translateX(-50%);
+    cursor: pointer;
+    animation: sms-toast-in 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.sms-toast-icon {
+    flex: 0 0 auto;
+    font-size: 22px;
+    line-height: 1;
+}
+
+.sms-toast-body {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+}
+
+.sms-toast-name {
+    font-weight: 800;
+    font-size: 12px;
+}
+
+.sms-toast-text {
+    color: var(--sms-dim);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+@keyframes sms-pop {
+    from {
+        opacity: 0;
+        transform: translateY(24px) scale(0.97);
+    }
+
+    to {
+        opacity: 1;
+        transform: none;
+    }
+}
+
+@keyframes sms-toast-in {
+    from {
+        opacity: 0;
+        transform: translate(-50%, -14px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translate(-50%, 0);
+    }
+}
+
+@keyframes sms-msg-in {
+    from {
+        opacity: 0;
+        transform: translateY(6px);
+    }
+
+    to {
+        opacity: 1;
+        transform: none;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+
+    .sms-panel,
+    .sms-toast,
+    .sms-msg {
+        animation: none;
+    }
+}
