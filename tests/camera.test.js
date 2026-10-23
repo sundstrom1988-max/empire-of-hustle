@@ -4,8 +4,10 @@ import {
     loadIndex, saveIndex, ZOOM_KEY, TOP_ORDER, TOP_ZOOMS, CHASE_ZOOMS, wheelView, chainPos, CHAIN_LEN, viewLabel,
     lookTurn, stepPitch, PITCH_MAX, LOOK_RAD, TOUCH_LOOK, aimPoint, AIM_DEADZONE, stickToWorld, followYaw, chaseRate, controlYaw,
     createFreeLook, stepFreeLook, resetFreeLook, FREE_HOLD, FREE_MAX_YAW, eTarget, frameStats, wrapAngle,
-    pinchView, pinchSettle, pinchU, TOP_MUL, CHASE_DIST, FPS_U, nearestIndex, loadZoomX, saveZoomX, ZOOMX_KEY
+    pinchView, pinchSettle, pinchU, TOP_MUL, CHASE_DIST, FPS_U, nearestIndex, loadZoomX, saveZoomX, ZOOMX_KEY,
+    lookStickDelta, LOOK_STICK_YAW, LOOK_STICK_PITCH
 } from '../src/city/camera.js';
+import { stickPedals } from '../src/city/input.js';
 import { World } from '../src/city/world.js';
 import { generateCity } from '../src/city/map.js';
 import { mulberry32 } from '../src/city/rng.js';
@@ -301,12 +303,37 @@ describe('följkamerans riktning', () => {
         expect(y).toBeGreaterThan(-Math.PI);
     });
 
-    it('touch: kameran svänger bara in när man går framåt, inte åt sidan', () => {
-        expect(chaseRate({ touch: true, stickActive: true, stickUp: 0 })).toBe(0);
-        expect(chaseRate({ touch: true, stickActive: true, stickUp: 1 })).toBeCloseTo(2.6, 9);
-        expect(chaseRate({ touch: true, stickActive: false })).toBe(0);
+    it('touch till fots: kameran svänger aldrig in av sig själv (bara titt-joysticken/fingret vrider)', () => {
+        expect(chaseRate({ touch: true })).toBe(0);
+        expect(chaseRate({ touch: true, room: true })).toBe(0);
         expect(chaseRate({ car: true, touch: true })).toBeGreaterThan(0);
         expect(chaseRate({})).toBeGreaterThan(5);
+    });
+
+    // Fel från riktig mobil: tummen höll joysticken lite snett (upp-höger) och gubben gick i en
+    // stor cirkel åt höger — kameran svängde in bakom honom, och joysticken räknas från kameran.
+    it('touch: en snett hållen joystick ger en rak väg, inte en cirkel åt höger', () => {
+        const city = generateCity(1337);
+        const w = new World({ ...city, tiles: new Uint8Array(city.tiles.length) }, createPlayerState('kimit'), { round: 2, rnd: mulberry32(3) });
+        w.manageSpawns = () => { };
+        w.peds = []; w.vehicles = []; w.pickups = [];
+        const p = w.player;
+        Object.assign(p, { x: 3000, y: 3000, vx: 0, vy: 0, angle: -Math.PI / 2 });
+        let camYaw = -Math.PI / 2;
+        const tilt = 20 * Math.PI / 180;                        // tummen 20° till höger om rakt upp
+        const sx = Math.sin(tilt), sy = -Math.cos(tilt);
+        const dirs = [];
+        for (let i = 0; i < 360; i++) {                         // 6 s
+            const yaw = controlYaw('chase', p, camYaw);
+            const m = stickToWorld(sx, sy, 'chase', yaw);
+            const x0 = p.x, y0 = p.y;
+            w.update(1 / 60, { throttle: 0, steer: 0, handbrake: false, fwd: 0, strafe: 0, mx: m.mx, my: m.my, faceMove: true, run: false, action: false, horn: false, punch: false, attack: false, rob: false, weapon: false });
+            camYaw = followYaw(camYaw, p.angle, 1 / 60, chaseRate({ touch: true }));
+            if (i % 60 === 59) dirs.push(Math.atan2(p.y - y0, p.x - x0));
+        }
+        const spread = Math.max(...dirs.map(d => Math.abs(wrapAngle(d - dirs[0]))));
+        expect(spread).toBeLessThan(0.01);                      // samma riktning hela vägen
+        expect(Math.abs(wrapAngle(dirs[0] - (-Math.PI / 2 + tilt)))).toBeLessThan(0.02); // dit tummen pekar
     });
 });
 
@@ -511,5 +538,33 @@ describe('förstaperson inomhus: inga väggar att se igenom', () => {
         const corner = Math.hypot(near, hh, hw);
         const w = new World(generateCity(1337), createPlayerState('kimit'), { round: 2, rnd: mulberry32(1) });
         expect(corner).toBeLessThan(w.player.r);             // ögat är mitt i gubben: väggen är minst r bort
+    });
+});
+
+describe('titt-joysticken och bilens pedaler (mobil i 3D)', () => {
+    it('fullt utslag åt höger vrider ~LOOK_STICK_YAW rad/s; mitten och släppt = inget', () => {
+        let yaw = 0;
+        for (let i = 0; i < 60; i++) yaw += lookTurn(lookStickDelta({ active: true, x: 1, y: 0, mag: 1 }, 1 / 60).dx, 1, true);
+        expect(yaw).toBeCloseTo(LOOK_STICK_YAW, 6);
+        expect(lookStickDelta({ active: false, x: 1, y: 0, mag: 1 }, 1 / 60)).toEqual({ dx: 0, dy: 0 });
+        expect(lookStickDelta({ active: true, x: 0, y: 0, mag: 0 }, 1 / 60)).toEqual({ dx: 0, dy: 0 });
+    });
+    it('litet utslag vrider långsamt (fin kontroll), vänster = negativt, upp = titta upp', () => {
+        const small = lookTurn(lookStickDelta({ active: true, x: 0.3, y: 0, mag: 0.3 }, 1).dx, 1, true);
+        expect(small).toBeGreaterThan(0);
+        expect(small).toBeLessThan(LOOK_STICK_YAW * 0.3);
+        expect(lookStickDelta({ active: true, x: -0.5, y: 0, mag: 0.5 }, 1 / 60).dx).toBeLessThan(0);
+        const up = lookStickDelta({ active: true, x: 0, y: -1, mag: 1 }, 1);
+        expect(stepPitch(0, up.dy, 1, false, true)).toBeCloseTo(Math.min(PITCH_MAX, LOOK_STICK_PITCH), 6);
+    });
+    it('pedaler: upp = gas, ned = broms/back, sidled = ratt — oberoende av kameran', () => {
+        expect(stickPedals({ active: true, x: 0, y: -1, mag: 1 })).toEqual({ throttle: 1, steer: 0 });
+        const back = stickPedals({ active: true, x: 0, y: 0.8, mag: 0.8 });
+        expect(back.throttle).toBeLessThan(-0.8);
+        const r = stickPedals({ active: true, x: 0.7, y: -0.7, mag: 1 });
+        expect(r.throttle).toBeGreaterThan(0.7);
+        expect(r.steer).toBeGreaterThan(0.6);
+        expect(stickPedals({ active: true, x: -0.7, y: -0.7, mag: 1 }).steer).toBeLessThan(-0.6);
+        expect(stickPedals({ active: false, x: 1, y: 1, mag: 1 })).toEqual({ throttle: 0, steer: 0 });
     });
 });

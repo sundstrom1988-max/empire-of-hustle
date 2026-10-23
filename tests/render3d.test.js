@@ -153,14 +153,28 @@ describe('chase camera', () => {
         expect(Math.hypot(out.x - 1000, out.z)).toBeLessThan(Math.hypot(free.x - 1000, free.z));
     });
 
-    it('swings round a wall, and in a tight spot stops just in front of it', () => {
+    it('stays straight behind a wall (no sideways swing), and in a tight spot stops just in front of it', () => {
         const w = fakeWorld({ angle: 0 });
         const wallBehind = (x) => x < 900;
         const out = chaseCamera({}, cameraSubject(w), 0, {}, false, wallBehind, {});
         expect(out.x).toBeGreaterThanOrEqual(900);              // inte inne i huset
+        expect(out.y).toBeCloseTo(800, 6);                      // rakt bakom: gubben mitt i bild
         const tight = (x, y) => Math.hypot(x - 1000, y - 800) > 60;
         const t = chaseCamera({}, cameraSubject(w), 0, {}, false, tight, {});
         expect(Math.hypot(t.x - 1000, t.y - 800)).toBeLessThan(60);
+    });
+
+    // Fel från riktig mobil: kameran svängde runt ett hus och blev kvar på sidan när vägen blev
+    // fri, så gubben gick ute vid högerkanten av bilden
+    it('is straight behind again once the way is free (no sticky offset)', () => {
+        const w = fakeWorld({ angle: 0 });
+        const st = {};
+        const side = (x, y) => x < 940 && y > 790;              // hus snett bakom
+        for (let i = 0; i < 60; i++) chaseCamera(st, cameraSubject(w), 1 / 60, {}, false, side, {});
+        let out;
+        for (let i = 0; i < 120; i++) out = chaseCamera(st, cameraSubject(w), 1 / 60, {}, false, () => false, {});
+        expect(out.y).toBeCloseTo(800, 3);
+        expect(out.ly).toBeCloseTo(800, 3);
     });
 
     it('rises over a low building instead of diving into the player', () => {

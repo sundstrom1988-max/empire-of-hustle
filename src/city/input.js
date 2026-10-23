@@ -43,6 +43,19 @@ export function stickWalk(stick) {
     return { mx: stick.x / mag, my: stick.y / mag, run: mag > STICK_RUN };
 }
 
+// I bilen i 3D (förstaperson/följkamera): gaspedal och ratt, relativt bilen. Upp = gas,
+// ned = broms/back, åt sidan = ratt. "Kör dit du drar" fungerar bara när kameran står
+// still (överblicken) — bakom en bil som svänger skulle målet vrida sig med kameran.
+export function stickPedals(stick) {
+    const mag = stick?.active ? stick.mag || 0 : 0;
+    if (!(mag > 0)) return { throttle: 0, steer: 0 };
+    const sx = stick.x, sy = stick.y;
+    return {
+        throttle: clamp(-sy * 1.15, -1, 1),
+        steer: clamp(Math.sign(sx) * Math.pow(Math.abs(sx), 1.2) * 1.25, -1, 1)
+    };
+}
+
 // I bilen: "kör dit du drar". Bilen svänger mot joystickens riktning och gasar
 // efter utslaget. Rakt bakåt i låg fart = backa (med bakänden mot dit man drar).
 // speed = bilens fart framåt (negativ när den backar). maxSpeed (valfri): ett
@@ -391,6 +404,47 @@ export class Input {
             this.zone.addEventListener('lostpointercapture', this.onStickUp);
             this.zone.addEventListener('contextmenu', this.onContextZone = e => e.preventDefault());
         } else this.resetStick = () => { };
+
+        // Titt-joysticken (mobil, höger tumme, bara i 3D): fast bas. Utslaget vrider blicken
+        // så länge den hålls (staden räknar om det med lookStickDelta).
+        this.lookStick = { x: 0, y: 0, mag: 0, active: false };
+        this.lookStickId = null;
+        this.lookZone = root.querySelector('.ct-look');
+        if (this.lookZone) {
+            const base = this.lookZone.querySelector('.ct-look-base');
+            const knob = this.lookZone.querySelector('.ct-look-knob');
+            const move = (e) => {
+                const b = base.getBoundingClientRect();
+                const r = Math.max(24, b.width / 2 - 8);
+                const dx = e.clientX - (b.left + b.width / 2), dy = e.clientY - (b.top + b.height / 2);
+                Object.assign(this.lookStick, stickVector(dx, dy, r, 0.12));
+                const k = stickKnob(dx, dy, r);
+                knob.style.transform = `translate(${k.x.toFixed(1)}px, ${k.y.toFixed(1)}px)`;
+            };
+            this.onLookDown = (e) => {
+                e.preventDefault();
+                if (this.lookStickId !== null) return;
+                this.lookStickId = e.pointerId;
+                try { this.lookZone.setPointerCapture(e.pointerId); } catch (err) { /* äldre webbläsare */ }
+                base.classList.add('on');
+                this.lookStick.active = true;
+                move(e);
+            };
+            this.onLookMove = (e) => { if (e.pointerId === this.lookStickId) { e.preventDefault(); move(e); } };
+            this.onLookUp = (e) => { if (e.pointerId === this.lookStickId) this.resetLookStick(); };
+            this.resetLookStick = () => {
+                this.lookStickId = null;
+                Object.assign(this.lookStick, { x: 0, y: 0, mag: 0, active: false });
+                base.classList.remove('on');
+                knob.style.transform = '';
+            };
+            this.lookZone.addEventListener('pointerdown', this.onLookDown);
+            this.lookZone.addEventListener('pointermove', this.onLookMove);
+            this.lookZone.addEventListener('pointerup', this.onLookUp);
+            this.lookZone.addEventListener('pointercancel', this.onLookUp);
+            this.lookZone.addEventListener('lostpointercapture', this.onLookUp);
+            this.lookZone.addEventListener('contextmenu', this.onContextLook = e => e.preventDefault());
+        } else this.resetLookStick = () => { };
     }
 
     has(k) { return this.held.has(k); }
@@ -476,6 +530,7 @@ export class Input {
         this.edges.clear();
         this.buttons?.forEach(b => b.classList?.remove('pressed'));
         this.resetStick?.();
+        this.resetLookStick?.();
         this.lookId = null;
         this.look.dx = this.look.dy = 0;
         this.touches?.clear();
@@ -551,7 +606,16 @@ export class Input {
             this.zone.removeEventListener('lostpointercapture', this.onStickUp);
             this.zone.removeEventListener('contextmenu', this.onContextZone);
         }
+        if (this.lookZone) {
+            this.lookZone.removeEventListener('pointerdown', this.onLookDown);
+            this.lookZone.removeEventListener('pointermove', this.onLookMove);
+            this.lookZone.removeEventListener('pointerup', this.onLookUp);
+            this.lookZone.removeEventListener('pointercancel', this.onLookUp);
+            this.lookZone.removeEventListener('lostpointercapture', this.onLookUp);
+            this.lookZone.removeEventListener('contextmenu', this.onContextLook);
+        }
         this.resetStick();
+        this.resetLookStick();
         this.held.clear();
         this.edges.clear();
     }

@@ -207,14 +207,27 @@ export function followYaw(yaw, target, dt, rate, turn = 0) {
     return wrapAngle(y + angleDiff(y, target) * clamp(dt * rate, 0, 1));
 }
 // Hur snabbt följkameran svänger in bakom: bilen följs mjukt; till fots med mus följer den
-// blicken nästan direkt. Med joysticken (touch) svänger den bara in när man går framåt —
-// går man åt sidan står kameran still, annars snurrar gubben i en liten cirkel.
-export function chaseRate({ car = false, touch = false, stickActive = false, stickUp = 0, room = false } = {}) {
+// blicken nästan direkt. Till fots på touch svänger den ALDRIG in av sig själv: joysticken
+// räknas relativt kameran, så en kamera som följer gubben gör att en tumme som håller lite
+// snett (upp-höger) får gubben att gå i en stor cirkel. Där vrids kameran bara med
+// titt-joysticken eller ett finger på bilden.
+export function chaseRate({ car = false, touch = false, room = false } = {}) {
     if (car) return 3.2;
-    if (!touch) return room ? 9 : 10;
-    if (!stickActive) return 0;
-    const fwd = clamp(stickUp, 0, 1);
-    return 2.6 * fwd * fwd;
+    if (touch) return 0;
+    return room ? 9 : 10;
+}
+
+// ── Titt-joysticken (touch, höger tumme) ──
+//  Utslaget ger en vridfart, inte en position: hålls den ute snurrar blicken. Kurvan gör
+//  små utslag fina och fullt utslag snabbt. Svaret är "touch-px" så att samma väg som ett
+//  finger på bilden används (känslighet, invertera Y, fri blick i bilen).
+export const LOOK_STICK_YAW = 2.4;     // rad/s vid fullt utslag (känslighet 1)
+export const LOOK_STICK_PITCH = 1.4;
+const stickCurve = v => Math.sign(v) * Math.pow(Math.abs(v), 1.5);
+export function lookStickDelta(stick, dt) {
+    if (!stick?.active || !(stick.mag > 0) || !(dt > 0)) return { dx: 0, dy: 0 };
+    const px = 1 / (LOOK_RAD * TOUCH_LOOK);
+    return { dx: stickCurve(stick.x) * LOOK_STICK_YAW * dt * px, dy: stickCurve(stick.y) * LOOK_STICK_PITCH * dt * px };
 }
 
 // Riktningen kontrollerna räknas från (joysticken, kamerans framåt). Fri blick i bilen ingår

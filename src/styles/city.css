@@ -177,6 +177,65 @@ body.city-open .cbd-leaf {
     transition: none;
 }
 
+/* ── Titt-joysticken: höger tumme, bara i 3D (förstaperson/följkamera) ──
+   Fast bas ovanför knappklungan. Utslaget vrider blicken så länge den hålls ute. */
+.ct-look {
+    display: none;
+    position: absolute;
+    right: 14px;
+    bottom: 196px;
+    width: 112px;
+    height: 112px;
+    z-index: 2;
+    touch-action: none;
+}
+
+.city-overlay.cam3d .ct-look { display: block; }
+
+.ct-look-base {
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    border: 3px solid rgba(255, 255, 255, 0.35);
+    background:
+        url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100' fill='none' stroke='white' stroke-width='5' stroke-linecap='round' stroke-linejoin='round' opacity='.5'%3E%3Cpath d='M30 22a34 34 0 0 1 40 0M30 78a34 34 0 0 0 40 0M22 30a34 34 0 0 0 0 40M78 30a34 34 0 0 1 0 40'/%3E%3C/svg%3E") center / 100% no-repeat,
+        radial-gradient(circle, rgba(20, 20, 30, 0.2) 0 42%, rgba(20, 20, 30, 0.5) 72%, rgba(255, 255, 255, 0.1) 100%);
+    box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.35), inset 0 0 18px rgba(0, 0, 0, 0.45);
+    opacity: 0.55;
+    pointer-events: none;
+}
+
+.ct-look-base.on { opacity: 1; border-color: #7dd3fc; }
+
+.ct-look-knob {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 46px;
+    height: 46px;
+    margin: -23px 0 0 -23px;
+    border-radius: 50%;
+    border: 3px solid rgba(255, 255, 255, 0.7);
+    background: radial-gradient(circle at 36% 30%, rgba(255, 255, 255, 0.5), rgba(55, 55, 70, 0.85) 70%);
+    box-shadow: 0 3px 0 rgba(0, 0, 0, 0.5), 0 0 0 2px rgba(0, 0, 0, 0.35);
+    transition: transform 0.12s ease-out;
+}
+
+.ct-look-knob::after {
+    content: '👁️';
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    font-size: 18px;
+}
+
+.ct-look-base.on .ct-look-knob {
+    border-color: #7dd3fc;
+    background: radial-gradient(circle at 36% 30%, #e0f2fe, rgba(56, 189, 248, 0.85) 65%);
+    transition: none;
+}
+
 /* Liggande telefon: låg skärm — knapparna i en rad så minikartan får plats ovanför */
 @media (max-height: 500px) and (orientation: landscape) {
     .ct-stick { width: 40%; }
@@ -191,6 +250,7 @@ body.city-open .cbd-leaf {
     .ct-right .ct-rob.pressed, .ct-right .ct-wpn.pressed { transform: scale(0.94); }
     .ct-right .ct-act { width: 68px; height: 68px; align-self: end; }
     .ct-right .ct-hb { width: 84px; height: 84px; }
+    .ct-look { width: 96px; height: 96px; right: 24px; bottom: 116px; }
 }
 
 /* Små telefoner: lite mindre joystick och knappar så de inte möts */
@@ -201,6 +261,7 @@ body.city-open .cbd-leaf {
     .ct-pad button { width: 44px; height: 44px; font-size: 16px; }
     .ct-right .ct-act { width: 62px; height: 62px; }
     .ct-right .ct-hb { width: 76px; height: 76px; }
+    .ct-look { width: 100px; height: 100px; bottom: 178px; }
 }
 
 /* ── Modaler ── */

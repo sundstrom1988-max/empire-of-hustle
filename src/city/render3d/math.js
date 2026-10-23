@@ -70,7 +70,9 @@ export const CHASE = {
 };
 export const FPS = { fov: 75, carEye: 16, bikeEye: 27, bob: 0.7 };
 const LIFTS_ALL = [1, 1.6, 2.4], NO_LIFT = [1];
-const YAW_OFFS = [0, 0.6, -0.6, 1.2, -1.2, 1.8, -1.8];
+// Kameran svänger aldrig åt sidan runt ett hus (då hamnade gubben ute vid bildkanten, och
+// svängen satt kvar när vägen blev fri igen): den lyfts över hindret, annars dras den in.
+const YAW_OFFS = [0];
 
 // Var kameran tittar ifrån: spelaren eller fordonet hen kör
 export function cameraSubject(world) {
@@ -95,7 +97,7 @@ export function chaseCamera(st, subj, dt, opts = {}, room = false, blocked = nul
     let up = c.up * zoom * (1 + st.fast * 0.1);
     // pitch: + tittar uppåt (kameran sänks), − tittar ner (kameran höjs)
     if (opts.pitch != null) up = c.lookH + back * Math.tan(clamp(Math.atan2(c.up - c.lookH, c.back) - opts.pitch, 0.04, 1.4));
-    // Hus i vägen: lyft kameran över hindret, annars sväng runt det, annars dra in den
+    // Hus i vägen: lyft kameran över hindret, annars dra in den mot gubben
     let k = 1, lift = 1, yoff = 0;
     if (blocked) {
         const steps = 14;

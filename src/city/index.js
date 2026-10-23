@@ -9,12 +9,12 @@ import { World } from './world.js';
 import { Renderer } from './render.js';
 import { createRenderer3D } from './render3d.js';
 import { Hud } from './hud.js';
-import { Input, stickCar } from './input.js';
+import { Input, stickCar, stickPedals } from './input.js';
 import {
     is3D, nextCam, loadCam, saveCam, loadView, saveView, loadIndex, saveIndex, ZOOM_KEY, CHASE_KEY, TOP_ZOOMS, CHASE_ZOOMS, CHASE_DEFAULT,
     pinchView, pinchSettle, nearestIndex, loadZoomX, saveZoomX,
     CAM_NAMES, CAM_ICONS, wheelView, viewLabel, lookTurn, stepPitch, aimPoint, stickToWorld, followYaw, chaseRate, controlYaw,
-    createFreeLook, stepFreeLook, resetFreeLook, SENS_RANGE, FOV_RANGE
+    createFreeLook, stepFreeLook, resetFreeLook, SENS_RANGE, FOV_RANGE, lookStickDelta
 } from './camera.js';
 import { stars } from './wanted.js';
 import { gangById } from './missions.js';
@@ -56,6 +56,9 @@ function buildOverlay(touch) {
         <div class="ct-stick" aria-label="Joystick: dra för att gå eller köra">
             <div class="ct-stick-base"><div class="ct-stick-knob"></div></div>
         </div>
+        <div class="ct-look" aria-label="Titt-joystick: håll ute för att titta runt">
+            <div class="ct-look-base"><div class="ct-look-knob"></div></div>
+        </div>
         <div class="city-touch">
             <div class="ct-pad ct-right">
                 <button data-key="r" class="ct-rob" aria-label="Råna">💰</button>
@@ -72,7 +75,7 @@ function buildOverlay(touch) {
 
 function controlsHelp(touch) {
     return touch
-        ? `<div class="city-help"><b>🕹️ Joysticken</b> (tummen nere till vänster) gå dit du drar — i förstaperson och följkamera är upp = framåt i bild · ända ut = spring (🏃 uthållighet) · <b>i bilen</b> kör dit du drar, dra bakåt = backa · <b>dra med ett finger på bilden</b> titta runt (3D) · <b>nyp</b> zooma — och vidare till nästa kamera · <b>👊</b> slå / skjut (blir <b>⤵</b> handbroms i bilen) · <b>E</b> gå in genom dörrar, in/ur bil, prata, plocka upp · <b>💰</b> råna · <b>🔫</b> byt vapen · <b>👥</b> crew-order · <b>📯</b> tuta · <b>📱</b> telefon · <b>🔍</b> byt kamera: förstaperson → följkamera → överblick<br><small>Version ${escapeHtml(BUILD)}</small></div>`
+        ? `<div class="city-help"><b>🕹️ Vänster joystick</b> gå — i förstaperson och följkamera är upp = framåt i bild · ända ut = spring (🏃 uthållighet) · <b>i bilen</b> upp = gas, ned = broms/back, åt sidan = ratt (i överblicken: kör dit du drar) · <b>👁️ höger joystick</b> (3D) titta runt — håll ute så vrider du dig · eller <b>dra med ett finger på bilden</b> · <b>nyp</b> zooma — och vidare till nästa kamera · <b>👊</b> slå / skjut (blir <b>⤵</b> handbroms i bilen) · <b>E</b> gå in genom dörrar, in/ur bil, prata, plocka upp · <b>💰</b> råna · <b>🔫</b> byt vapen · <b>👥</b> crew-order · <b>📯</b> tuta · <b>📱</b> telefon · <b>🔍</b> byt kamera: förstaperson → följkamera → överblick<br><small>Version ${escapeHtml(BUILD)}</small></div>`
         : `<div class="city-help"><b>W/S</b> gå framåt/bakåt dit du tittar · <b>A/D</b> sidsteg · <b>Musen</b> styr blicken (3D: klicka i bilden så fångas musen) — i överblicken siktar pekaren · <b>vänsterklick</b> / <b>Space</b> slå / skjut · <b>Shift</b> spring (🏃 uthållighet) · <b>E</b> gå in genom dörrar, in/ur bil, prata, plocka upp · <b>I bilen</b> W gas · S broms/back · A/D sväng · Space handbroms · musen tittar runt · <b>R</b> råna (till fots) / radio (i bil) · <b>Q</b> byt vapen · <b>V</b> eller <b>C</b> byt kamera: förstaperson → följkamera → överblick · <b>hjulet</b> zoomar — och vidare till nästa kamera · <b>M</b> karta · <b>T</b> telefon · <b>1 2 3</b> crew: följ / stanna / anfall · <b>H</b> tuta · <b>P</b> paus · <b>Esc</b> släpper musen i 3D (paus), annars hem · <b>🏠 HEM</b> åk hem<br><small>Version ${escapeHtml(BUILD)}</small></div>`;
 }
 
@@ -715,11 +718,14 @@ function buildState(s, mode, stepDt) {
     state.faceMove = !!inp.stick?.active && mode !== 'fps'; // förstaperson: blicken står kvar, man går i sidled
     // Joysticken i bilen: kör dit man drar (gas och ratt räknas om från riktningen).
     // stickCar minns om bilen står fast mot en vägg och backar då loss den.
-    if (car && inp.stick?.active) {
-        const r = mode === 'top' ? inp.stick : stickToWorld(inp.stick.x, inp.stick.y, mode, yaw);
-        const stick = mode === 'top' ? inp.stick : { active: true, mag: inp.stick.mag, x: r.mx, y: r.my };
-        Object.assign(state, stickCar(s.stickMem || (s.stickMem = {}), stick, car, stepDt));
-    } else s.stickMem = null;
+    // I överblicken: "kör dit du drar" (kameran står still, upp = norr). I 3D: gas och ratt
+    // relativt bilen — kameran svänger med bilen, så ett mål i bild skulle vrida sig hela tiden.
+    if (car && inp.stick?.active && mode === 'top') {
+        Object.assign(state, stickCar(s.stickMem || (s.stickMem = {}), inp.stick, car, stepDt));
+    } else {
+        s.stickMem = null;
+        if (car && inp.stick?.active) Object.assign(state, stickPedals(inp.stick));
+    }
     return state;
 }
 
@@ -730,9 +736,7 @@ function updateCamYaw(s, dt, turned) {
     // Dörr, taxi eller avstigning långt bort: ställ kameran bakom direkt i stället för att svepa
     if (room !== L.room || Math.hypot(p.x - L.x, p.y - L.y) > 300) L.camYaw = NaN;
     L.room = room; L.x = p.x; L.y = p.y;
-    const stick = s.input.stick;
-    const up = stick?.active && stick.mag > 0 ? -stick.y / stick.mag : 0;
-    const rate = chaseRate({ car: !!v, touch: s.touch, stickActive: !!stick?.active, stickUp: up, room: !!room });
+    const rate = chaseRate({ car: !!v, touch: s.touch, room: !!room });
     L.camYaw = followYaw(L.camYaw, v ? v.angle : p.angle, dt, rate, v ? 0 : turned);
 }
 
@@ -850,6 +854,11 @@ function frame(ts) {
         const inp = s.input;
         // Blicken (låst mus, touch-look) läses varje bild: syns direkt, vridningen går in vid nästa steg
         const look = inp.takeLook ? inp.takeLook() : null;
+        // Titt-joysticken (höger tumme): hålls den ute vrids blicken, samma väg som ett finger
+        if (look && inp.lookStick?.active) {
+            const d = lookStickDelta(inp.lookStick, dt);
+            look.dx += d.dx; look.dy += d.dy;
+        }
         const pinch = inp.takePinch ? inp.takePinch() : 1; // nyp bakom en meny räknas inte
         if (s.modalType) {
             // Tangenter i modaler
