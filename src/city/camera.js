@@ -190,6 +190,26 @@ export function aimPoint(mouse, ps, player, zoom, dead = AIM_DEADZONE) {
     return { x: player.x + dx / zoom, y: player.y + dy / zoom };
 }
 
+// ── Hur långt bort folk och bilar skapas (world.viewExtra / world.viewDense) ──
+//  Bara överblicken utzoomad (zoomMul < 1) skjuter ut ringen: uppifrån syns hela området och inget
+//  skymmer, så nytt måste skapas bortom skärmens hörn (viewR = halva diagonalen i världs-px).
+//  Följkamera och förstaperson har samma värld som vanlig överblick (kontraktet avsnitt 1); att inget
+//  poppar upp mitt i 3D-bilden sköter världen själv: bara utom synhåll (world.js manageSpawns).
+export function spawnView(cam, zoomMul = 1, viewR = 0) {
+    if (cam !== 'top' || !(zoomMul < 1)) return { extra: 0, dense: 1 };
+    return { extra: Math.max(viewR * (1 - zoomMul), viewR + 40 - 520), dense: Math.min(1.6, 1 / (zoomMul * zoomMul)) };
+}
+
+// ── Tryck på minikartan (canvasens pointerdown) ──
+//  Sant om trycket ska öppna/stänga stora kartan: på minikartan, eller var som helst när den
+//  är uppe. Med fångad mus (3D) står clientX/Y kvar där låset togs — ett klick är då alltid
+//  ett slag/skott mitt i bild (input.js), aldrig ett tryck på kartan (M öppnar den).
+//  Ett nypfinger och tryck bakom en meny räknas inte.
+export function mapTapToggles(rect, x, y, { locked = false, pinching = false, modal = false, showMap = false } = {}) {
+    if (!rect || modal || pinching || locked) return false;
+    return !!showMap || (x >= rect.x && x <= rect.x + rect.size && y >= rect.y && y <= rect.y + rect.size);
+}
+
 // ── Joysticken: skärmens riktning → världens ──
 //  Överblick: upp = norr (ingen vridning). Följkamera/förstaperson: upp = rakt fram i bild
 //  (kamerans yaw), höger = höger om blicken. Längden behålls.
@@ -228,6 +248,18 @@ export function lookStickDelta(stick, dt) {
     if (!stick?.active || !(stick.mag > 0) || !(dt > 0)) return { dx: 0, dy: 0 };
     const px = 1 / (LOOK_RAD * TOUCH_LOOK);
     return { dx: stickCurve(stick.x) * LOOK_STICK_YAW * dt * px, dy: stickCurve(stick.y) * LOOK_STICK_PITCH * dt * px };
+}
+
+// ── Kamerans riktning i 3D den här bildrutan ──
+//  Blicken (musen) kommer varje bildruta, men gubben vrids bara i världens fasta steg (1/60 s).
+//  pending = vridning som tagits emot men inte gått in i ett steg än. Den visas direkt — annars
+//  står bilden still på bildrutor utan steg (90/120/144 Hz-skärmar) och rycker sedan ikapp.
+//  freeYaw = fri blick i bilen. Följkameran (chase) har sin egen vinkel (camYaw, followYaw).
+export function viewYaw(cam, player, camYaw, pending = 0, freeYaw = 0) {
+    const v = player.vehicle;
+    const own = v ? v.angle : player.angle + (pending || 0);
+    if (cam === 'chase' && Number.isFinite(camYaw)) return camYaw + freeYaw;
+    return own + freeYaw;
 }
 
 // Riktningen kontrollerna räknas från (joysticken, kamerans framåt). Fri blick i bilen ingår

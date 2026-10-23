@@ -9,12 +9,12 @@ import { World } from './world.js';
 import { Renderer } from './render.js';
 import { createRenderer3D } from './render3d.js';
 import { Hud } from './hud.js';
-import { Input, stickCar, stickPedals } from './input.js';
+import { Input, stickCar, stickPedals, primaryTouch } from './input.js';
 import {
     is3D, nextCam, loadCam, saveCam, loadView, saveView, loadIndex, saveIndex, ZOOM_KEY, CHASE_KEY, TOP_ZOOMS, CHASE_ZOOMS, CHASE_DEFAULT,
     pinchView, pinchSettle, nearestIndex, loadZoomX, saveZoomX,
-    CAM_NAMES, CAM_ICONS, wheelView, viewLabel, lookTurn, stepPitch, aimPoint, stickToWorld, followYaw, chaseRate, controlYaw,
-    createFreeLook, stepFreeLook, resetFreeLook, SENS_RANGE, FOV_RANGE, lookStickDelta
+    CAM_NAMES, CAM_ICONS, wheelView, viewLabel, lookTurn, stepPitch, aimPoint, stickToWorld, followYaw, chaseRate, controlYaw, viewYaw, spawnView,
+    createFreeLook, stepFreeLook, resetFreeLook, SENS_RANGE, FOV_RANGE, lookStickDelta, mapTapToggles
 } from './camera.js';
 import { stars } from './wanted.js';
 import { gangById } from './missions.js';
@@ -35,7 +35,7 @@ let session = null;
 
 export function isCityOpen() { return !!session; }
 
-const isTouch = () => (typeof window !== 'undefined') && (window.matchMedia?.('(pointer: coarse)').matches || 'ontouchstart' in window);
+const isTouch = () => primaryTouch(); // bärbar med pekskärm: musen och tangentbordet gäller (input.js)
 // localStorage (null i privat läge eller utan webbläsare): kameravalet gäller då bara nu
 const storage = () => { try { return typeof localStorage !== 'undefined' ? localStorage : null; } catch (e) { return null; } };
 
@@ -145,13 +145,13 @@ export function openCity(profile, opts = {}) {
         // Svaret från värden om klubben: visa managern igen med det nya läget
         if ((e.type === 'buyRes' || e.type === 'owners') && session?.modalType === 'manager') setTimeout(() => session?.modalType === 'manager' && showInteraction('manager'), 0);
     });
-    // Tryck på minikartan öppnar den stora kartan (och tryck var som helst stänger den)
+    // Tryck på minikartan öppnar den stora kartan (och tryck var som helst stänger den).
+    // Inte med fångad mus: pekaren står då kvar där låset togs, ofta över minikartan (camera.js mapTapToggles).
     const onMapTap = (e) => {
-        const r = session?.hud.mapRect;
-        if (!r || session.modalType || input.pinching) return; // ett nypfinger på minikartan öppnar inte kartan
+        if (!session) return;
         const b = canvas.getBoundingClientRect();
-        const x = e.clientX - b.left, y = e.clientY - b.top;
-        if (world.showMap || (x >= r.x && x <= r.x + r.size && y >= r.y && y <= r.y + r.size)) world.showMap = !world.showMap;
+        const st = { locked: input.locked, pinching: input.pinching, modal: !!session.modalType, showMap: world.showMap };
+        if (mapTapToggles(session.hud.mapRect, e.clientX - b.left, e.clientY - b.top, st)) world.showMap = !world.showMap;
     };
     canvas.addEventListener('pointerdown', onMapTap);
     session.syncT = 0;
@@ -686,16 +686,24 @@ function updateLock(s, request = false) {
     else if (request && !inp.locked) inp.requestLock?.();
 }
 
-// Blicken från musen (låst) eller ett finger på skärmen. Till fots vrids gubben (vid nästa steg);
-// i bilen är det fri blick som bara syns i bild och fjädrar tillbaka. Höjdvinkeln är bara bild.
+// Tar världen emot blickens vridning just nu? Död, i bilen, under en övertoning (dörr, taxi)
+// eller när rundan är slut vrids gubben inte — då ska bilden inte heller vridas.
+const turnTakes = w => !w.player.dead && !w.player.vehicle && w.state === 'play' && !w.fade;
+
+// Blicken från musen (låst) eller ett finger på skärmen. Till fots vrids gubben vid nästa steg,
+// men bilden visar vridningen direkt (s.look.turn = väntande, camera.js viewYaw). I bilen är det
+// fri blick som bara syns i bild och fjädrar tillbaka. Höjdvinkeln är bara bild.
+// Ger vridningen som kom in den här bildrutan (följkameran vrids lika mycket).
 function applyLook(s, look, mode, dt) {
     const p = s.world.player, v = p.vehicle, fl = s.look.free, vw = s.view;
     if (v !== s.look.veh) { resetFreeLook(fl); s.look.veh = v; }
     const dx = is3D(mode) && look ? look.dx : 0, dy = is3D(mode) && look ? look.dy : 0;
-    if (v) { stepFreeLook(fl, dx, dy, dt, { sens: vw.sens, invertY: vw.invertY, touch: s.touch }); return; }
-    if (!dx && !dy) return;
-    s.look.turn += lookTurn(dx, vw.sens, s.touch);
+    if (v) { stepFreeLook(fl, dx, dy, dt, { sens: vw.sens, invertY: vw.invertY, touch: s.touch }); return 0; }
+    if (!dx && !dy) return 0;
+    const t = turnTakes(s.world) ? lookTurn(dx, vw.sens, s.touch) : 0;
+    s.look.turn += t;
     if (mode === 'fps') s.look.pitch = stepPitch(s.look.pitch, dy, vw.sens, vw.invertY, s.touch);
+    return t;
 }
 
 // Kontrollerna för ett steg: input.state() + blick (turn), sikte (aim) och joysticken i världens riktning
@@ -729,7 +737,8 @@ function buildState(s, mode, stepDt) {
     return state;
 }
 
-// Följkamerans riktning: bakom bilen, eller blicken till fots (vridningen från musen går in direkt)
+// Följkamerans riktning: bakom bilen, eller blicken till fots. turned = blickens vridning den här
+// bildrutan (går in direkt, varje bildruta); målet är gubbens vinkel plus det som väntar på nästa steg.
 function updateCamYaw(s, dt, turned) {
     const w = s.world, p = w.player, v = p.vehicle, L = s.look;
     const room = w.interior ? w.interior.id : null;
@@ -737,7 +746,7 @@ function updateCamYaw(s, dt, turned) {
     if (room !== L.room || Math.hypot(p.x - L.x, p.y - L.y) > 300) L.camYaw = NaN;
     L.room = room; L.x = p.x; L.y = p.y;
     const rate = chaseRate({ car: !!v, touch: s.touch, room: !!room });
-    L.camYaw = followYaw(L.camYaw, v ? v.angle : p.angle, dt, rate, v ? 0 : turned);
+    L.camYaw = followYaw(L.camYaw, v ? v.angle : p.angle + L.turn, dt, rate, v ? 0 : turned);
 }
 
 // Det 3D-motorn får: vinklar, avstånd och inställningarna
@@ -746,14 +755,14 @@ function camOpts(s, mode) {
     const o = s.camOpts || (s.camOpts = {});
     o.bob = vw.bob ? 1 : 0; o.shake = vw.bob; o.fov = vw.fov;
     o.lookYaw = v ? fl.yaw : 0; o.lookPitch = v ? fl.pitch : 0;
+    o.yaw = viewYaw(mode, p, s.look.camYaw, s.look.turn, o.lookYaw); // väntande blick syns direkt
     if (mode === 'fps') {
-        o.yaw = (v ? v.angle : p.angle) + o.lookYaw;
         o.pitch = v ? fl.pitch : s.look.pitch;
         o.dist = undefined;
     } else {
-        o.yaw = (Number.isFinite(s.look.camYaw) ? s.look.camYaw : (v ? v.angle : p.angle)) + o.lookYaw;
         o.pitch = v && fl.pitch ? fl.pitch : undefined;
         o.dist = s.chaseDist;
+        o.zoomSnap = !!s.pinch; // nypet följer fingrarna direkt; hjulsteget glider (render3d/math.js)
     }
     return o;
 }
@@ -854,6 +863,7 @@ function frame(ts) {
         const inp = s.input;
         // Blicken (låst mus, touch-look) läses varje bild: syns direkt, vridningen går in vid nästa steg
         const look = inp.takeLook ? inp.takeLook() : null;
+        let turned = 0; // blickens vridning den här bildrutan (följkameran)
         // Titt-joysticken (höger tumme): hålls den ute vrids blicken, samma väg som ett finger
         if (look && inp.lookStick?.active) {
             const d = lookStickDelta(inp.lookStick, dt);
@@ -889,17 +899,15 @@ function frame(ts) {
             if (wheel && s.wheelT <= 0) wheelCam(wheel);
             pinchCam(pinch, dt);
             if (s.world.player.vehicle && inp.pressed('r')) cycleRadio(); // till fots betyder R rån
-            applyLook(s, look, shownCam(s), dt);
+            turned = applyLook(s, look, shownCam(s), dt);
         }
         if (s.closing) return;
-        let turned = 0;
         if (!s.paused) {
             s.acc += dt;
             // Läs kontrollerna bara när ett steg faktiskt körs: 90/120 Hz-skärmar har frames
             // utan steg, och då skulle knapptryck (👊, E, 💰 …) ätas upp och försvinna
             if (s.acc >= STEP) {
                 const state = buildState(s, shownCam(s), Math.min(5, Math.floor(s.acc / STEP)) * STEP);
-                turned = state.turn;
                 s.throttle = state.throttle;
                 let steps = 0;
                 while (s.acc >= STEP && steps < 5) {
@@ -939,9 +947,8 @@ function frame(ts) {
 }
 
 // ── Bilden: 3D (förstaperson/följkamera) med HUD:en ovanpå, eller 2D (överblick) ──
-// I 3D ser man långt längs gatorna: folk och bilar skapas och städas längre bort (world.manageSpawns),
-// där dimman redan tagit dem, så att de inte poppar upp mitt i bild. Lite tätare för att det inte ska kännas tomt.
-const VIEW_3D = { fps: { extra: 700, dense: 1.4 }, chase: { extra: 800, dense: 1.45 } };
+// Folk och bilar runt spelaren är desamma i alla lägen (camera.js spawnView): i 3D skjuts de inte
+// längre ut i dimman — världen skapar dem utom synhåll i stället (world.js manageSpawns).
 function drawFrame(s, dt) {
     const mode = shownCam(s), r = s.renderer, w = s.world;
     r.updateCamera(w, dt); // 2D-kameran följer med även i 3D: överblicken är redo direkt vid byte
@@ -950,7 +957,8 @@ function drawFrame(s, dt) {
     if (three !== s.cam3dClass) { s.overlay.classList.toggle('cam3d', three); s.cam3dClass = three; } // HUD-layouten i 3D (city.css)
     r.zoomRate = s.pinch ? 14 : 0; // nyp: överblickens zoom följer fingrarna direkt
     if (three) {
-        w.viewExtra = VIEW_3D[mode].extra; w.viewDense = VIEW_3D[mode].dense;
+        const sv = spawnView(mode);
+        w.viewExtra = sv.extra; w.viewDense = sv.dense;
         s.r3.render(w, dt, mode, camOpts(s, mode));
         // 2D-canvasen är genomskinlig ovanpå 3D: bara HUD:en och det som hör till platser i världen
         const ctx = r.ctx;
@@ -962,11 +970,9 @@ function drawFrame(s, dt) {
         return;
     }
     // Utzoomat ser man längre: folk och bilar ska dyka upp utanför bild (world.manageSpawns)
-    const zm = r.zoomMul || 1;
     const viewR = Math.hypot(r.w, r.h) / 2 / Math.min(r.cam.zoom, r.zTarget || 9);
-    // (fotgängare skapas 520 px bort i normalvyn — utzoomat ska det vara bortom skärmens hörn)
-    w.viewExtra = zm < 1 ? Math.max(viewR * (1 - zm), viewR + 40 - 520) : 0;
-    w.viewDense = zm < 1 ? Math.min(1.6, 1 / (zm * zm)) : 1;
+    const sv = spawnView('top', r.zoomMul || 1, viewR);
+    w.viewExtra = sv.extra; w.viewDense = sv.dense;
     r.draw(w, dt);
     s.hud.draw(r.ctx, w, r, { touch: s.touch, cam: 'top' });
 }

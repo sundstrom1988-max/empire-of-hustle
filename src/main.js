@@ -20,7 +20,7 @@ import { initSms, smsIncoming, smsAck, closeSmsOverlay, refreshSms } from './fea
 import { smsSend, smsContacts, onSmsIncoming, onSmsStatus } from './multiplayer/citynet.js';
 import { showHeistButton, selectHeistTarget, doHeist, sweepEvidence } from './features/gargamel.js';
 import { renderGarage, buyGarageCar, pimpCar } from './features/garage.js';
-import { renderStanPanel, goToCity } from './features/stan.js';
+import { renderStanPanel, goToCity, applyPendingBust } from './features/stan.js';
 import { isCityOpen } from './city/index.js';
 import { escapeHtml } from './utils/html.js';
 import { BUILD, watchForUpdates } from './utils/version.js';
@@ -261,6 +261,7 @@ window.doCharUnlock = function (charKey) {
     if (loadGame(charKey)) {
         showGameScreen();
         showToast(`🔓 Välkommen tillbaka, ${CHARACTERS[charKey].name}!`);
+        applyPendingBust();   // gripen i stan precis innan sidan laddades om
     } else {
         showToast(`🔓 ${CHARACTERS[charKey].name} upplåst!`);
         renderCharCards();
@@ -535,7 +536,7 @@ window.doLogin = function (charKey) {
     }
     currentAccount = charKey; selectedChar = charKey;
     document.getElementById('login-modal').classList.remove('open');
-    if (loadGame(charKey)) { showGameScreen(); showToast(`🔓 Välkommen tillbaka, ${CHARACTERS[charKey].name}!`); }
+    if (loadGame(charKey)) { showGameScreen(); showToast(`🔓 Välkommen tillbaka, ${CHARACTERS[charKey].name}!`); applyPendingBust(); }
     else {
         document.getElementById('screen-login').style.display = 'none';
         document.getElementById('screen-select').style.display = 'flex';

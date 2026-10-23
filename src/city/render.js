@@ -14,6 +14,7 @@ import { VEHICLES } from './vehicles.js';
 import { ITEM_TYPES } from './items.js';
 import * as INT from './interiors.js';
 import { bannedFor } from './brawl.js';
+import { primaryTouch } from './input.js';
 
 export const CREW_LOOK = { guard: { shirt: '#111827' }, gunner: { shirt: '#7f1d1d' }, scout: { shirt: '#065f46' } };
 // Storlek på figurerna (cirka 25 % större än förut)
@@ -51,7 +52,7 @@ function roundRect(ctx, x, y, w, h, r) {
 
 const hasV = m => (m & ((1 << N) | (1 << S))) !== 0;
 const hasH = m => (m & ((1 << E) | (1 << W))) !== 0;
-const isTouch = () => typeof window !== 'undefined' && !!(window.matchMedia?.('(pointer: coarse)').matches || 'ontouchstart' in window);
+const isTouch = () => primaryTouch(); // samma regel som staden (index.js): primär pekare = finger
 
 // Barbråk (brawl.js): den som slåss eller ligger nere har inget i händerna — inget glas, ingen bricka,
 // inget verktyg. Rummens accessory() ritar efter de här fälten, så de döljs medan fn ritar.
@@ -761,6 +762,8 @@ export class Renderer {
                 // Lampor
                 ctx.fillStyle = '#fff7c2'; ctx.fillRect(L / 2 - 3, -Wd / 2 + 2, 3, 4); ctx.fillRect(L / 2 - 3, Wd / 2 - 6, 3, 4);
                 ctx.fillStyle = v.braking ? '#ff3b3b' : '#991b1b'; ctx.fillRect(-L / 2, -Wd / 2 + 2, 3, 4); ctx.fillRect(-L / 2, Wd / 2 - 6, 3, 4);
+                // Backljus: vita lampor innanför baklamporna medan bilen backar (rörelseriktningen syns)
+                if (v.reversing && !v.wrecked) { ctx.fillStyle = '#f8fafc'; ctx.fillRect(-L / 2, -Wd / 2 + 6.5, 2.5, 3); ctx.fillRect(-L / 2, Wd / 2 - 9.5, 2.5, 3); }
                 if (v.spec.police) {
                     ctx.fillStyle = '#1d4ed8'; ctx.fillRect(-L / 2 + 4, -Wd / 2, L - 8, 3); ctx.fillRect(-L / 2 + 4, Wd / 2 - 3, L - 8, 3);
                     ctx.fillStyle = '#facc15';

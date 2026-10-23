@@ -22,8 +22,8 @@
 // tar en sväng i (0 = ingen gräns: på höga nivåer kör de hårt).
 export const LEVELS = [
     { name: 'Lugn', cars: 0, foot: 0, search: 0, speed: 0.55, gas: 0.55, sight: 560, corner: 150 },
-    { name: 'Trafikincident', cars: 1, foot: 1, search: 15, speed: 0.55, gas: 0.55, sight: 460, corner: 150 },
-    { name: 'Efterlysning', cars: 2, foot: 2, search: 20, speed: 0.58, gas: 0.6, sight: 480, corner: 160 },
+    { name: 'Trafikincident', cars: 1, foot: 1, search: 15, speed: 0.5, gas: 0.55, sight: 400, corner: 150 },
+    { name: 'Efterlysning', cars: 2, foot: 2, search: 20, speed: 0.52, gas: 0.6, sight: 420, corner: 160 },
     { name: 'Allvarligt hot', cars: 3, foot: 2, search: 30, speed: 0.8, gas: 0.85, sight: 540, corner: 220 },
     { name: 'Väpnat hot', cars: 4, foot: 3, search: 40, speed: 0.9, gas: 1, sight: 560, corner: 0 },
     { name: 'Maxinsats', cars: 6, foot: 4, search: 50, speed: 1, gas: 1, sight: 600, corner: 0 }
@@ -34,6 +34,13 @@ export const MAX_LEVEL = 5;
 export const POLICE = {
     patrol: 2,              // patrullbilar runt spelaren när inget pågår
     patrolHeat: 2,          // över det här trycket: en patrull till
+    // Låg efterlysning (nivå 1–2): bara insatsens egna enheter jagar. En vanlig tidig bil ska
+    // kunna köra ifrån dem och bryta sikten (masterprompt avsnitt 5) — utan att nya patruller
+    // hela tiden dyker upp runt spelaren och hittar hen igen.
+    lowLevel: 2,
+    patrolLow: 0,           // nya patruller som skickas ut runt dig under en insats på låg nivå
+    patrolSight: 0.55,      // patruller utanför insatsen ser dig på den här andelen av siktavståndet
+    recruitLow: 900,        // en patrull tas in i insatsen bara om den är så här nära (annars 1400)
     totalCars: 8,           // tak för polisbilar i den lokala simuleringen
     districtCars: 6,        // tak för polisbilar i ett och samma distrikt
     reinforceGap: [0, 5, 5, 4, 3, 2.5], // minst så här länge mellan nya enheter, per nivå
@@ -138,7 +145,14 @@ export function wantedUnits(P) {
     if (P.phase === 'chase' || P.phase === 'search') return carCap(P.level);
     return 0;
 }
-export function patrolTarget(P) { return POLICE.patrol + (P.heat >= POLICE.patrolHeat ? 1 : 0); }
+// Uppdrag som hör till insatsen (dispatcherns enheter)
+export const UNIT_TASKS = new Set(['stop', 'chase', 'search']);
+// Låg efterlysning: insatsens enheter jagar, patrullerna runt omkring är inte ute efter dig
+export function lowLevel(P) { return P.level > 0 && P.level <= POLICE.lowLevel; }
+export function patrolTarget(P) {
+    if (active(P) && lowLevel(P)) return POLICE.patrolLow;
+    return POLICE.patrol + (P.heat >= POLICE.patrolHeat ? 1 : 0);
+}
 export function stopWindow(speed = 0) { return clamp(POLICE.stopWindow + Math.max(0, speed) / 90, POLICE.stopWindow, POLICE.stopWindowMax); }
 
 // Är något på gång (stopp, jakt eller sökning)?
@@ -262,12 +276,17 @@ export function copContact(P, info, opts = {}) {
 // Kontaktbok: en sammanhängande kontakt per fordonspar (stabil identitet = bilarnas id).
 // En ny kontakt börjar först när paret varit isär minst sepTime. Skada räknas bara från
 // smällen när kontakten börjar (relativ fart), eller en tydligt hårdare ny smäll mitt i den.
+// overlap = bilarna går faktiskt in i varandra i det här steget. Ligger de bara an (inom 2 px,
+// physics.js) håller det ihop en kontakt som redan pågår men startar ingen ny: annars blev
+// steget före smällen kontaktens början, med smällen 0 (en hård krock blev en "lätt krock").
+// Returnerar null när ingen kontakt finns eller börjar.
 export function createContacts() { return new Map(); }
 export function pairKey(a, b) { return a.id < b.id ? `${a.id}:${b.id}` : `${b.id}:${a.id}`; }
-export function touchContact(book, a, b, impact, now, cfg = POLICE) {
+export function touchContact(book, a, b, impact, now, cfg = POLICE, overlap = true) {
     const k = pairKey(a, b);
     let c = book.get(k);
     const fresh = !c || now - c.last > cfg.sepTime;
+    if (fresh && !overlap) return null;
     if (fresh) {
         c = { first: now, last: now, peak: impact, n: (c ? c.n : 0) + 1 };
         book.set(k, c);
@@ -492,7 +511,10 @@ export function restorePolice(raw) {
     P.reason = typeof raw.reason === 'string' ? raw.reason.slice(0, 80) : '';
     const pt = p => (p && typeof p === 'object' && Number.isFinite(Number(p.x)) && Number.isFinite(Number(p.y)) ? { x: Number(p.x), y: Number(p.y) } : null);
     P.lastSeen = pt(raw.lastSeen);
-    P.known = pt(raw.known);
+    // known sparas inte tillbaka: World börjar alltid ute (vid HQ), aldrig inne på stället de väntar
+    // utanför. Annars stod "Polisen väntar utanför" utan nedräkning medan stoppet räknade ner.
+    const wasKnown = !!pt(raw.known);
+    P.known = null;
     if (raw.lastEnd && typeof raw.lastEnd === 'object') P.lastEnd = { why: String(raw.lastEnd.why || '').slice(0, 20), text: String(raw.lastEnd.text || '').slice(0, 80), t: -1e9 };
     if (Array.isArray(raw.incidents)) {
         P.incidents = raw.incidents.slice(-30).filter(e => e && typeof e === 'object').map(e => ({
@@ -513,6 +535,8 @@ export function restorePolice(raw) {
         const max = clamp(num(raw.stop?.max, POLICE.stopWindow), POLICE.stopWindow, POLICE.stopWindowMax);
         P.phase = 'stop';
         P.stop = { t: clamp(num(raw.stop?.t, max), 0.5, max), max, still: 0, talk: 0, wait: 0 };
+        // De väntade utanför stället (som leftPlace): ett nytt fönster att stanna och prata
+        if (wasKnown) P.stop.t = Math.max(P.stop.t, POLICE.stopWindow);
         P.alarmPos = !P.lastSeen;
     } else {
         // Jakt eller sökning: de letar där de såg dig sist (eller väntar vid dörren)

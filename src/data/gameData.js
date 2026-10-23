@@ -1,6 +1,6 @@
 // Game data constants
 export const CHARACTERS = {
-    kimit: { name: 'Dr. KimIT', icon: '👨‍⚕️', img: '1207.png', color: '#ff4fd8', ability: 'income_boost', abilityVal: 0.20, desc: '+20% inkomst' },
+    kimit: { name: 'Dr. KimIT', icon: '👨‍⚕️', img: null, color: '#ff4fd8', ability: 'income_boost', abilityVal: 0.20, desc: '+20% inkomst' },
     gargamel: { name: 'Gargamel', icon: '🧙‍♂️', img: null, color: '#7c3aed', ability: 'steal', abilityVal: 0.10, desc: 'Stjäl 10% var 5:e runda' },
     mehmet: { name: 'Mehmet', icon: '🥙', img: null, color: '#22c55e', ability: 'pitch_boost', abilityVal: 0.15, desc: '+15% pitch-chans' },
     juan: { name: 'Juan', icon: '🌮', img: null, color: '#f97316', ability: 'market_luck', abilityVal: 0.15, desc: '-15% risk svarta marknaden' },

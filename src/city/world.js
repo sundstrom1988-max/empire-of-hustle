@@ -58,6 +58,10 @@ const SERVICES = {
 const DATE_NOPE = ['"I DEN där? Haha, nej."', '"Min pappa har en finare bil."', '"Ring mig när du har en riktig bil."', '"Jag väntar på min Uber, tack."'];
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
 const center = t => t * TILE + TILE / 2;
+// Hur långt man ser i 3D: dimman tar allt vid 2300 px (följkameran; förstaperson 1900) och inget
+// ritas bortom 2450. Folk och bilar skapas och städas bara utom synhåll eller bortom det här.
+export const SIGHT_FAR = 2450;
+export const SIGHT_HAZE = 1700;  // i synhåll men nästan uppslukad av dimman (parkerade bilar)
 
 function hashStr(s) {
     let h = 2166136261;
@@ -541,7 +545,8 @@ export class World {
         const g = v.driver === 'gang' && v.gang ? gangById(v.gang) : null;
         const ped = createPed(side.x, side.y, this.rnd, g ? this.gangPedOpts(g) : { shirt: cop ? '#1e3a8a' : undefined, cop });
         ped.mode = 'flee'; ped.t = 3; ped.angle = v.angle + Math.PI / 2;
-        if (cop && this.police.level > 0 && !this.player.dead) { ped.attack = true; ped.attackT = 60; ped.mode = 'walk'; ped.gun = POL.copsArmed(this.police.level, this.armed()); }
+        // En utkastad snut anfaller bara inom taket för snutar till fots (annars kringgås det av kvaddade bilar)
+        if (cop && this.police.level > 0 && !this.player.dead && this.footCops() < POL.footCap(this.police.level)) { ped.attack = true; ped.attackT = 60; ped.mode = 'walk'; ped.gun = POL.copsArmed(this.police.level, this.armed()); }
         this.peds.push(ped);
         v.driver = null;
         v.ai = null;
@@ -678,19 +683,32 @@ export class World {
         this.spawnT = 0.25;
         const p = this.player;
         const dist = e => Math.hypot(e.x - p.x, e.y - p.y);
-        // Zoomar man ut (🔍) ser man längre: då ska folk och bilar dyka upp utanför bild, inte mitt i den
+        // Överblicken utzoomad (LÅNGT) ser man längre: då ska folk och bilar dyka upp utanför bild,
+        // inte mitt i den (index.js; 0 och 1 i följkamera, förstaperson och vanlig överblick)
         const ex = this.viewExtra || 0;
         const far = base => base + ex;
         const dense = this.viewDense || 1;
+        // Ingen skapas eller städas bort där spelaren ser det: i 3D ser man längs gatorna ända ut i
+        // dimman. Regeln gäller i alla kameralägen (kamerabyte ändrar bara bilden, kontraktet avsnitt 1).
+        // Undantag när ingen ser något: första gången (stan fylls innan man börjat) och under en
+        // övertoning (taxi, dejt) — annars skulle parkeringarna runt en stillastående spelare stå tomma.
+        const blind = !this.spawnedOnce || !!this.fade;
+        this.spawnedOnce = true;
+        const seen = e => !blind && lineClear(this.city, e.x, e.y, p.x, p.y);
+        const gone = (e, d) => d > SIGHT_FAR || !seen(e); // utom synhåll, eller bortom 3D-dimman
 
-        // Städa bort det som är långt borta
+        // Städa bort det som är långt borta (polisens bilar sköter dispatchern om nedan)
         for (let i = this.vehicles.length - 1; i >= 0; i--) {
             const v = this.vehicles[i];
             if (v === p.vehicle || v.persistent) continue;
             const d = dist(v);
-            if (d > far(1900) || (v.exploded && v.hulkT > 30 && d > far(700)) || (v.ai && v.ai.lost && d > far(900))) this.removeVehicle(v);
+            const old = d > far(1900) || (v.exploded && v.hulkT > 30 && d > far(700)) || (v.ai && v.ai.lost && d > far(900));
+            if (old && (v.driver === 'cop' || gone(v, d))) this.removeVehicle(v);
         }
-        for (let i = this.peds.length - 1; i >= 0; i--) if (dist(this.peds[i]) > far(1250)) this.peds.splice(i, 1);
+        for (let i = this.peds.length - 1; i >= 0; i--) {
+            const d = dist(this.peds[i]);
+            if (d > far(1250) && gone(this.peds[i], d)) this.peds.splice(i, 1);
+        }
 
         const district = this.district || 'orten';
 
@@ -698,12 +716,16 @@ export class World {
         const traffic = this.vehicles.filter(v => (v.driver === 'traffic' || v.driver === 'gang') && dist(v) < far(1500)).length;
         const want = Math.round((district === 'centrum' ? 20 : 16) * dense);
         if (traffic < want) {
-            const spot = this.findSpot(p.x, p.y, far(760), far(1350));
+            let spot = null;
+            for (let k = 0; k < 4 && !spot; k++) { spot = this.findSpot(p.x, p.y, far(760), far(1350)); if (spot && seen(spot)) spot = null; }
             if (spot) {
                 const turf = districtAt(this.city, spot.x, spot.y);
                 const gang = DISTRICTS[turf].gang;
                 const isGang = this.rnd() < 0.2;
-                if (isGang) this.spawnGangConvoy(gang, spot, false);
+                if (isGang) {
+                    // Följarna kör 46 px bakom ledaren: den som hamnar i fri sikt skapas inte
+                    for (const v of this.spawnGangConvoy(gang, spot, false).slice(1)) if (seen(v)) this.removeVehicle(v);
+                }
                 else {
                     const v = createVehicle(pickTrafficType(turf, this.rnd), spot.x, spot.y, spot.angle, { rnd: this.rnd });
                     v.driver = 'traffic';
@@ -722,8 +744,11 @@ export class World {
             this.parkT = 1;
             this.city.lotSpots.forEach((spot, i) => {
                 if (this.parkedSpots.has(i) || (i * 37 + this.round) % 3 === 0) return;
+                // Utom synhåll i ringen 700–1300, eller i synhåll men nästan uppslukad av dimman
+                // (så att en parkering längs gatan man kör på hinner fyllas innan man är där)
                 const d = Math.hypot(spot.x - p.x, spot.y - p.y);
-                if (d < far(700) || d > far(1300)) return;
+                const hidden = d >= far(700) && d <= far(1300) && !seen(spot);
+                if (!hidden && !(d >= far(SIGHT_HAZE) && d <= far(2300) && seen(spot))) return;
                 const v = createVehicle(pickTrafficType(districtAt(this.city, spot.x, spot.y), this.rnd), spot.x, spot.y, spot.angle, { parked: true, rnd: this.rnd });
                 v.spotKey = i;
                 this.parkedSpots.set(i, v);
@@ -737,11 +762,11 @@ export class World {
         const pedIn = far(520), pedOut = far(980);
         for (let k = 0; k < 2 && peds + k < wantPeds; k++) {
             const sw = this.city.sidewalkTiles;
-            for (let tries = 0; tries < 12; tries++) {
+            for (let tries = 0; tries < 20; tries++) {
                 const [tx, ty] = sw[Math.floor(this.rnd() * sw.length)];
                 const x = center(tx) + (this.rnd() - 0.5) * 30, y = center(ty) + (this.rnd() - 0.5) * 30;
                 const d = Math.hypot(x - p.x, y - p.y);
-                if (d < pedIn || d > pedOut) continue;
+                if (d < pedIn || d > pedOut || seen({ x, y })) continue;
                 const dId = districtAt(this.city, x, y);
                 const r = this.rnd();
                 const metroShare = { centrum: 0.3, skogsbacken: 0.25 }[dId] ?? 0.12;
@@ -788,11 +813,12 @@ export class World {
         }
     }
 
-    damageVehicle(v, amount, by) {
+    // at = när spelarens handling skedde (en explosionskedja ärver tiden från bilen som sprängdes)
+    damageVehicle(v, amount, by, at = this.time) {
         if (v.wrecked || amount <= 0) return;
         v.hp -= amount;
         // by = 'player' bara när spelaren faktiskt orsakade smällen (skyldig i krocken, skott, sprängning)
-        if (by) { v.lastHitBy = by; v.lastHitAt = this.time; }
+        if (by) { v.lastHitAt = v.lastHitBy === by ? Math.max(v.lastHitAt ?? -1e9, at) : at; v.lastHitBy = by; }
         if (v.hp <= 0) {
             v.hp = 0;
             v.wrecked = true;
@@ -802,6 +828,8 @@ export class World {
             if (v.driver && v.driver !== 'player') this.ejectDriver(v);
             v.pol = null;
             if (v.lastHitBy === 'player' && this.time - (v.lastHitAt ?? -1e9) < 6) {
+                // Vraket brinner ut och exploderar om 4 s: det är samma olycka, inte ett nytt brott (explode)
+                v.wreckReported = true;
                 this.crime(v.spec.police ? 'copWreck' : 'wreck', { witnessed: copInside || this.copNear(600, true) });
                 const st = this.profile.cityStats;
                 if (st) st.wrecks = (st.wrecks || 0) + 1;
@@ -1617,7 +1645,9 @@ export class World {
                 const avx = a.vx, avy = a.vy, bvx = b.vx, bvy = b.vy;   // farten före studsen
                 const impact = collideVehicles(a, b, hit);
                 if (!hit.touch) continue;
-                const c = POL.touchContact(this.contacts, a, b, impact, now);
+                // En ny kontakt börjar först i steget där bilarna går in i varandra (hit.pen > 0)
+                const c = POL.touchContact(this.contacts, a, b, impact, now, POL.POLICE, hit.pen > 0);
+                if (!c) continue;
                 const playerCar = a.driver === 'player' ? a : b.driver === 'player' ? b : null;
                 const other = playerCar === a ? b : a;
                 const copCar = !!playerCar && other.driver === 'cop' && !other.wrecked;
@@ -1650,6 +1680,8 @@ export class World {
                 }
                 // En ny kontakt där spelaren är skyldig mot en polisbil: buckla, hård krock eller ramning
                 if (copCar && c.fresh && fault && playing) this.copContact(other, { deliberate: !!c.c.deliberate, impact, damage: otherDmg });
+                // En hårdare ny smäll mitt i samma kontakt: skadan kommer med i reparationen
+                else if (copCar && !c.fresh && otherDmg > 0 && fault && playing && this.police.incident) this.police.incident.copDamage += otherDmg;
             }
         }
         if ((this.contactPruneT = (this.contactPruneT || 0) + 1) > 120) { this.contactPruneT = 0; POL.pruneContacts(this.contacts, now); }
@@ -1734,7 +1766,9 @@ export class World {
         v.exploded = true; v.hulkT = 0;
         v.vx *= 0.2; v.vy *= 0.2;
         const p = this.player;
-        const byPlayer = v.lastHitBy === 'player';
+        // Spelarens fel bara om spelaren nyss gjorde något mot bilen (samma fönster som brottet nedan):
+        // en polisbil man buckade till för en minut sedan och som kvaddats av annat är inte spelarens sak
+        const byPlayer = v.lastHitBy === 'player' && this.time - (v.lastHitAt ?? -1e9) < 10;
         this.sfxAt('explosion', v.x, v.y, 1);
         const d0 = Math.hypot(v.x - p.x, v.y - p.y);
         this.shake = Math.max(this.shake, clamp(1.2 - d0 / 700, 0, 1));
@@ -1750,7 +1784,7 @@ export class World {
             const d = Math.hypot(u.x - v.x, u.y - v.y);
             if (d > R) continue;
             const k = 1 - d / R;
-            this.damageVehicle(u, 80 * k, byPlayer ? 'player' : null);
+            this.damageVehicle(u, 80 * k, byPlayer ? 'player' : null, v.lastHitAt);
             const l = d || 1;
             u.vx += (u.x - v.x) / l * 260 * k; u.vy += (u.y - v.y) / l * 260 * k;
             u.spin += (this.rnd() - 0.5) * 6 * k;
@@ -1759,7 +1793,8 @@ export class World {
             const d = Math.hypot(ped.x - v.x, ped.y - v.y);
             if (d < R) { ped.down = 4; ped.vx = (ped.x - v.x) / (d || 1) * 200; ped.vy = (ped.y - v.y) / (d || 1) * 200; }
         }
-        if (byPlayer && this.time - (v.lastHitAt ?? -1e9) < 10) this.crime('explosion', { witnessed: this.copNear(700, true) });
+        // Ett vrak spelaren redan fått ett brott för (wreck/copWreck) som brinner ut räknas inte en gång till
+        if (byPlayer && !v.wreckReported) this.crime('explosion', { witnessed: this.copNear(700, true) });
         if (p.vehicle === v) { p.hp = 0; this.wasted('Du sprängdes i luften!'); }
         else if (!p.vehicle && !p.dead && d0 < R) {
             // Till fots tar du smällen själv; i en hel bil tar bilen den
@@ -1769,15 +1804,22 @@ export class World {
     }
 
     // ── Platser, pickups, telefoner ──
-    enterZone(key, x, y, r) {
+    // ok = villkoret för zonen (t.ex. låg fart). Zonen räknas som besökt först när villkoret är
+    // uppfyllt: kör man in för fort och bromsar inne i den fungerar den ändå (förut låstes den tyst
+    // tills man åkt 40 px utanför). slow = besked en gång per passage när villkoret inte är uppfyllt.
+    enterZone(key, x, y, r, ok = true, slow = null) {
         const p = this.player;
         const d = Math.hypot(p.x - x, p.y - y);
         if (d < r) {
             if (this.inside.has(key)) return false;
+            if (!ok) {
+                if (slow && !this.inside.has('slow:' + key)) { this.inside.add('slow:' + key); this.message(slow); }
+                return false;
+            }
             this.inside.add(key);
             return true;
         }
-        if (d > r + 40) this.inside.delete(key);
+        if (d > r + 40) { this.inside.delete(key); this.inside.delete('slow:' + key); }
         return false;
     }
 
@@ -1799,10 +1841,10 @@ export class World {
         }
         const m = this.city.markers;
         for (const ph of m.phones) {
-            if (this.enterZone('phone-' + ph.gang, ph.x, ph.y, 54) && speed < 170) this.answerPhone(ph.gang);
+            if (this.enterZone('phone-' + ph.gang, ph.x, ph.y, 54, speed < 170)) this.answerPhone(ph.gang);
         }
-        m.sprays.forEach((sp, i) => { if (v && this.enterZone('spray-' + i, sp.x, sp.y, 66) && speed < 280) this.respray(); });
-        if (v && this.enterZone('fence', m.fence.x, m.fence.y, 72) && speed < 280) this.fenceVehicle();
+        m.sprays.forEach((sp, i) => { if (v && this.enterZone('spray-' + i, sp.x, sp.y, 66, speed < 280, '🎨 Sakta ner för att lacka om bilen.')) this.respray(); });
+        if (v && this.enterZone('fence', m.fence.x, m.fence.y, 72, speed < 280, '🔧 Sakta ner för att skrota bilen.')) this.fenceVehicle();
         if (!v && this.enterZone('dealer', m.dealer.x, m.dealer.y, 36)) {
             const left = (this.maxGoods ?? 10) - (this.profile.goodsBoughtThisRound || 0);
             if (left > 0) this.emit({ type: 'shop', left, price: GOODS_PRICE, goods: this.profile.cityGoods || 0 });
@@ -1810,14 +1852,14 @@ export class World {
         }
         if (!v && m.guns?.door && this.enterZone('door-guns', m.guns.door.x, m.guns.door.y, 20)) this.enterInterior('gunshop', m.guns);
         if (!v && m.stripclub?.door && this.enterZone('door-stripclub', m.stripclub.door.x, m.stripclub.door.y, 20)) this.enterInterior('stripclub', m.stripclub);
-        if (v && m.club && this.enterZone('club', m.club.x, m.club.y, 70) && speed < 220) this.visitClub();
+        if (v && m.club && this.enterZone('club', m.club.x, m.club.y, 70, speed < 220)) this.visitClub();
         if (!v && m.club && this.enterZone('club-foot', m.club.x, m.club.y, 26)) this.enterNightclub();
         // Gå in genom dörren (mot husväggen). Ditt eget gömställe har garage du kan köra in i.
         for (const d of this.doors()) {
             const door = d.door || d;
             if (!v) {
                 if (this.enterZone('door-' + (d.id || 'biz' + d.slot), door.x, door.y, 20)) { if (d.kind === 'business') this.enterBusiness(d); else this.enterPlace(d, false); }
-            } else if (d.kind === 'house' && this.ownsHouse(d) && this.enterZone('garage-' + d.id, door.x, door.y, 52) && speed < 220) {
+            } else if (d.kind === 'house' && this.ownsHouse(d) && this.enterZone('garage-' + d.id, door.x, door.y, 52, speed < 220, '🏡 Sakta ner för att köra in i garaget.')) {
                 this.enterPlace(d, true);
             }
         }
@@ -2138,6 +2180,8 @@ export class World {
         if (this.pvpT > 0 || p.dead) return false;
         const d = this.taxiDestinations()[i];
         if (!d || !this.spend(d.price)) { this.message('🚕 Du har inte råd med taxin.'); return false; }
+        // Ringd inifrån ett rum: ut genom dörren först (annars lade rummets kollision tillbaka dig där inne)
+        if (this.interior) this.exitInterior();
         p.x = d.x; p.y = d.y; p.vx = p.vy = 0;
         this.crew.forEach((c, j) => { const s = spotNear(this.city, d.x, d.y, j); c.x = s.x; c.y = s.y; c.hidden = false; });
         this.time += 12;
@@ -2248,6 +2292,8 @@ export class World {
         this.footStep(dt, input, 110, 165);
         p.x += p.vx * dt; p.y += p.vy * dt;
         INT.collideInterior(def, p, p.r);
+        // Folket är solida (man går inte rakt in i personalen); väggarna igen efter knuffen
+        if (INT.collideNpcs(I.state, p, p.r)) INT.collideInterior(def, p, p.r);
         p.hurtT = Math.max(0, (p.hurtT || 0) - dt);
         p.protT = Math.max(0, (p.protT || 0) - dt);
         p.punchT = Math.max(0, (p.punchT || 0) - dt);
@@ -2682,9 +2728,17 @@ export class World {
     }
 
     // Ser någon snut dig just nu? (räckvidden beror på insatsens nivå, police.js sightRange)
+    // Låg efterlysning: insatsens enheter (och snutar till fots) ser dig på hela avståndet, en
+    // patrull som bara kör sin runda först när du är nära (police.js patrolSight).
     copSees() {
         if (this.player.dead) return false;
-        return this.copNear(POL.sightRange(this.police.level), true);
+        const P = this.police, r = POL.sightRange(P.level);
+        if (!POL.lowLevel(P)) return this.copNear(r, true);
+        const p = this.player, rp = r * POL.POLICE.patrolSight;
+        const UNIT = POL.UNIT_TASKS;
+        const sees = (e, range) => Math.abs(e.x - p.x) < range && Math.abs(e.y - p.y) < range && Math.hypot(e.x - p.x, e.y - p.y) < range && lineClear(this.city, e.x, e.y, p.x, p.y);
+        return this.vehicles.some(v => v.driver === 'cop' && !v.wrecked && sees(v, UNIT.has(v.pol?.task) ? r : rp)) ||
+            this.peds.some(o => o.cop && !(o.down > 0) && sees(o, o.attack ? r : rp));
     }
 
     // Snuten kliver ur bilen och springer efter dig (eget tak för snutar till fots, police.js footCap)
@@ -2848,14 +2902,20 @@ export class World {
     // Håller reda på insatsens enheter (v.pol.task), ger dem roller och skickar förstärkning
     // högst en i taget (POLICE.reinforceGap), utom synhåll och inte framför bilen. Tak per
     // insats (nivån), per distrikt och totalt. Städar när insatsen är slut.
-    dispatchPolice(far = b => b) {
+    // Alla avstånd här är fasta: kameraläget får inte ändra polisen (kontraktet avsnitt 1).
+    // view (manageSpawns far) används BARA för att en ny polisbil inte ska synas dyka upp i 3D.
+    dispatchPolice(view = b => b) {
         const p = this.player, P = this.police, C = POL.POLICE;
         const dist = e => Math.hypot(e.x - p.x, e.y - p.y);
         let cops = this.vehicles.filter(v => v.driver === 'cop' && !v.wrecked);
         for (const v of cops) if (!v.pol) v.pol = { task: 'patrol', role: null, side: 1 };
-        // Enheter som lämnat insatsen försvinner när de är långt borta och utom synhåll
+        // Enheter som lämnat insatsen försvinner när de är långt borta och utom synhåll. Polisbilar
+        // längre bort än städgränsen i överblick (1900) tas bort som där — i 3D bara utom synhåll.
         for (const v of cops) {
-            if (v.pol.task === 'leave' && dist(v) > far(900) && !lineClear(this.city, v.x, v.y, p.x, p.y)) this.removeVehicle(v);
+            const d = dist(v);
+            if ((v.pol.task === 'leave' && d > 900) || d > 1900) {
+                if (v !== p.vehicle && !v.persistent && !lineClear(this.city, v.x, v.y, p.x, p.y)) this.removeVehicle(v);
+            }
         }
         cops = cops.filter(v => this.vehicles.includes(v));
         const UNIT = new Set(['stop', 'chase', 'search']);
@@ -2870,7 +2930,7 @@ export class World {
         for (const v of units) v.pol.task = task;
         // Förstärkning: en i taget, först en patrull i närheten, annars en ny utom synhåll
         if (units.length < want && P.time - this.disp.lastT >= C.reinforceGap[P.level]) {
-            const v = this.recruitCop(cops, task) || this.spawnCop(task, far);
+            const v = this.recruitCop(cops, task) || this.spawnCop(task, view);
             if (v) { v.pol = { task, role: 'tail', side: 1 }; units.push(v); this.disp.lastT = P.time; if (!cops.includes(v)) cops.push(v); }
         }
         // Roller: närmast = bakom dig, sedan vid sidan av din väg och genskjutning — inte alla mot samma punkt
@@ -2880,7 +2940,7 @@ export class World {
         // Patruller: två runt dig när inget pågår (en till vid högt tryck)
         const patrols = cops.filter(v => v.pol.task === 'patrol' && dist(v) < 1800).length;
         if (patrols < POL.patrolTarget(P) && cops.length < C.totalCars) {
-            const v = this.spawnCop('patrol', far);
+            const v = this.spawnCop('patrol', view);
             if (v) v.pol = { task: 'patrol', role: null, side: 1 };
         }
     }
@@ -2906,7 +2966,7 @@ export class World {
     recruitCop(cops, task) {
         const P = this.police, p = this.player;
         const at = task === 'search' && P.lastSeen ? P.lastSeen : p;
-        let best = null, bd = 1400;
+        let best = null, bd = POL.lowLevel(P) ? POL.POLICE.recruitLow : 1400;
         for (const v of cops) {
             if (v.pol?.task !== 'patrol' && v.pol?.task !== 'leave') continue;
             const d = Math.hypot(v.x - at.x, v.y - at.y);
@@ -2917,19 +2977,22 @@ export class World {
 
     // En ny polisbil: utom synhåll, inte framför bilen, inom distriktets och det totala taket.
     // Patrull långt bort; insats runt dig; sökning runt platsen där de såg dig sist.
-    spawnCop(task, far = b => b) {
+    // Avstånden är fasta (samma i alla kameralägen). Ingen polisbil skapas i fri sikt närmare än
+    // SIGHT_FAR (samma regel som för trafik och folk): i 3D ser man längs gatan ända ut i dimman.
+    // view = manageSpawns far (överblick LÅNGT) gäller bara om den någon gång når längre än så.
+    spawnCop(task, view = b => b) {
         const P = this.police, C = POL.POLICE, p = this.player, pv = p.vehicle;
         const all = this.vehicles.filter(v => v.driver === 'cop' && !v.wrecked);
         if (all.length >= C.totalCars) return null;
         const search = task === 'search' && P.lastSeen;
         const at = search ? P.lastSeen : p;
-        const [minD, maxD] = search ? [250, 800] : task === 'patrol' ? [far(800), far(1400)] : [far(650), far(1150)];
+        const [minD, maxD] = search ? [250, 800] : task === 'patrol' ? [800, 1400] : [650, 1150];
         const sp = pv ? Math.hypot(pv.vx, pv.vy) : 0;
         for (let k = 0; k < 10; k++) {
             const spot = this.findSpot(at.x, at.y, minD, maxD);
             if (!spot) continue;
             const dx = spot.x - p.x, dy = spot.y - p.y, d = Math.hypot(dx, dy);
-            if (d < 500 || (d < 1000 && lineClear(this.city, spot.x, spot.y, p.x, p.y))) continue;   // syns inte dyka upp
+            if (d < 500 || (d < Math.max(view(1000), SIGHT_FAR) && lineClear(this.city, spot.x, spot.y, p.x, p.y))) continue;   // syns inte dyka upp
             if (sp > 60 && (dx * pv.vx + dy * pv.vy) / (d * sp) > 0.3 && d < 1400) continue;          // inte framför bilen
             const dId = districtAt(this.city, spot.x, spot.y);
             if (all.filter(v => districtAt(this.city, v.x, v.y) === dId).length >= C.districtCars) continue;

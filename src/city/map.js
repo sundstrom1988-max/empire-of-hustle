@@ -389,6 +389,9 @@ export function generateCity(seed = 1337) {
     // Stripklubben i Hamnen och en riktig dörr in till Pang-Pelle
     const stripclub = withDoor(mk(nearestCurb(50, 44, (x, y) => districtOfTile(x, y) === 'hamnen' && nextToBuilding(x, y), 5), { kind: 'stripclub', id: 'stripclub', name: 'Club Diamant' }));
     withDoor(guns);
+    // Nattklubbens 🍾-entré: dörren på väggen bakom trottoaren, så att man går ut mot gatan
+    // (utan dörr lade exitInterior en 6 px från fasaden med blicken in i den)
+    withDoor(club);
 
     // Pickup-platser och gatlampor
     const pickupSpots = [];

@@ -237,6 +237,29 @@ export function collideInterior(def, ent, r) {
     }
 }
 
+// Folket i rummet är solida för spelaren: i förstaperson ska man inte kunna gå rakt in i (och
+// genom) en vakt eller kassör. Bara spelaren skjuts undan, aldrig personen. De som gått, försvunnit
+// eller ligger ner (bråk, sover) går att kliva över. true = spelaren knuffades (kör väggarna igen).
+export const NPC_RADIUS = 7;
+export function collideNpcs(state, ent, r, npcR = NPC_RADIUS) {
+    const hasV = typeof ent.vx === 'number' && typeof ent.vy === 'number';
+    let hit = false;
+    for (const n of state.npcs || []) {
+        if (n.gone || n.dead || n.down > 0 || n.brawl === 'down' || n.lie || !(Number.isFinite(n.x) && Number.isFinite(n.y))) continue;
+        const dx = ent.x - n.x, dy = ent.y - n.y, R = npcR + r, d2 = dx * dx + dy * dy;
+        if (d2 >= R * R) continue;
+        const d = Math.sqrt(d2);
+        const nx = d > 1e-6 ? dx / d : 1, ny = d > 1e-6 ? dy / d : 0;
+        ent.x = n.x + nx * R; ent.y = n.y + ny * R;
+        if (hasV) {
+            const vn = ent.vx * nx + ent.vy * ny;
+            if (vn < 0) { ent.vx -= vn * nx; ent.vy -= vn * ny; }
+        }
+        hit = true;
+    }
+    return hit;
+}
+
 // Närmaste interaktion vars cirkel innehåller punkten
 export function interactionAt(def, x, y) {
     let best = null, bd = Infinity;

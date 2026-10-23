@@ -583,11 +583,150 @@ describe('Polisen i världen: gripande, platser, sparning', () => {
     });
 });
 
+// ── Rättningar efter granskningen av etapp 0 ──
+describe('Polisen: rättningar efter granskningen', () => {
+    // Kamerabyte ändrar BARA presentationen (kontraktet avsnitt 1). index.js sätter viewExtra/viewDense
+    // i 3D (följkamera 800/1,45). Förut räknade dispatchern patruller inom fasta 1800 px men skapade dem
+    // på far(800..1400) = 1600–2200 px: i följkamera fylldes stan med 8 polisbilar och insatsen fick inga enheter.
+    it('kameraläget (viewExtra 0 eller 800) ändrar inte antalet polisbilar eller hur fort insatsen kommer', () => {
+        const scene = (extra, dense, seed) => {
+            const w = new World(city, createPlayerState('kimit'), { round: 2, rnd: mulberry32(seed) });
+            w.viewExtra = extra; w.viewDense = dense;
+            w.vehicles = []; w.peds = [];
+            // Den riktiga manageSpawns körs; trafik och folk plockas bort efteråt (bara polisen mäts)
+            const strip = w2 => { w2.vehicles = w2.vehicles.filter(v => v.driver === 'cop'); w2.peds = w2.peds.filter(o => o.cop); };
+            let sum = 0, n = 0, max = 0;
+            run(w, 40, IDLE, (w2, t) => { strip(w2); if (Math.round(t / STEP) % 30 === 0) { const c = cops(w2).length; sum += c; n++; max = Math.max(max, c); } });
+            w.crime('hitPed', { witnessed: true });   // nivå 2: jakt
+            let nearT = null;
+            run(w, 12, IDLE, (w2, t) => { strip(w2); if (nearT === null && units(w2).some(v => Math.hypot(v.x - w2.player.x, v.y - w2.player.y) < 300)) nearT = t; });
+            return { avg: sum / n, max, nearT };
+        };
+        for (const seed of [1, 2]) {
+            const top = scene(0, 1, seed), chase = scene(800, 1.45, seed);
+            expect(top.avg).toBeLessThan(POL.patrolTarget(POL.createPolice()) + 1);
+            expect(chase.avg).toBeLessThan(POL.patrolTarget(POL.createPolice()) + 1);
+            expect(chase.max).toBeLessThan(POL.POLICE.totalCars);
+            expect(top.nearT).not.toBe(null);
+            expect(chase.nearT).not.toBe(null);    // insatsen får sina enheter även i följkamera
+        }
+    });
+
+    // physics.js räknar bilarna som i kontakt redan inom 2 px. Förut blev det steget (utan smäll)
+    // kontaktens början: en hård krock bedömdes med smällen 0 och blev "Lätt krock" + varning,
+    // beroende på var bilen råkade starta.
+    it('samma hårda krock ger samma händelse och samma bot oavsett startpunkt (0–5 px)', () => {
+        const out = [];
+        for (const off of [0, 1, 2, 3, 4, 5]) {
+            const w = quietWorld(9);
+            const car = playerCar(w, X0 + off);
+            car.vx = 320;
+            const cop = parkedCop(w, X0 + 260);
+            const hp0 = cop.hp;
+            for (let i = 0; i < 72 && !w.police.incidents.length; i++) { w.update(STEP, { ...IDLE, throttle: 1 }); w.events.length = 0; }
+            run(w, 0.5);
+            const o = POL.stopOutcome(w.police, 100000);
+            out.push({ kinds: w.police.incidents.map(e => e.kind).join(','), level: w.police.level, logged: Math.round(w.police.incident?.copDamage || 0), dmg: Math.round(hp0 - cop.hp), total: o.total });
+        }
+        for (const r of out) {
+            expect(r.kinds).toBe('crash');
+            expect(r.level).toBe(2);
+            expect(r.logged).toBe(r.dmg);           // polisbilens skada kommer med i reparationen
+            expect(r.total).toBe(out[0].total);
+        }
+        expect(out[0].total).toBeGreaterThan(POL.POLICE.fine[2]);
+    });
+
+    it('en explosion ger inte spelaren skulden för en bil hen rörde för en minut sedan', () => {
+        const w = quietWorld(5);
+        w.player.x = X0 - 400; w.player.y = ROAD_Y;   // står en bit bort och gör ingenting
+        const A = parkedCop(w, X0), B = parkedCop(w, X0 + 60);
+        w.time = 100; w.damageVehicle(A, 5, 'player');   // spelaren buckade till A
+        w.time = 160;
+        B.hp = 30;
+        w.damageVehicle(A, 999, null);                   // A kvaddas av något annat en minut senare
+        run(w, 5);
+        expect(A.exploded).toBe(true);
+        expect(B.wrecked).toBe(true);                     // explosionen tog B
+        expect(B.lastHitBy).not.toBe('player');
+        expect(w.police.incidents.length).toBe(0);
+        expect(w.police.level).toBe(0);
+    });
+
+    it('en trafikolycka räknas en gång: vraket som brinner ut ger inte ett nytt "Sprängde en bil"', () => {
+        const w = quietWorld(3);
+        const car = playerCar(w);
+        const civ = createVehicle('volvo', X0 + 300, ROAD_Y, 0);
+        civ.driver = 'traffic'; civ.hp = 15;
+        w.vehicles.push(civ);
+        parkedCop(w, X0 - 250);                           // en polisbil ser det
+        let hit = false;
+        run(w, 12, () => {
+            if (!hit && Math.abs(civ.x - car.x) < 50) hit = true;
+            return { ...IDLE, throttle: !hit && forwardSpeed(car) < 300 ? 1 : 0, handbrake: hit };
+        });
+        expect(civ.exploded).toBe(true);
+        expect(kinds(w, 'wreck')).toBe(1);
+        expect(kinds(w, 'explosion')).toBe(0);
+        expect(w.police.level).toBe(2);                   // inte nivå 3 (gripande) för samma olycka
+    });
+
+    it('omladdning inne på ett känt ställe: ute vid HQ visar HUD:en nedräkningen, inte "väntar utanför"', () => {
+        const club = city.markers.stripclub, o = club.door;
+        // Stopp: personalen ringde medan man var inne
+        const prof = createPlayerState('kimit');
+        const w = quietWorld(39, prof);
+        w.player.x = o.x - DX[o.side] * 26; w.player.y = o.y - DY[o.side] * 26;
+        expect(w.enterInterior('stripclub', club)).toBe(true);
+        w.crime('brawlCall', { at: w.interior.door, known: true });
+        run(w, 3);
+        const w2 = quietWorld(40, JSON.parse(JSON.stringify(prof)));
+        expect(w2.interior).toBeFalsy();
+        expect(w2.police.known).toBe(null);
+        let st = POL.policeStatus(w2.police);
+        expect(st.phase).toBe('stop');
+        expect(st.action).toBe('Polisen vill prata – stanna på en säker plats');
+        expect(st.countdown).toBeGreaterThanOrEqual(POL.POLICE.stopWindow - 0.1);
+        // Sökning: de såg dig gå in
+        POL.POLICE.patrol = 0;
+        const prof3 = createPlayerState('kimit');
+        const w3 = quietWorld(41, prof3);
+        w3.player.x = o.x - DX[o.side] * 26; w3.player.y = o.y - DY[o.side] * 26;
+        parkedCop(w3, o.x - DX[o.side] * 160, o.y - DY[o.side] * 160);
+        w3.crime('copAssault', { witnessed: true });
+        expect(w3.enterInterior('stripclub', club)).toBe(true);
+        expect(w3.police.known).toBeTruthy();
+        run(w3, 2);
+        const w4 = quietWorld(42, JSON.parse(JSON.stringify(prof3)));
+        st = POL.policeStatus(w4.police);
+        expect(st.phase).toBe('search');
+        expect(st.action).toBe('SÖKER där du sågs senast');
+        expect(st.countdown).toBeGreaterThan(0);
+    });
+
+    it('taket för snutar till fots håller även när polisbilar kvaddas och förarna kastas ut', () => {
+        const w = quietWorld(5);
+        w.player.x = X0; w.player.y = ROAD_Y + 40;
+        setStars(w.wanted, 3, 'test');
+        for (let i = 0; i < 6; i++) {
+            const v = parkedCop(w, X0 + 120 + i * 70);
+            v.pol = { task: 'chase', role: 'tail', side: 1 };
+            w.damageVehicle(v, 999, null);
+        }
+        expect(w.peds.filter(o => o.cop).length).toBe(6);              // alla sex förarna kom ut
+        expect(w.footCops()).toBe(POL.footCap(3));                     // men bara taket anfaller
+    });
+});
+
 // ── Standardiserad flyktsimulering ──
-// Fem försök med startbilen (Morsans Volvo) från fem fasta platser i stan. Föraren är ett enkelt
-// skript som en ny spelare: följer vägarna mot ett mål bort från polisen, bromsar inför svängar,
-// styr förbi en polisbil rakt framför och backar loss om den fastnar. Ingen trafik eller folk.
+// Försök med startbilen (Morsans Volvo) från fem fasta platser i stan, två frön per plats. Föraren är
+// ett enkelt skript som en ny spelare: följer vägarna mot ett mål bort från polisen, bromsar inför
+// svängar, styr förbi en polisbil rakt framför och backar loss om den fastnar. Ingen trafik eller folk,
+// men stan har levt 15 s innan (patrullerna finns redan runt spelaren när det händer).
 // Lyckat = polisen ger upp (nivå 0) inom 120 s utan att man blivit gripen eller fått bot.
+// Kalibrering (samma förare, 12 frön × 5 platser = 60 försök per nivå): nivå 1 51/60, nivå 2 50/60 (40 inom
+// 60 s, sökningen slut ~20 s efter tappad kontakt), nivå 3 0/60, nivå 4 0/60. Med trafik och folk (30 försök):
+// nivå 2 18/30, nivå 4 0/30. Trösklarna nedan tål små ändringar i fysiken (prövat med ändrat grepp och styrning).
 const road = (x, y) => tileAt(city, x, y) === T.ROAD;
 function roadPath(from, to) {
     const W = city.w, prev = new Int32Array(W * city.h).fill(-2), q = [from[1] * W + from[0]];
@@ -662,17 +801,19 @@ const STARTS = START_POINTS.map(([px, py]) => {
     }
     return best.v;
 });
-function escapeAttempt(i, kind) {
-    const w = quietWorld(100 + i);
+function escapeAttempt(i, kind, k = 0) {
+    const w = quietWorld(100 + i + k * 1000);
     const [tx, ty, dir] = STARTS[i];
     const car = playerCar(w, tx * TILE + 32, ty * TILE + 32, DIR_ANGLE[dir]);
     car.spec.name = 'Morsans Volvo';
+    // Stan lever en stund först: dispatcherns patruller finns runt spelaren
+    for (let n = 0; n < 15 * 60; n++) { car.vx = car.vy = 0; w.update(STEP, { ...IDLE, handbrake: true }); w.events.length = 0; }
     car.vx = Math.cos(car.angle) * 150; car.vy = Math.sin(car.angle) * 150;
     // En polisbil 110 px bakom såg det hända
     const cop = createVehicle('police', car.x - Math.cos(car.angle) * 110, car.y - Math.sin(car.angle) * 110, car.angle);
     cop.driver = 'cop'; initLaneAI(cop, tx - DX[dir], ty - DY[dir], dir, w.rnd); cop.vx = car.vx; cop.vy = car.vy;
     w.vehicles.push(cop);
-    const drive = fleeDriver(w, car, mulberry32(7 + i));
+    const drive = fleeDriver(w, car, mulberry32(7 + i + k * 31));
     w.update(STEP, IDLE);
     w.crime(kind, { witnessed: true });
     const level = w.police.level;
@@ -688,16 +829,19 @@ function escapeAttempt(i, kind) {
 }
 
 describe('Polisen: standardiserad flykt med startbilen', () => {
-    it('låg efterlysning går att undkomma i flera av fem försök; grovt våld ger tydligt större motstånd', () => {
-        const low = [0, 1, 2, 3, 4].map(i => escapeAttempt(i, 'hitPed'));    // nivå 2: Efterlysning
-        const high = [0, 1, 2, 3, 4].map(i => escapeAttempt(i, 'copKill'));  // nivå 4: Väpnat hot
+    it('låg efterlysning går att undkomma i de flesta försök inom ungefär en minut; grovt våld ger tydligt större motstånd', () => {
+        const runs = kind => [0, 1].flatMap(k => [0, 1, 2, 3, 4].map(i => escapeAttempt(i, kind, k)));
+        const low = runs('hitPed');    // nivå 2: Efterlysning
+        const high = runs('copKill');  // nivå 4: Väpnat hot
         const okLow = low.filter(r => r.escaped).length, okHigh = high.filter(r => r.escaped).length;
-        console.log(`[flykt] nivå 2: ${okLow}/5 undkom ${JSON.stringify(low)}`);
-        console.log(`[flykt] nivå 4: ${okHigh}/5 undkom ${JSON.stringify(high)}`);
+        const fastLow = low.filter(r => r.escaped && r.t <= 70).length;
+        console.log(`[flykt] nivå 2: ${okLow}/${low.length} undkom (${fastLow} inom 70 s) ${JSON.stringify(low)}`);
+        console.log(`[flykt] nivå 4: ${okHigh}/${high.length} undkom ${JSON.stringify(high)}`);
         expect(low.every(r => r.level === 2)).toBe(true);
         expect(high.every(r => r.level === 4)).toBe(true);
-        expect(okLow).toBeGreaterThanOrEqual(3);
-        expect(okHigh).toBeLessThan(okLow);
+        expect(okLow).toBeGreaterThanOrEqual(6);        // majoriteten (uppmätt 50/60)
+        expect(fastLow).toBeGreaterThanOrEqual(5);      // ...och oftast inom ungefär en minut
+        expect(okHigh).toBeLessThanOrEqual(2);          // nivå 4 förblir svårt (uppmätt 0/60)
         const avg = a => a.reduce((s, r) => s + r.maxUnits, 0) / a.length;
         expect(avg(high)).toBeGreaterThan(avg(low));
         for (const r of low) expect(r.maxUnits).toBeLessThanOrEqual(POL.carCap(3));   // aldrig en vägg av bilar

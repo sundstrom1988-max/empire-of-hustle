@@ -207,6 +207,14 @@ describe('stickDrive (i bilen)', () => {
         expect(v.angle).toBeLessThan(before);
     });
 
+    // Mot en vägg studsar en bil som gasar fram till ~−0,4 px/s. Det är inte att backa:
+    // ratten ska inte vändas förrän bilen verkligen rullar bakåt (C:s förslag i NOTES).
+    it('studs mot väggen (fart −0,4) vänder inte ratten; riktig backning (−40) gör det', () => {
+        expect(stickDrive(on(R, 0), N, -0.4).steer).toBeGreaterThan(0.9);     // höger = höger
+        expect(stickDrive(on(-R, 0), N, -0.4).steer).toBeLessThan(-0.9);
+        expect(stickDrive(on(R * 0.7, R * 0.7), N, -40).steer).toBeGreaterThan(0.9); // backar på riktigt: vänd ratt, bakänden mot draget
+    });
+
     it('blocked: backar och vrider nosen mot draget (trepunktsvändning)', () => {
         const c = stickDrive(on(R, 0), N, 0, 350, true);   // nosen norr, drag österut
         expect(c.throttle).toBeLessThan(-0.5);
@@ -258,8 +266,15 @@ describe('stickCar (bilen fastnar mot en vägg)', () => {
 
     it('hittar en vägg att testa mot', () => { expect(spot).not.toBeNull(); });
 
-    it('utan hjälp står bilen still (felet som stickCar rättar)', () => {
-        expect(run(pinned(), on(R, 0), 2, null).moved).toBeLessThan(5);
+    // Förut stod bilen still här (rattutslaget vändes när väggen studsade den till −0,4 px/s,
+    // så den vred sig åt fel håll). Med tröskeln vrider den sig loss längs väggen direkt.
+    it('även utan stickCar vrider sig bilen loss åt det håll man drar (ingen låsning mot väggen)', () => {
+        const v = pinned();
+        const r = run(v, on(R, 0), 2, null);
+        expect(r.dx).toBeGreaterThan(40);
+        expect(Math.cos(v.angle)).toBeGreaterThan(0.5);
+        const w = pinned();
+        expect(run(w, on(-R, 0), 2, null).dx).toBeLessThan(-40);
     });
 
     it('drag 90° österut: kommer loss och kör österut inom 2 s', () => {

@@ -82,3 +82,24 @@ describe('HUD', () => {
         expect(arrows).toBe(0);
     });
 });
+
+// Granskningen/C: "visa tydligt bilens framända och rörelseriktning" — i förstaperson ser man inte
+// backljusen, så HUD:en säger när bilen backar (v.reversing från fysiken)
+describe('HUD: bilen backar', () => {
+    it('BACKAR står vid bilens namn bara medan bilen rullar bakåt', () => {
+        const w = makeWorld();
+        const hud = new Hud();
+        const car = createVehicle('volvo', w.player.x, w.player.y, 0);
+        w.vehicles.push(car); car.driver = 'player'; w.player.vehicle = car;
+        const texts = () => {
+            const out = [], ctx = fakeCtx();
+            ctx.fillText = t => out.push(String(t));
+            hud.draw(ctx, w, fakeRenderer(w), {});
+            return out.join(' | ');
+        };
+        car.reversing = true;
+        expect(texts()).toContain('BACKAR');
+        car.reversing = false;
+        expect(texts()).not.toContain('BACKAR');
+    });
+});

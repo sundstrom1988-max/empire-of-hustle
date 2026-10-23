@@ -5,11 +5,14 @@ import {
     lookTurn, stepPitch, PITCH_MAX, LOOK_RAD, TOUCH_LOOK, aimPoint, AIM_DEADZONE, stickToWorld, followYaw, chaseRate, controlYaw,
     createFreeLook, stepFreeLook, resetFreeLook, FREE_HOLD, FREE_MAX_YAW, eTarget, frameStats, wrapAngle,
     pinchView, pinchSettle, pinchU, TOP_MUL, CHASE_DIST, FPS_U, nearestIndex, loadZoomX, saveZoomX, ZOOMX_KEY,
-    lookStickDelta, LOOK_STICK_YAW, LOOK_STICK_PITCH
+    lookStickDelta, LOOK_STICK_YAW, LOOK_STICK_PITCH, mapTapToggles, viewYaw, spawnView
 } from '../src/city/camera.js';
-import { stickPedals } from '../src/city/input.js';
-import { World } from '../src/city/world.js';
-import { generateCity } from '../src/city/map.js';
+import { stickPedals, primaryTouch } from '../src/city/input.js';
+import { World, SIGHT_FAR, SIGHT_HAZE } from '../src/city/world.js';
+import { lineClear, createPed } from '../src/city/ai.js';
+import { generateCity, isSolidAt } from '../src/city/map.js';
+import { INTERIORS } from '../src/city/interiors.js';
+import { SHOPS } from '../src/data/gameData.js';
 import { mulberry32 } from '../src/city/rng.js';
 import { createPlayerState } from '../src/game/state.js';
 import { createVehicle } from '../src/city/vehicles.js';
@@ -566,5 +569,183 @@ describe('titt-joysticken och bilens pedaler (mobil i 3D)', () => {
         expect(r.steer).toBeGreaterThan(0.6);
         expect(stickPedals({ active: true, x: -0.7, y: -0.7, mag: 1 }).steer).toBeLessThan(-0.6);
         expect(stickPedals({ active: false, x: 1, y: 1, mag: 1 })).toEqual({ throttle: 0, steer: 0 });
+    });
+});
+
+// ── Rättningar efter granskningen av etapp 0 (rättare A) ──
+describe('minikartan: tryck med fångad mus', () => {
+    const r = { x: 16, y: 396, size: 134 };
+    it('låst pekare över minikartan öppnar inte stora kartan (klicket är ett slag mitt i bild)', () => {
+        expect(mapTapToggles(r, 80, 460, { locked: true })).toBe(false);
+        expect(mapTapToggles(r, 80, 460, { locked: true, showMap: true })).toBe(false);
+    });
+    it('utan lås: tryck på minikartan öppnar, tryck var som helst stänger; nyp och meny räknas inte', () => {
+        expect(mapTapToggles(r, 80, 460)).toBe(true);
+        expect(mapTapToggles(r, 600, 100)).toBe(false);
+        expect(mapTapToggles(r, 600, 100, { showMap: true })).toBe(true);
+        expect(mapTapToggles(r, 80, 460, { pinching: true })).toBe(false);
+        expect(mapTapToggles(r, 80, 460, { modal: true })).toBe(false);
+        expect(mapTapToggles(null, 80, 460)).toBe(false);
+    });
+});
+
+// Utgången ur ett rum: spelaren ska stå på fri mark med blicken ut mot gatan — inte 6 px
+// från fasaden med näsan mot den (nattklubbens 🍾-entré saknade dörr, så side blev 0 = norr).
+describe('utgångar ur rummen: fri mark och blicken bort från huset', () => {
+    const city = generateCity(1337);
+    const free = (x, y) => !isSolidAt(city, x, y);
+    const check = (w, label) => {
+        const p = w.player;
+        // ingen vägg inom kroppen (radie 8,5) plus lite luft, åt något håll
+        for (let k = 0; k < 16; k++) {
+            const a = k / 16 * Math.PI * 2;
+            expect(free(p.x + Math.cos(a) * (p.r + 3), p.y + Math.sin(a) * (p.r + 3)), `${label}: vägg intill`).toBe(true);
+        }
+        // fri sikt rakt fram minst ett par steg
+        for (let d = 4; d <= 48; d += 4) expect(free(p.x + Math.cos(p.angle) * d, p.y + Math.sin(p.angle) * d), `${label}: vägg ${d} px framför`).toBe(true);
+    };
+    const exitFrom = (enter) => {
+        const w = new World(city, createPlayerState('kimit'), { round: 2, rnd: mulberry32(5) });
+        w.peds = []; w.vehicles = []; w.manageSpawns = () => { };
+        w.time = (21 - 19.5) * 24; // 21:00: nattklubben är öppen
+        enter(w);
+        expect(w.interior).toBeTruthy();
+        w.exitInterior();
+        return w;
+    };
+    it('nattklubbens 🍾-entré i Centrum', () => {
+        if (!INTERIORS.club) return;
+        const w = exitFrom(w => w.enterNightclub());
+        check(w, 'nattklubben');
+        // och man kommer ut vid entrén, inte någon annanstans
+        const c = city.markers.club;
+        expect(Math.hypot(w.player.x - c.x, w.player.y - c.y)).toBeLessThan(40);
+    });
+    it('Club Diamant, Pang-Pelle och företagen med egna rum', () => {
+        check(exitFrom(w => w.enterInterior('stripclub', city.markers.stripclub)), 'Club Diamant');
+        check(exitFrom(w => w.enterInterior('gunshop', city.markers.guns)), 'Pang-Pelle');
+        for (const b of city.markers.businesses) {
+            const w = new World(city, createPlayerState('kimit'), { round: 2, rnd: mulberry32(5) });
+            w.peds = []; w.vehicles = []; w.manageSpawns = () => { };
+            w.enterBusiness(b);
+            if (!w.interior) continue; // menyn vid dörren, inget rum
+            w.exitInterior();
+            check(w, SHOPS[b.slot].name);
+        }
+    });
+});
+
+// Bärbar dator med pekskärm (Chrome på Windows): '(pointer: fine)' men 'ontouchstart' finns.
+// Förut fick den pekgränssnittet: inget pekarlås, ingen musblick — blicken gick inte att vrida.
+describe('pekgränssnitt bara när den primära pekaren är ett finger', () => {
+    const win = (coarse, touchEv) => {
+        const w = { matchMedia: q => ({ matches: q === '(pointer: coarse)' ? coarse : q === '(pointer: fine)' ? !coarse : false }) };
+        if (touchEv) w.ontouchstart = null;
+        return w;
+    };
+    it('mus + pekskärm = dator; telefon/platta = touch; utan matchMedia = dator', () => {
+        expect(primaryTouch(win(false, true))).toBe(false);   // bärbar med pekskärm
+        expect(primaryTouch(win(false, false))).toBe(false);  // vanlig dator
+        expect(primaryTouch(win(true, true))).toBe(true);     // telefon
+        expect(primaryTouch({ ontouchstart: null })).toBe(false);
+        expect(primaryTouch(null)).toBe(false);
+        expect(primaryTouch({ matchMedia() { throw new Error('gammal webbläsare'); } })).toBe(false);
+    });
+});
+
+// Granskningen: på 144 Hz stod förstapersonskameran still i 58 % av bildrutorna medan musen
+// rördes jämnt, och kom sedan ikapp i klumpar — blicken gick bara in i världens 60 Hz-steg.
+describe('blicken syns varje bildruta, även över 60 Hz', () => {
+    const STEP = 1 / 60;
+    // Spelloopen i liten skala (som index.js frame): blicken varje bildruta, gubben vrids i stegen
+    const simulate = (hz, mode) => {
+        const p = { x: 0, y: 0, angle: 0, vehicle: null };
+        let pending = 0, acc = 0, camYaw = NaN, last = null, still = 0, n = 0;
+        for (let f = 0; f < 144; f++) {
+            const dt = 1 / hz;
+            const t = lookTurn(6, 1, false);            // jämn musrörelse: 6 px per bildruta
+            pending += t;
+            acc += dt;
+            while (acc >= STEP) { p.angle += pending; pending = 0; acc -= STEP; } // world.update (turn i första steget)
+            if (mode === 'chase') camYaw = followYaw(camYaw, p.angle + pending, dt, chaseRate({}), t);
+            const yaw = viewYaw(mode, p, camYaw, pending);
+            if (last !== null && f > 4) { n++; if (Math.abs(yaw - last) < 1e-9) still++; }
+            last = yaw;
+        }
+        return still / n;
+    };
+    it('förstaperson: ingen bildruta utan vridning vid 60, 90 och 144 Hz', () => {
+        for (const hz of [60, 90, 144]) expect(simulate(hz, 'fps'), `${hz} Hz`).toBe(0);
+    });
+    it('följkamera till fots: samma sak', () => {
+        for (const hz of [60, 90, 144]) expect(simulate(hz, 'chase'), `${hz} Hz`).toBe(0);
+    });
+    it('i bilen: bilens vinkel och fri blick, inte gubbens väntande vridning', () => {
+        const v = { angle: 1 };
+        expect(viewYaw('fps', { angle: 0, vehicle: v }, NaN, 0.5, 0.2)).toBeCloseTo(1.2, 9);
+        expect(viewYaw('chase', { angle: 0, vehicle: v }, 0.8, 0.5, 0)).toBeCloseTo(0.8, 9);
+        expect(viewYaw('fps', { angle: 0.3, vehicle: null }, NaN, 0.1)).toBeCloseTo(0.4, 9);
+    });
+});
+
+// Granskningen (R5): i 3D sköt index.js ut ringen där folk och bilar skapas (viewExtra 700/800,
+// viewDense 1,4) — nästan inga bilar inom 1000 px i följkamera/förstaperson mot ~11 i överblick.
+// Nu är världen densamma i alla lägen, och inget civilt skapas eller städas där spelaren ser det.
+describe('folk och bilar: samma värld i alla kameralägen', () => {
+    it('följkamera och förstaperson skjuter inte ut ringen (bara överblick LÅNGT gör det)', () => {
+        expect(spawnView('fps')).toEqual({ extra: 0, dense: 1 });
+        expect(spawnView('chase')).toEqual({ extra: 0, dense: 1 });
+        expect(spawnView('top', 1, 700)).toEqual({ extra: 0, dense: 1 });
+        expect(spawnView('top', 1.35, 500)).toEqual({ extra: 0, dense: 1 });
+        const far = spawnView('top', 0.66, 1100);
+        expect(far.extra).toBeGreaterThan(0);
+        expect(far.dense).toBeGreaterThan(1);
+    });
+
+    const city = generateCity(1337);
+    const seenFrom = (p, e) => lineClear(city, e.x, e.y, p.x, p.y);
+    it('inget civilt dyker upp inom fri sikt från spelaren (ingen pop-in mitt i 3D-bilden)', () => {
+        const w = new World(city, createPlayerState('kimit'), { round: 2, rnd: mulberry32(21) });
+        w.state = 'play';
+        w.manageSpawns(0.25); // första gången fylls stan innan man sett något (ingen bild än)
+        const p = w.player, spots = city.laneTiles;
+        let checked = 0;
+        for (let i = 0; i < 400; i++) {
+            if (i % 40 === 0) { const [tx, ty] = spots[(i * 7919) % spots.length]; p.x = tx * 64 + 32; p.y = ty * 64 + 32; }
+            const before = new Set([...w.vehicles, ...w.peds]);
+            w.spawnT = 0; w.parkT = 0;
+            w.manageSpawns(0.25);
+            for (const e of [...w.vehicles, ...w.peds]) {
+                if (before.has(e) || e.driver === 'cop') continue;
+                const d = Math.hypot(e.x - p.x, e.y - p.y);
+                checked++;
+                if (seenFrom(p, e)) expect(d, `${e.parked ? 'parkerad bil' : e.driver ? 'bil' : 'fotgängare'} ${Math.round(d)} px bort i fri sikt`).toBeGreaterThanOrEqual(SIGHT_HAZE);
+            }
+        }
+        expect(checked).toBeGreaterThan(200);
+    });
+
+    it('i synhåll städas folk inte bort förrän bortom dimman; utom synhåll som förut', () => {
+        // Platt stad (inga hus): allt syns
+        const flat = new World({ ...city, tiles: new Uint8Array(city.tiles.length) }, createPlayerState('kimit'), { round: 2, rnd: mulberry32(3) });
+        const p = flat.player;
+        flat.manageSpawns(0.25); // förbi den första (blinda) gången
+        const near = createPed(p.x + 1400, p.y, flat.rnd, {}), out = createPed(p.x + SIGHT_FAR + 100, p.y, flat.rnd, {});
+        flat.peds = [near, out]; flat.spawnT = 0;
+        flat.manageSpawns(0.25);
+        expect(flat.peds).toContain(near);      // 1400 px i fri sikt: kvar (förut borta vid 1250)
+        expect(flat.peds).not.toContain(out);   // bortom dimman: borta
+        // Riktiga stan: utom synhåll städas den bort som förut
+        const w = new World(city, createPlayerState('kimit'), { round: 2, rnd: mulberry32(4) });
+        const q = w.player;
+        w.manageSpawns(0.25);
+        let hidden = null;
+        for (let a = 0; a < 64 && !hidden; a++) {
+            const x = q.x + Math.cos(a / 64 * Math.PI * 2) * 1400, y = q.y + Math.sin(a / 64 * Math.PI * 2) * 1400;
+            if (!seenFrom(q, { x, y })) hidden = createPed(x, y, w.rnd, {});
+        }
+        w.peds = [hidden]; w.spawnT = 0;
+        w.manageSpawns(0.25);
+        expect(w.peds).not.toContain(hidden);
     });
 });

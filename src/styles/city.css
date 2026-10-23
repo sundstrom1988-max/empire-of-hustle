@@ -250,7 +250,10 @@ body.city-open .cbd-leaf {
     .ct-right .ct-rob.pressed, .ct-right .ct-wpn.pressed { transform: scale(0.94); }
     .ct-right .ct-act { width: 68px; height: 68px; align-self: end; }
     .ct-right .ct-hb { width: 84px; height: 84px; }
-    .ct-look { width: 96px; height: 96px; right: 24px; bottom: 116px; }
+    /* Till vänster om minikartan (x W−104 … W−12, y 118 … 226 med etiketten) och ovanför
+       knappraden (överkant H−102): förut låg den över kartans nedre del, och ett tryck där
+       träffade joysticken i stället för kartan */
+    .ct-look { width: 92px; height: 92px; right: 118px; bottom: 112px; }
 }
 
 /* Små telefoner: lite mindre joystick och knappar så de inte möts */

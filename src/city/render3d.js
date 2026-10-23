@@ -23,6 +23,8 @@ export {
     dayPalette, figurePose, Pool, PERSON_H, EYE_H, FLOOR_H, GROUND_FLOOR_H, CAR_H, CHASE, FPS
 } from './render3d/math.js';
 
+import { primaryTouch } from './input.js';
+
 export const MODES = ['chase', 'fps'];
 
 // Finns WebGL alls? (utan att skapa three)
@@ -70,7 +72,7 @@ export async function createRenderer3D(container, options = {}) {
     container.insertBefore(canvas, container.firstChild);
 
     const maxDpr = options.maxDpr ?? 2;
-    const isTouch = typeof window !== 'undefined' && (window.matchMedia?.('(pointer: coarse)').matches || 'ontouchstart' in window);
+    const isTouch = primaryTouch(); // samma regel som staden: bärbar med pekskärm räknas som dator
     let engine;
     try {
         // MSAA kostar mycket på mobil med hög upplösning — där räcker den höga pixeltätheten

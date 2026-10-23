@@ -68,6 +68,7 @@ export const CHASE = {
     room: { back: 110, up: 42, ahead: 36, lookH: 26, turn: 3.0, speedBack: 0, speedAhead: 0 },
     fov: 60
 };
+export const CHASE_ZOOM_RATE = 9;  // per sekund: ett hjulsteg är ~95 % framme på en tredjedels sekund
 export const FPS = { fov: 75, carEye: 16, bikeEye: 27, bob: 0.7 };
 const LIFTS_ALL = [1, 1.6, 2.4], NO_LIFT = [1];
 // Kameran svänger aldrig åt sidan runt ett hus (då hamnade gubben ute vid bildkanten, och
@@ -87,9 +88,13 @@ export function cameraSubject(world) {
 export function chaseCamera(st, subj, dt, opts = {}, room = false, blocked = null, out = {}) {
     const c = room ? CHASE.room : subj.car ? CHASE.car : CHASE.foot;
     const want = opts.yaw ?? subj.angle;
-    if (!st.init) { st.yaw = want; st.dist = 1; st.init = true; }
+    if (!st.init) { st.yaw = want; st.dist = 1; st.zoom = null; st.init = true; }
     else st.yaw = lerpAngle(st.yaw, want, opts.yaw != null ? 1 : Math.min(1, dt * c.turn));
-    const zoom = clamp(opts.dist ?? 1, 0.15, 3);
+    // Avståndet (hjulet NÄRA/NORMAL/LÅNGT) glider mot målet i stället för att hoppa i en bildruta.
+    // opts.zoomSnap: nypet följer fingrarna direkt (det är redan steglöst).
+    const zWant = clamp(opts.dist ?? 1, 0.15, 3);
+    st.zoom = st.zoom == null || !(dt > 0) || opts.zoomSnap ? zWant : st.zoom + (zWant - st.zoom) * Math.min(1, dt * CHASE_ZOOM_RATE);
+    const zoom = st.zoom;
     const fast = subj.car ? clamp(subj.speed / (subj.max || 400), 0, 1) : 0;
     // farten glider in (en krock eller ett gasryck ska inte rycka i kameran)
     st.fast = st.fast == null || !(dt > 0) ? fast : st.fast + (fast - st.fast) * Math.min(1, dt * 1.8);

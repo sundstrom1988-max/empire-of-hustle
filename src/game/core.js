@@ -362,7 +362,9 @@ export function endTurn(fromAI = false) {
     const p = currentPlayer();
     if (!p) return;
     if (!fromAI && (gameState.aiThinking || !isMyTurn())) return;
-    if (window.city?.isOpen?.()) { showToast('🚗 Åk hem från stan först!'); return; }
+    // Spärren gäller den som själv är ute i stan. Online kör värden AI-turerna även när värden är
+    // i stan: annars fastnade AI:ns tur (och ensureAITurn körde om den vid varje synk).
+    if (!fromAI && window.city?.isOpen?.()) { showToast('🚗 Åk hem från stan först!'); return; }
     // Collect income
     let totalIncome = 0;
     p.owned.forEach(id => {

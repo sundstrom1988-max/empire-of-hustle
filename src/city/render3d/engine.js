@@ -189,7 +189,7 @@ export function createEngine(THREE, canvas, options = {}) {
     // ── Kamera ──
     const camSt = { init: false };
     const camT = {}, camF = { x: 0, y: 0, z: 0, lx: 1, ly: 0, lz: 0, fov: 60 }, cur = { x: 0, y: 0, z: 100, lx: 1, ly: 0, lz: 0, fov: 60 };
-    let camMode = null, blend = 1, camRoom = undefined;
+    let camMode = null, blend = 1, camRoom = undefined, camCar;
     const KEYS = ['x', 'y', 'z', 'lx', 'ly', 'lz', 'fov'];
     let blockedFn = null;
     const cityBlocked = (x, y, h) => city.blocked(x, y, h);
@@ -205,7 +205,13 @@ export function createEngine(THREE, canvas, options = {}) {
             if (camMode !== null && !snap) { for (const k of KEYS) camF[k] = cur[k]; blend = 0; }
             if (mode === 'chase') camSt.init = false;
             camMode = mode;
+        } else if (subj.v !== camCar && camCar !== undefined && !snap) {
+            // In i eller ur bilen: gubben flyttas till/från förarplatsen och kameran byter mått
+            // (bakom bilen / bakom gubben, förarögat / ögonhöjd) — glid dit i stället för att hoppa
+            for (const k of KEYS) camF[k] = cur[k];
+            blend = 0;
         }
+        camCar = subj.v;
         if (mode === 'fps') fpsCamera(world, opts, camT);
         else chaseCamera(camSt, subj, dt, opts, !!I, blockedFn, camT);
         if (snap) blend = 1;

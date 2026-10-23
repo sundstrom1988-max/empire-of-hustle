@@ -65,13 +65,17 @@ export function stickPedals(stick) {
 const REVERSE_CONE = Math.PI * 0.72;   // så här långt från nosen räknas som "bakåt"
 const REVERSE_SPEED = 60;              // under den farten får man backa
 const STEER_GAIN = 2.2;
+const REVERSE_SIDE = 15;               // px/s bakåt innan ratten räknas som backande
 export function stickDrive(stick, vehicleAngle, speed = 0, maxSpeed = 0, blocked = false) {
     const mag = stick?.active ? stick.mag || 0 : 0;
     if (!(mag > 0)) return { throttle: 0, steer: 0 };
     const want = Math.atan2(stick.y, stick.x);
     const diff = wrapAngle(want - vehicleAngle);           // + = medurs på skärmen = höger
-    const side = speed < 0 ? -1 : 1;                        // backande bil svänger åt andra hållet
-    if (blocked) return { throttle: -Math.max(0.6, mag), steer: clamp(diff * STEER_GAIN, -1, 1) * side };
+    // Backande bil svänger åt andra hållet — men först när den verkligen backar: mot en vägg
+    // studsar en bil som gasar fram till ~−0,4 px/s, och då vände rattutslaget så att den
+    // vred sig åt fel håll i stället för loss längs väggen (C, NOTES)
+    const side = speed < -REVERSE_SIDE ? -1 : 1;
+    if (blocked) return { throttle: -Math.max(0.6, mag), steer: clamp(diff * STEER_GAIN, -1, 1) * (speed < 0 ? -1 : 1) };
     const reversing = speed < -15 && Math.abs(diff) > Math.PI / 2;
     if (reversing || (Math.abs(diff) > REVERSE_CONE && speed < REVERSE_SPEED)) {
         const tail = wrapAngle(want - vehicleAngle - Math.PI);
@@ -185,6 +189,13 @@ export function staminaStep(s, dt, wantRun, moving) {
 }
 
 const PINCH_MIN = 16;   // px: fingrar närmare än så räknas som så här långt isär (inga jättefaktorer)
+
+// Pekgränssnittet (joystickar, knappar, inget pekarlås) bara när den PRIMÄRA pekaren är ett
+// finger. En bärbar dator med pekskärm har touch-händelser ('ontouchstart') men mus och
+// tangentbord — där ska musen styra blicken, annars går blicken inte att vrida alls.
+export function primaryTouch(win = typeof window !== 'undefined' ? window : null) {
+    try { return !!win?.matchMedia?.('(pointer: coarse)').matches; } catch (e) { return false; }
+}
 
 // Skriver man i ett textfält (chatt, SMS) ska spelet inte röra sig
 export function isTypingTarget(t) {

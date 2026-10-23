@@ -224,7 +224,8 @@ export class Hud {
         }
         if (v) {
             bar(hy + 22, v.hp / v.maxHp, v.hp < v.maxHp * 0.3 ? '#f97316' : '#60a5fa', v.spec.kind === 'bike' ? '🛵' : '🚗');
-            outlined(ctx, v.spec.name.toUpperCase(), 12, hy + 44, 11, '#e5e7eb', 'left', BIG_FONT, 3);
+            // Backar bilen står det vid namnet (rörelseriktningen syns även i förstaperson, där man inte ser backljusen)
+            outlined(ctx, v.spec.name.toUpperCase() + (v.reversing && !v.wrecked ? ' · ◀ BACKAR' : ''), 12, hy + 44, 11, v.reversing && !v.wrecked ? '#f8fafc' : '#e5e7eb', 'left', BIG_FONT, 3);
             if (p.nitro > 0) outlined(ctx, `⚡ NITRO ${p.nitro.toFixed(1)}`, 12, hy + 60, 12, '#38bdf8', 'left', BIG_FONT, 3);
         } else {
             // Vapen i handen

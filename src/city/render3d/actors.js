@@ -7,7 +7,7 @@
 //  (inga nya objekt per bildruta).
 // ═══════════════════════════════════════════
 
-import { rootMatrix, jointMatrix, figurePose, parseColor, yawOf, CAR_H } from './math.js';
+import { rootMatrix, jointMatrix, applyMatrix, figurePose, parseColor, yawOf, CAR_H } from './math.js';
 import { toLinear } from './batch.js';
 
 const MAX_FIG = 200, MAX_CAR = 120;
@@ -288,7 +288,7 @@ export function createActors(THREE, scene) {
         wheel: inst(VG.wheel, lambert(), MAX_CAR * 4, 'wheel'),
         bikeWheel: inst(VG.bikeWheel, lambert(), 96 * 2, 'bikeWheel'),
         head: inst(VG.lamp, basic(), MAX_CAR * 2, 'headlight'),
-        tail: inst(VG.lamp, basic(), MAX_CAR * 2, 'taillight'),
+        tail: inst(VG.lamp, basic(), MAX_CAR * 2 + 16, 'taillight'), // + backljusen på de bilar som backar
         siren: inst(VG.lamp, basic(), MAX_CAR * 2, 'siren'),
         stripe: inst(VG.stripe, lambert(), MAX_CAR * 2, 'stripe'),
         sign: inst(VG.lamp, basic(), MAX_CAR, 'sign')
@@ -317,6 +317,18 @@ export function createActors(THREE, scene) {
         const i = m.n;
         if (i >= m.cap) return -1;
         jointMatrix(m.instanceMatrix.array, i * 16, root, 0, jx, jy, jz, rz, rx, sx, sy, sz);
+        setColor(m, i, rgb);
+        m.n++;
+        return i;
+    }
+    // Som putJoint, men delen vriden runt lodaxeln (yaw i three, absolut): framhjulen som styr
+    const at = { x: 0, y: 0, z: 0 };
+    function putJointYaw(m, jx, jy, jz, yaw, rgb, sx = 1, sy = 1, sz = 1) {
+        const i = m.n;
+        if (i >= m.cap) return -1;
+        applyMatrix(root, 0, jx, jy, jz, at);
+        rootMatrix(tmp, 0, at.x, at.y, at.z, yaw, 0, 1);
+        jointMatrix(m.instanceMatrix.array, i * 16, tmp, 0, 0, 0, 0, 0, 0, sx, sy, sz);
         setColor(m, i, rgb);
         m.n++;
         return i;
@@ -437,9 +449,14 @@ export function createActors(THREE, scene) {
                 jointMatrix(shape.instanceMatrix.array, i * 16, root, 0, 0, 0, 0, 0, 0, L, 1, W);
                 setColor(shape, i, body, k); shape.n++;
             }
-            // Hjul
+            // Hjul. Framhjulen visar styrningen (v.steerPos −1..1 från fysiken, + = höger): framänden syns
             const wx = L * 0.31, wz = W / 2 - 1.6, r = v.type === 'van' ? 4.8 : 4.5;
-            for (let a = -1; a <= 1; a += 2) for (let b = -1; b <= 1; b += 2) putJoint(V.wheel, a * wx, r - low, b * wz, 0, 0, K_1_1_1, r / 4.5, r / 4.5, 1);
+            const steer = v.wrecked || !Number.isFinite(v.steerPos) ? 0 : v.steerPos * 0.5;
+            for (let b = -1; b <= 1; b += 2) {
+                putJoint(V.wheel, -wx, r - low, b * wz, 0, 0, K_1_1_1, r / 4.5, r / 4.5, 1);
+                if (steer) putJointYaw(V.wheel, wx, r - low, b * wz, yaw - steer, K_1_1_1, r / 4.5, r / 4.5, 1);
+                else putJoint(V.wheel, wx, r - low, b * wz, 0, 0, K_1_1_1, r / 4.5, r / 4.5, 1);
+            }
             if (v.exploded) return;
             const roof = shape === V.van ? 24 : shape === V.sport ? 15.4 : 19.2;
             // Strålkastare och baklampor
@@ -449,6 +466,8 @@ export function createActors(THREE, scene) {
                 for (let b = -1; b <= 1; b += 2) {
                     putJoint(V.head, L / 2 - 0.3, 8.4, b * (W / 2 - 3.4), 0, 0, hl, 1, 2.2, 4.2);
                     putJoint(V.tail, -L / 2 + 0.3, 9, b * (W / 2 - 3.2), 0, 0, tl, 1, 2, 4.4);
+                    // Backljus: vita lampor innanför baklamporna medan bilen backar
+                    if (v.reversing) putJoint(V.tail, -L / 2 + 0.25, 9, b * (W / 2 - 7.6), 0, 0, K_1_1_1, 1, 1.8, 2.6);
                 }
             }
             // Polis: blåljusramp, blå rand. Taxi: skylt. Gäng: rand i gängets färg.

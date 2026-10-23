@@ -72,17 +72,24 @@ export function createViewModel(THREE) {
     const dashTop = new THREE.Mesh(G(new THREE.BoxGeometry(120, 2, 16).rotateX(0.16).translate(14, -22.6, -42)), mats.trim);
     // huven: lutar nedåt bort från rutan, i bilens färg
     const hood = new THREE.Mesh(G(new THREE.BoxGeometry(84, 2, 80).rotateX(0.06).translate(14, -21.5, -94)), mats.paint);
-    const wheel = new THREE.Mesh(G(new THREE.TorusGeometry(6.4, 0.8, 6, 22)), mats.trim);
+    // Ratten: ring, nav och ekrar (ekrarna syns vridas — en slät ring ser likadan ut hur man än vrider den)
+    const wheel = new THREE.Group();
     wheel.position.set(0, -25.5, -30); wheel.rotation.x = -0.45;
+    wheel.add(new THREE.Mesh(G(new THREE.TorusGeometry(6.4, 0.8, 6, 22)), mats.trim));
     const hub = new THREE.Mesh(G(new THREE.CylinderGeometry(1.8, 1.8, 1.2, 10).rotateX(Math.PI / 2)), mats.dash);
-    hub.position.copy(wheel.position); hub.rotation.x = -0.45;
+    wheel.add(hub);
+    for (const a of [Math.PI / 2, Math.PI * 7 / 6, Math.PI * 11 / 6]) {   // tre ekrar: rakt ner och snett upp åt sidorna
+        wheel.add(new THREE.Mesh(G(new THREE.BoxGeometry(5, 1, 0.7).translate(3.6, 0, 0).rotateZ(-a)), mats.trim));
+    }
+    // Markering i rattens topp (som en riktig ratt): rakt fram = upptill
+    wheel.add(new THREE.Mesh(G(new THREE.BoxGeometry(1.2, 1.3, 1.1).translate(0, 6.4, 0)), mats.gauge));
     const gauge1 = new THREE.Mesh(G(new THREE.CircleGeometry(1.2, 12).translate(-3.2, -23.2, -38)), mats.gauge);
     const gauge2 = new THREE.Mesh(G(new THREE.CircleGeometry(1.2, 12).translate(3.2, -23.2, -38)), mats.gauge);
     const pillarL = new THREE.Mesh(G(new THREE.BoxGeometry(1.8, 50, 1.8).rotateZ(-0.55).translate(-46, 6, -40)), mats.trim);
     const pillarR = new THREE.Mesh(G(new THREE.BoxGeometry(2.2, 50, 2.2).rotateZ(0.55).translate(74, 6, -40)), mats.trim);
     const roofE = new THREE.Mesh(G(new THREE.BoxGeometry(140, 2, 4).translate(14, 26.5, -34)), mats.trim);
     const mirror = new THREE.Mesh(G(new THREE.BoxGeometry(5.5, 1.6, 0.6).translate(17, 23.5, -34)), mats.dash);
-    cockpit.add(dash, dashTop, hood, wheel, hub, gauge1, gauge2, pillarL, pillarR, roofE, mirror);
+    cockpit.add(dash, dashTop, hood, wheel, gauge1, gauge2, pillarL, pillarR, roofE, mirror);
     // ── Hoj: styre och tank ──
     const bars = new THREE.Group();
     bars.add(new THREE.Mesh(G(new THREE.CylinderGeometry(0.8, 0.8, 34, 6).rotateZ(Math.PI / 2).translate(0, -8, -22)), mats.metal));
@@ -98,6 +105,7 @@ export function createViewModel(THREE) {
     const place = (o, x, y, z) => o.position.set(x * spread, y - (1 - spread) * 6, z);
     return {
         scene, cam, hemi, sun,
+        parts: { wheel }, // för testerna (tests/render3d.test.js)
         // läge per bildruta. p = världens spelare, prof = profilen, mode: 'foot' | 'car' | 'bike' | null
         update(p, prof, kind, dt, t, look) {
             hands.visible = kind === 'foot' && !p.dead;
@@ -115,8 +123,9 @@ export function createViewModel(THREE) {
                 const ly = prof?.lookYaw || 0, lp = prof?.lookPitch || 0;
                 cockpit.rotation.set(-lp, ly, 0); bars.rotation.set(-lp, ly, 0);
                 mats.paint.color.set(v.exploded ? '#1a1a1a' : v.color || '#888');
-                // ratten följer styrningen lite
-                wheel.rotation.z = hub.rotation.z = -(v.spin || 0) * 0.12;
+                // Ratten visar hjulens utslag (v.steerPos −1..1 från fysiken, + = höger): fullt utslag ≈ 100°
+                const steer = Number.isFinite(v.steerPos) ? v.steerPos : 0;
+                wheel.rotation.z = -steer * 1.75;
                 return;
             }
             if (!hands.visible) return;

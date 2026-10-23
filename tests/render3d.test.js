@@ -191,6 +191,26 @@ describe('chase camera', () => {
         const out = chaseCamera({}, cameraSubject(w), 0.016, {}, true, null, {});
         expect(out.z).toBeLessThan(ROOM_H);
     });
+
+    // Granskningen: ett hjulsteg (NORMAL → NÄRA, 150 → 108 px) bytte avstånd i en enda bildruta
+    it('a wheel step glides to the new distance instead of jumping in one frame; pinch follows directly', () => {
+        const w = fakeWorld({ angle: 0 });
+        const st = {};
+        const back = o => 1000 - o.x;
+        const b0 = back(chaseCamera(st, cameraSubject(w), 1 / 60, { dist: 1 }, false, null, {}));
+        const b1 = back(chaseCamera(st, cameraSubject(w), 1 / 60, { dist: 0.72 }, false, null, {}));
+        const jump = b0 - CHASE.foot.back * 0.72;
+        expect(b0 - b1).toBeGreaterThan(0);                     // på väg åt rätt håll direkt
+        expect(b0 - b1).toBeLessThan(jump * 0.25);              // men inget hopp
+        let out;
+        for (let i = 0; i < 60; i++) out = chaseCamera(st, cameraSubject(w), 1 / 60, { dist: 0.72 }, false, null, {});
+        expect(back(out)).toBeCloseTo(CHASE.foot.back * 0.72, 0); // framme efter en sekund
+        // nypet: redan steglöst, ska inte släpa efter fingrarna
+        const p = back(chaseCamera(st, cameraSubject(w), 1 / 60, { dist: 1.2, zoomSnap: true }, false, null, {}));
+        expect(p).toBeCloseTo(CHASE.foot.back * 1.2, 6);
+        // dt = 0 (första bilden, rumsbyte): direkt på plats
+        expect(back(chaseCamera({}, cameraSubject(w), 0, { dist: 0.5 }, false, null, {}))).toBeCloseTo(CHASE.foot.back * 0.5, 6);
+    });
 });
 
 describe('first-person camera', () => {
@@ -306,5 +326,27 @@ describe('helpers', () => {
         expect(furnitureHeight('K', { name: 'kylskåp', solid: true })).toBeGreaterThan(30);
         expect(furnitureHeight('?', { name: 'okänd sak', solid: true })).toBe(18);
         expect(furnitureHeight('.', { name: 'golv', solid: false })).toBe(0);
+    });
+});
+
+// Granskningen: ratten i förstaperson följde v.spin (bilens vridfart) och var en slät ring, så den
+// syntes inte vridas. Nu visar den hjulens utslag (v.steerPos från fysiken) och har ekrar.
+describe('förstaperson i bil: ratten', () => {
+    it('ratten vrids efter v.steerPos (höger = medurs från förarplatsen), inte efter v.spin', async () => {
+        const THREE = await import('three');
+        const { createViewModel } = await import('../src/city/render3d/viewmodel.js');
+        const vm = createViewModel(THREE);
+        const car = { spec: { kind: 'car' }, color: '#888', steerPos: 0, spin: 2, reversing: false };
+        const p = { vehicle: car, dead: false };
+        vm.update(p, {}, 'car', 1 / 60, 0, null);
+        expect(vm.parts.wheel.rotation.z).toBeCloseTo(0, 6);         // vridfarten styr inte ratten
+        car.steerPos = 1; car.spin = 0;
+        vm.update(p, {}, 'car', 1 / 60, 0, null);
+        expect(vm.parts.wheel.rotation.z).toBeLessThan(-1.2);        // fullt höger: ~100° medurs
+        car.steerPos = -0.5;
+        vm.update(p, {}, 'car', 1 / 60, 0, null);
+        expect(vm.parts.wheel.rotation.z).toBeGreaterThan(0.6);
+        expect(vm.parts.wheel.children.length).toBeGreaterThan(2);   // ring, nav och ekrar
+        vm.dispose();
     });
 });

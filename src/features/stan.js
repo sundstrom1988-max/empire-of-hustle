@@ -11,7 +11,7 @@ import { HOUSES } from '../city/map.js';
 import { ROLES, CREW_MAX } from '../city/crew.js';
 import { PROPERTIES } from '../multiplayer/authority.js';
 import { gameState, currentPlayer, myPlayer, formatNum, jailPlayer, canAct, saveGame } from '../game/state.js';
-import { updateHUD } from '../game/core.js';
+import { updateHUD, ensureAITurn } from '../game/core.js';
 import { showToast, startMusic, spawnParticles } from '../utils/effects.js';
 import { stopRadio, unlockAudio } from '../utils/audio.js';
 import { syncState, syncMe } from '../multiplayer/sync.js';
@@ -138,14 +138,26 @@ let cityProfile = null;
 
 // Omladdning eller stängd flik mitt i stan: spara (polisens läge ligger i profilen, p.cityPolice),
 // så att en pågående jakt eller sökning inte raderas av en omladdning.
-if (typeof window !== 'undefined') window.addEventListener('pagehide', () => { if (isCityOpen()) saveGame(); });
+// Online sparas inget lokalt (värden har läget; doSave säger samma sak).
+if (typeof window !== 'undefined') window.addEventListener('pagehide', () => { if (isCityOpen() && !gameState.isOnline) saveGame(); });
+
+// Gripen i stan men sidan laddades om under BUSTED-skärmen (p.cityBusted sparades vid pagehide):
+// gripandet verkställs direkt när sparfilen laddats — häkte, böter på saldot vid gripandet och
+// beslag — inte först nästa gång man åker till stan. main.js anropar det efter loadGame
+// (solo: den mänskliga spelare som greps, även om det är en AI:s tur när sparfilen laddas).
+export function applyPendingBust(p = gameState.isOnline ? myPlayer() : gameState.players.find(x => x.cityBusted && !x.isAI)) {
+    if (!p || !p.cityBusted || p.inJail || isCityOpen()) return false;
+    cityProfile = p;
+    onCityClosed({ reason: 'busted', stars: p.cityBusted.stars || 3, moneyDelta: 0 });
+    return true;
+}
 
 export function goToCity() {
     const p = myPlayer();
     if (!p || isCityOpen()) return;
     if (!canGoToCity()) { showToast('⏳ Vänta på din tur!'); return; }
-    // Gripen men sidan laddades om innan stan stängdes: gripandet gäller ändå
-    if (p.cityBusted && !p.inJail) { cityProfile = p; onCityClosed({ reason: 'busted', stars: p.cityBusted.stars || 3, moneyDelta: 0 }); return; }
+    // Skydd: gripandet gäller även om det inte verkställdes vid inloggningen
+    if (applyPendingBust(p)) return;
     if (p.inJail) { showToast('🔒 Du sitter i häktet — ingen stan för dig!'); return; }
     unlockAudio();
     stopRadio();
@@ -199,4 +211,6 @@ function onCityClosed(result) {
     // Online: den som har turen skickar hela läget, annars bara sin egen spelare
     if (gameState.isOnline) { if (p === currentPlayer()) syncState(); else syncMe(); }
     if (!gameState.musicMuted) startMusic();
+    // En AI-tur som väntade medan stan var öppen (värden kör AI-turerna) fortsätter nu
+    ensureAITurn();
 }
