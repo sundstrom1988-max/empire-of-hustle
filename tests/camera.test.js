@@ -3,7 +3,8 @@ import {
     CAM_MODES, CAM_NAMES, DEFAULT_CAM, nextCam, is3D, loadCam, saveCam, CAM_KEY, VIEW_KEY, loadView, saveView, DEFAULT_VIEW,
     loadIndex, saveIndex, ZOOM_KEY, TOP_ORDER, TOP_ZOOMS, CHASE_ZOOMS, wheelView, chainPos, CHAIN_LEN, viewLabel,
     lookTurn, stepPitch, PITCH_MAX, LOOK_RAD, TOUCH_LOOK, aimPoint, AIM_DEADZONE, stickToWorld, followYaw, chaseRate, controlYaw,
-    createFreeLook, stepFreeLook, resetFreeLook, FREE_HOLD, FREE_MAX_YAW, eTarget, frameStats, wrapAngle
+    createFreeLook, stepFreeLook, resetFreeLook, FREE_HOLD, FREE_MAX_YAW, eTarget, frameStats, wrapAngle,
+    pinchView, pinchSettle, pinchU, TOP_MUL, CHASE_DIST, FPS_U, nearestIndex, loadZoomX, saveZoomX, ZOOMX_KEY
 } from '../src/city/camera.js';
 import { World } from '../src/city/world.js';
 import { generateCity } from '../src/city/map.js';
@@ -113,6 +114,87 @@ describe('scrollhjulet zoomar över lägesgränserna', () => {
         const v = { cam: 'chase', top: 2, chase: 0 };
         const w = { ...v, cam: nextCam(v.cam) };
         expect(w).toEqual({ cam: 'top', top: 2, chase: 0 });
+    });
+});
+
+describe('nyp-zoom (touch): steglöst över lägesgränserna', () => {
+    const start = { cam: 'top', topMul: TOP_MUL[0], chaseDist: CHASE_DIST[1] };
+    // Ett nyp i många små steg (som bildrutorna), totalfaktor F
+    const pinch = (z, F, n = 40, can3d = true) => { for (let i = 0; i < n; i++) z = pinchView(z, Math.pow(F, 1 / n), can3d); return z; };
+
+    it('isär: överblick LÅNGT → NÄRA steglöst, vidare till följkamera och förstaperson', () => {
+        let z = start, lastMul = z.topMul, seen = [];
+        for (let i = 0; i < 400; i++) {
+            z = pinchView(z, 1.01);
+            if (seen[seen.length - 1] !== z.cam) seen.push(z.cam);
+            if (z.cam === 'top') { expect(z.topMul).toBeGreaterThanOrEqual(lastMul - 1e-9); expect(z.topMul / lastMul).toBeLessThan(1.011); lastMul = z.topMul; }
+        }
+        expect(seen).toEqual(['top', 'chase', 'fps']);
+        expect(z.cam).toBe('fps');
+        expect(pinchView(z, 1.5)).toMatchObject({ cam: 'fps', u: FPS_U }); // längre in än förstaperson går inte
+    });
+
+    it('inom följkameran ändras avståndet mjukt (inga hopp) och åt rätt håll', () => {
+        let z = { cam: 'chase', topMul: 1, chaseDist: 1 };
+        const a = pinchView(z, 1.05), b = pinchView(z, 1 / 1.05);
+        expect(a.cam).toBe('chase'); expect(a.chaseDist).toBeCloseTo(1 / 1.05, 9);     // isär = närmare
+        expect(b.cam).toBe('chase'); expect(b.chaseDist).toBeCloseTo(1.05, 9);         // ihop = längre bort
+    });
+
+    it('läget byts först en bit förbi gränsen, och tillbaka först efter hela glappet (inget fladder)', () => {
+        let z = { ...start, topMul: TOP_MUL[1] };                 // överblick NÄRA
+        z = pinch(z, 1.2);
+        expect(z.cam).toBe('top');                                // 20 % räcker inte
+        expect(z.topMul).toBeCloseTo(TOP_MUL[1], 9);              // står still vid NÄRA under glappet
+        z = pinch(z, 1.1);
+        expect(z.cam).toBe('chase');                              // 1,2·1,1 > 1,3: följkamera
+        expect(z.chaseDist).toBeCloseTo(CHASE_DIST[1] / (1.32 / 1.3), 6);
+        z = pinch(z, 1 / 1.05);
+        expect(z.cam).toBe('chase');                              // lite tillbaka: kvar i följkameran
+        let flips = 0, prev = z.cam;
+        for (let i = 0; i < 200; i++) { z = pinchView(z, i % 2 ? 1.004 : 1 / 1.004); if (z.cam !== prev) { flips++; prev = z.cam; } }
+        expect(flips).toBe(0);                                    // darr i fingrarna vid gränsen byter inte fram och tillbaka
+        z = pinch(z, 1 / 1.3);
+        expect(z.cam).toBe('top');
+    });
+
+    it('ihop från förstaperson: tillbaka till följkamera NÄRA och vidare ut till överblick LÅNGT', () => {
+        let z = { cam: 'fps', topMul: 1, chaseDist: 1 };
+        z = pinch(z, 1 / 1.2);
+        expect(z.cam).toBe('fps');
+        z = pinch(z, 1 / 1.15);
+        expect(z.cam).toBe('chase');
+        expect(z.chaseDist).toBeGreaterThanOrEqual(CHASE_DIST[0] - 1e-9);
+        expect(z.chaseDist).toBeLessThan(CHASE_DIST[0] * 1.1);
+        z = pinch(z, 1 / 100);
+        expect(z).toMatchObject({ cam: 'top' });
+        expect(z.topMul).toBeCloseTo(TOP_MUL[0], 9);
+    });
+
+    it('utan 3D stannar nypet i överblicken; ett halvt nyp i glappet sparas inte', () => {
+        expect(pinch(start, 100, 40, false)).toMatchObject({ cam: 'top', topMul: TOP_MUL[1] });
+        let z = pinch({ ...start, topMul: TOP_MUL[1] }, 1.2);
+        z = pinchSettle(z);
+        expect(z.u).toBeCloseTo(pinchU({ cam: 'top', topMul: TOP_MUL[1] }), 9);
+        expect(pinch(z, 1.2).cam).toBe('top');                    // nästa nyp börjar om vid gränsen
+    });
+
+    it('ingen ändring (f = 1, 0 eller trasigt) ger samma objekt', () => {
+        expect(pinchView(start, 1)).toBe(start);
+        expect(pinchView(start, 0)).toBe(start);
+        expect(pinchView(start, NaN)).toBe(start);
+    });
+
+    it('steglösa värden sparas, och närmaste namngivna steg hittas', () => {
+        const st = memStore();
+        expect(loadZoomX(st)).toEqual({ top: null, chase: null });
+        saveZoomX(st, 1.1, 0.9);
+        expect(JSON.parse(st.m.get(ZOOMX_KEY))).toEqual({ top: 1.1, chase: 0.9 });
+        expect(loadZoomX(st)).toEqual({ top: 1.1, chase: 0.9 });
+        st.setItem(ZOOMX_KEY, JSON.stringify({ top: 99, chase: 'x' }));
+        expect(loadZoomX(st)).toEqual({ top: null, chase: null });
+        expect(nearestIndex(TOP_ZOOMS, 'mul', 1.3)).toBe(2);
+        expect(nearestIndex(CHASE_ZOOMS, 'dist', 1.05)).toBe(1);
     });
 });
 

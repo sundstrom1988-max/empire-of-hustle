@@ -171,6 +171,8 @@ export function staminaStep(s, dt, wantRun, moving) {
     return run;
 }
 
+const PINCH_MIN = 16;   // px: fingrar närmare än så räknas som så här långt isär (inga jättefaktorer)
+
 // Skriver man i ett textfält (chatt, SMS) ska spelet inte röra sig
 export function isTypingTarget(t) {
     if (!t) return false;
@@ -238,14 +240,17 @@ export class Input {
         this.wheel = 0;
         this.ignoreMouse = null;
         // Pekarlås (3D): index.js sätter lockWanted. Klicket som tar låset sväljs (inget skott).
-        // I låst läge summeras musens rörelse till blicken (takeLook), likaså ett finger som
-        // drar på canvasen utanför joysticken och knapparna (touch-look).
+        // I låst läge summeras musens rörelse till blicken (takeLook).
+        // Fingrar på canvasen (inte joysticken eller knapparna, de har egna element):
+        // ett finger tittar runt (touch-look → takeLook), två är ett nyp (zoom → takePinch).
         this.lockWanted = false;
         this.onLockChange = null;
         this.lockLostT = -1e9;
         this.look = { dx: 0, dy: 0 };
         this.lookId = null;
-        this.lookAt = null;
+        this.touches = new Map();   // pointerId → { x, y } för fingrarna på canvasen
+        this.pinch = null;          // { a, b, d } medan två fingrar nyper
+        this.pinchScale = 1;
         this.canvas = root.querySelector('canvas');
         if (this.canvas) {
             const pos = (e) => { const b = this.canvas.getBoundingClientRect(); return { x: e.clientX - b.left, y: e.clientY - b.top }; };
@@ -254,18 +259,12 @@ export class Input {
             const clampMove = v => Math.max(-250, Math.min(250, Number(v) || 0)); // webbläsare ger ibland ett jättehopp precis vid låset
             const isMouse = e => !e.pointerType || e.pointerType === 'mouse';
             this.onMouseMove = (e) => {
-                if (this.lookId !== null && e.pointerId === this.lookId) {
-                    this.look.dx += e.clientX - this.lookAt.x;
-                    this.look.dy += e.clientY - this.lookAt.y;
-                    this.lookAt = { x: e.clientX, y: e.clientY };
-                    return;
-                }
-                if (!isMouse(e)) return;
+                if (!isMouse(e)) { if (this.touches.has(e.pointerId)) this.touchMove(e); return; }
                 if (this.locked) { this.look.dx += clampMove(e.movementX); this.look.dy += clampMove(e.movementY); return; }
                 Object.assign(this.mouse, pos(e), { t: performance.now(), inside: true });
             };
             this.onMouseDown = (e) => {
-                if (!isMouse(e)) { this.startLook(e, pos(e)); return; }
+                if (!isMouse(e)) { this.touchDown(e, pos(e)); return; }
                 if (e.button !== 0) return;
                 const locked = this.locked;
                 const p = locked ? mid() : pos(e);
@@ -276,10 +275,10 @@ export class Input {
                 this.held.add('fire');
             };
             this.onMouseUp = (e) => {
-                if (this.lookId !== null && e.pointerId === this.lookId) { this.lookId = null; return; }
-                if (isMouse(e) && e.button === 0) this.held.delete('fire');
+                if (!isMouse(e)) { if (this.touches.has(e.pointerId)) this.touchUp(e.pointerId); return; }
+                if (e.button === 0) this.held.delete('fire');
             };
-            this.onLookEnd = (e) => { if (e.pointerId === this.lookId) this.lookId = null; };
+            this.onTouchEnd = (e) => { if (!isMouse(e) && this.touches.has(e.pointerId)) this.touchUp(e.pointerId); };
             this.onMouseLeave = (e) => {
                 if (!isMouse(e) || this.locked) return;
                 this.mouse.inside = false;
@@ -290,8 +289,8 @@ export class Input {
             this.canvas.addEventListener('pointermove', this.onMouseMove);
             this.canvas.addEventListener('pointerdown', this.onMouseDown);
             window.addEventListener('pointerup', this.onMouseUp);
-            this.canvas.addEventListener('pointercancel', this.onLookEnd);
-            this.canvas.addEventListener('lostpointercapture', this.onLookEnd);
+            this.canvas.addEventListener('pointercancel', this.onTouchEnd);
+            this.canvas.addEventListener('lostpointercapture', this.onTouchEnd);
             this.canvas.addEventListener('pointerleave', this.onMouseLeave);
             this.canvas.addEventListener('wheel', this.onWheel, { passive: false });
             this.canvas.addEventListener('contextmenu', this.onContext);
@@ -414,20 +413,61 @@ export class Input {
         if (!this.locked) return;
         try { this.doc.exitPointerLock(); } catch (e) { /* redan släppt */ }
     }
-    // Ett finger på canvasen (inte joysticken, inte en knapp) tittar runt i 3D.
-    // Inte på minikartan eller bakom en meny (samma ignoreMouse som musen).
-    startLook(e, p) {
-        if (this.lookId !== null) return;
-        if (this.ignoreMouse && this.ignoreMouse(p.x, p.y)) return;
-        this.lookId = e.pointerId;
-        this.lookAt = { x: e.clientX, y: e.clientY };
+    // ── Fingrar på canvasen: ett = titta runt (touch-look), två = nyp (zoom) ──
+    // Det första fingret räknas inte på minikartan eller bakom en meny (samma ignoreMouse
+    // som musen); ett andra finger är ett nyp var det än landar. Ett tredje ignoreras.
+    touchDown(e, p) {
+        const t = this.touches;
+        if (t.has(e.pointerId) || t.size >= 2) return;
+        if (!t.size && this.ignoreMouse && this.ignoreMouse(p.x, p.y)) return;
+        t.set(e.pointerId, { x: e.clientX, y: e.clientY });
         try { this.canvas.setPointerCapture(e.pointerId); } catch (err) { /* äldre webbläsare */ }
+        if (t.size === 1) { this.lookId = e.pointerId; return; }
+        // Två fingrar: nyp. Ingen blick under tiden — inte heller det som första fingret
+        // hann dra innan det andra landade.
+        const [a, b] = [...t.keys()];
+        this.lookId = null;
+        this.look.dx = this.look.dy = 0;
+        this.pinch = { a, b, d: this.fingerDist(a, b) };
     }
+    touchMove(e) {
+        const f = this.touches.get(e.pointerId);
+        const dx = e.clientX - f.x, dy = e.clientY - f.y;
+        f.x = e.clientX; f.y = e.clientY;
+        const pi = this.pinch;
+        if (pi && (e.pointerId === pi.a || e.pointerId === pi.b)) {
+            const d = this.fingerDist(pi.a, pi.b);
+            this.pinchScale *= d / pi.d;
+            pi.d = d;
+        } else if (e.pointerId === this.lookId) {
+            this.look.dx += dx;
+            this.look.dy += dy;
+        }
+    }
+    // Ett finger lyfts. Efter ett nyp tittar fingret som är kvar inte runt förrän det också
+    // lyfts (inget ryck när fingrarna släpper olika fort); ett nytt finger bredvid = nytt nyp.
+    touchUp(id) {
+        this.touches.delete(id);
+        if (this.lookId === id) this.lookId = null;
+        if (this.pinch && (id === this.pinch.a || id === this.pinch.b)) this.pinch = null;
+    }
+    fingerDist(a, b) {
+        const p = this.touches.get(a), q = this.touches.get(b);
+        return Math.max(PINCH_MIN, Math.hypot(p.x - q.x, p.y - q.y));
+    }
+    get pinching() { return !!this.pinch; }
     // Blicken sedan förra gången: musens rörelse i låst läge + touch-look, i skärm-px
     takeLook() {
         const l = { dx: this.look.dx, dy: this.look.dy };
         this.look.dx = this.look.dy = 0;
         return l;
+    }
+    // Nypet sedan förra gången som skalfaktor: 1 = ingen ändring, >1 = fingrarna isär (zooma in),
+    // <1 = ihop (zooma ut). Flera rörelser mellan två läsningar multipliceras ihop.
+    takePinch() {
+        const s = this.pinchScale;
+        this.pinchScale = 1;
+        return Number.isFinite(s) && s > 0 ? s : 1;
     }
 
     // Släpp allt som hålls nere: fokusbyte, dold flik, textfält
@@ -438,6 +478,9 @@ export class Input {
         this.resetStick?.();
         this.lookId = null;
         this.look.dx = this.look.dy = 0;
+        this.touches?.clear();
+        this.pinch = null;
+        this.pinchScale = 1;
     }
 
     // Kontrolltillstånd för den här framen.
@@ -486,8 +529,8 @@ export class Input {
             this.canvas.removeEventListener('pointermove', this.onMouseMove);
             this.canvas.removeEventListener('pointerdown', this.onMouseDown);
             window.removeEventListener('pointerup', this.onMouseUp);
-            this.canvas.removeEventListener('pointercancel', this.onLookEnd);
-            this.canvas.removeEventListener('lostpointercapture', this.onLookEnd);
+            this.canvas.removeEventListener('pointercancel', this.onTouchEnd);
+            this.canvas.removeEventListener('lostpointercapture', this.onTouchEnd);
             this.canvas.removeEventListener('pointerleave', this.onMouseLeave);
             this.canvas.removeEventListener('wheel', this.onWheel);
             this.canvas.removeEventListener('contextmenu', this.onContext);

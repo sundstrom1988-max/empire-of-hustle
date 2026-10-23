@@ -105,6 +105,61 @@ export function wheelView(v, dir, can3d = true) {
     if (next < TOP_ORDER.length + CHASE_ZOOMS.length) return { ...v, cam: 'chase', chase: next - TOP_ORDER.length };
     return { ...v, cam: 'fps' };
 }
+// ── Nyp-zoom (touch): steglöst längs samma kedja som hjulet ──
+//  En sammanhängande skala u (logaritmisk, så att samma nyp känns lika stort överallt):
+//    [0, TOP_END]            överblicken, zoomMul TOP_MUL[0] → TOP_MUL[1]
+//    (TOP_END, CHASE_START)  glapp: nyper man vidare stannar bilden vid NÄRA tills glappet är passerat
+//    [CHASE_START, CHASE_END] följkameran, avstånd CHASE_DIST[1] → CHASE_DIST[0]
+//    (CHASE_END, FPS_U)      glapp
+//    FPS_U                   förstaperson
+//  Glappen ger hysteres: ett läge byts först när man nypt en bit förbi gränsen, och tillbaka
+//  först när man nypt hela glappet åt andra hållet — inget fladder fram och tillbaka.
+export const TOP_MUL = [TOP_ZOOMS[1].mul, TOP_ZOOMS[2].mul];                 // LÅNGT … NÄRA
+export const CHASE_DIST = [CHASE_ZOOMS[2].dist, CHASE_ZOOMS[0].dist];        // NÄRA … LÅNGT
+export const PINCH_GAP = Math.log(1.3);       // nyp 30 % förbi gränsen för att byta läge
+export const TOP_END = Math.log(TOP_MUL[1] / TOP_MUL[0]);
+export const CHASE_START = TOP_END + PINCH_GAP;
+export const CHASE_END = CHASE_START + Math.log(CHASE_DIST[1] / CHASE_DIST[0]);
+export const FPS_U = CHASE_END + PINCH_GAP;
+export const ZOOMX_KEY = 'hustle_city_zoomx';  // de steglösa värdena { top, chase }
+
+// Läge + zoom → u (där nypet börjar)
+export function pinchU(z) {
+    if (z.cam === 'top') return clamp(Math.log(clamp(z.topMul, TOP_MUL[0], TOP_MUL[1]) / TOP_MUL[0]), 0, TOP_END);
+    if (z.cam === 'chase') return CHASE_START + Math.log(CHASE_DIST[1] / clamp(z.chaseDist, CHASE_DIST[0], CHASE_DIST[1]));
+    return FPS_U;
+}
+// z = { cam, topMul, chaseDist, u? }, f = nypets skalfaktor (>1 = isär = in). Ger ett nytt objekt.
+export function pinchView(z, f, can3d = true) {
+    if (!(f > 0) || f === 1) return z;
+    const max = can3d ? FPS_U : TOP_END;
+    const u = clamp((Number.isFinite(z.u) ? z.u : pinchU(z)) + Math.log(f), 0, max);
+    let cam = z.cam;
+    if (cam === 'top' && u >= CHASE_START) cam = u >= FPS_U ? 'fps' : 'chase';
+    else if (cam === 'chase') cam = u <= TOP_END ? 'top' : u >= FPS_U ? 'fps' : 'chase';
+    else if (cam === 'fps' && u <= CHASE_END) cam = u <= TOP_END ? 'top' : 'chase';
+    const out = { ...z, cam, u };
+    if (cam === 'top') out.topMul = TOP_MUL[0] * Math.exp(Math.min(u, TOP_END));
+    else if (cam === 'chase') out.chaseDist = CHASE_DIST[1] / Math.exp(clamp(u, CHASE_START, CHASE_END) - CHASE_START);
+    return out;
+}
+// När nypet är slut: u tillbaka till läget (ett halvt nyp i glappet sparas inte till nästa gång)
+export function pinchSettle(z) { return { ...z, u: pinchU(z) }; }
+// Närmaste namngivna steg (för hjulet och bannern) till ett steglöst värde
+export function nearestIndex(list, key, val) {
+    let best = 0, bd = Infinity;
+    list.forEach((e, i) => { const d = Math.abs(Math.log(e[key] / val)); if (d < bd) { bd = d; best = i; } });
+    return best;
+}
+export function loadZoomX(store) {
+    try {
+        const o = JSON.parse(read(store, ZOOMX_KEY) || 'null');
+        const ok = (x, [a, b]) => typeof x === 'number' && Number.isFinite(x) && x >= a && x <= b;
+        return { top: o && ok(o.top, TOP_MUL) ? o.top : null, chase: o && ok(o.chase, CHASE_DIST) ? o.chase : null };
+    } catch (e) { return { top: null, chase: null }; }
+}
+export function saveZoomX(store, top, chase) { return write(store, ZOOMX_KEY, JSON.stringify({ top, chase })); }
+
 // Namnet på steget (bannern): "FÖLJKAMERA · NÄRA"
 export function viewLabel(v) {
     if (v.cam === 'top') return `${CAM_NAMES.top} · ${(TOP_ZOOMS[v.top] || TOP_ZOOMS[0]).name}`;

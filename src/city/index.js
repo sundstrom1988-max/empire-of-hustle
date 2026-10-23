@@ -12,6 +12,7 @@ import { Hud } from './hud.js';
 import { Input, stickCar } from './input.js';
 import {
     is3D, nextCam, loadCam, saveCam, loadView, saveView, loadIndex, saveIndex, ZOOM_KEY, CHASE_KEY, TOP_ZOOMS, CHASE_ZOOMS, CHASE_DEFAULT,
+    pinchView, pinchSettle, nearestIndex, loadZoomX, saveZoomX,
     CAM_NAMES, CAM_ICONS, wheelView, viewLabel, lookTurn, stepPitch, aimPoint, stickToWorld, followYaw, chaseRate, controlYaw,
     createFreeLook, stepFreeLook, resetFreeLook, SENS_RANGE, FOV_RANGE
 } from './camera.js';
@@ -94,7 +95,10 @@ export function openCity(profile, opts = {}) {
     // Kameran: valt läge och zoomsteg från förra gången (camera.js). 3D laddas först när det behövs.
     const st = storage();
     const topZoom = loadIndex(st, ZOOM_KEY, TOP_ZOOMS.length, 0);
-    renderer.zoomMul = TOP_ZOOMS[topZoom].mul;
+    const chaseZoom = loadIndex(st, CHASE_KEY, CHASE_ZOOMS.length, CHASE_DEFAULT);
+    // Nyp-zoomen är steglös: senaste värdet om det finns, annars det namngivna steget
+    const zx = loadZoomX(st);
+    renderer.zoomMul = zx.top ?? TOP_ZOOMS[topZoom].mul;
     const hud = new Hud();
     const input = new Input(overlay);
     // Klick på minikartan/helkartan (eller bakom en meny) är inte ett slag
@@ -115,7 +119,8 @@ export function openCity(profile, opts = {}) {
         raf: 0, last: performance.now(), acc: 0, paused: true, modalType: 'intro',
         errors: 0, musicMuted: !!opts.musicMuted, pendingMission: null, closing: false,
         // Kameran (camera.js): cam = spelarens val, som gäller tills hen själv byter
-        cam: loadCam(st), topZoom, chaseZoom: loadIndex(st, CHASE_KEY, CHASE_ZOOMS.length, CHASE_DEFAULT), view: loadView(st),
+        cam: loadCam(st), topZoom, chaseZoom, view: loadView(st),
+        topMul: renderer.zoomMul, chaseDist: zx.chase ?? CHASE_ZOOMS[chaseZoom].dist, pinch: null,
         r3: null, r3State: 'idle', r3Shown: false, wheelT: 0,
         look: { pitch: 0, camYaw: NaN, turn: 0, free: createFreeLook(), veh: null, room: undefined, x: 0, y: 0 }
     };
@@ -501,7 +506,7 @@ function onModalAction(act) {
             else if (act === 'doctor') { const ok = s.world.callDoctor(); handleEvents(); if (ok) resume(); else showCityPhone(); }
             else if (act.startsWith('crew:')) { s.world.orderCrew(act.slice(5)); resume(); }
             else if (act === 'sms') { resume({ lock: false }); s.opts.sms?.open(); }
-            else if (act.startsWith('cam:')) { setCam(act.slice(4)); showPause(); }
+            else if (act.startsWith('cam:')) { s.pinch = null; setCam(act.slice(4)); showPause(); }
             else if (act === 'armor') { s.world.buyArmor(); handleEvents(); showGuns(); }
             else if (act.startsWith('gun:') || act.startsWith('ammo:')) {
                 const [kind, id] = act.split(':');
@@ -617,20 +622,51 @@ function setCam(cam, { save = true } = {}) {
     camBanner(s);
     updateLock(s);
 }
-function cycleCam() { setCam(nextCam(session.cam)); }
+function cycleCam() { session.pinch = null; setCam(nextCam(session.cam)); }
 
 // Scrollhjulet: ett steg in (−1) eller ut (+1) — inom läget och vidare över lägesgränserna
 function wheelCam(dir) {
     const s = session;
+    s.pinch = null;
     const cur = { cam: s.cam, top: s.topZoom, chase: s.chaseZoom };
     const next = wheelView(cur, dir, s.r3State !== 'failed');
     if (next === cur) return;
     const st = storage();
-    if (next.top !== s.topZoom) { s.topZoom = next.top; s.renderer.zoomMul = TOP_ZOOMS[next.top].mul; saveIndex(st, ZOOM_KEY, next.top); }
-    if (next.chase !== s.chaseZoom) { s.chaseZoom = next.chase; saveIndex(st, CHASE_KEY, next.chase); }
+    if (next.top !== s.topZoom) { s.topZoom = next.top; s.topMul = s.renderer.zoomMul = TOP_ZOOMS[next.top].mul; saveIndex(st, ZOOM_KEY, next.top); }
+    if (next.chase !== s.chaseZoom) { s.chaseZoom = next.chase; s.chaseDist = CHASE_ZOOMS[next.chase].dist; saveIndex(st, CHASE_KEY, next.chase); }
+    saveZoomX(st, s.topMul, s.chaseDist);
     // Över en lägesgräns: lite längre paus, så att en pekplatta inte far förbi alla steg på en gång
     s.wheelT = next.cam !== s.cam ? 0.35 : 0.12;
     if (next.cam !== s.cam) setCam(next.cam); else camBanner(s);
+}
+
+// Nyp-zoom (touch, två fingrar på bilden): som hjulet men steglöst — inom läget och vidare
+// över lägesgränserna (camera.js pinchView). f = skalfaktor sedan förra bilden (>1 = isär = in).
+// Ett nyp som tar slut mitt i ett glapp vid en lägesgräns räknas inte till nästa nyp.
+function pinchCam(f, dt) {
+    const s = session;
+    const z = s.pinch || { cam: s.cam, topMul: s.topMul, chaseDist: s.chaseDist };
+    if (!(f > 0) || Math.abs(f - 1) < 1e-4) {
+        if (s.pinch && (s.pinch.idle += dt) > 0.35) {
+            s.pinch = null;
+            const st = storage();
+            s.topZoom = nearestIndex(TOP_ZOOMS, 'mul', s.topMul);
+            s.chaseZoom = nearestIndex(CHASE_ZOOMS, 'dist', s.chaseDist);
+            saveIndex(st, ZOOM_KEY, s.topZoom); saveIndex(st, CHASE_KEY, s.chaseZoom);
+            saveZoomX(st, s.topMul, s.chaseDist);
+        }
+        return;
+    }
+    const next = pinchView(z, f, s.r3State !== 'failed');
+    s.pinch = { ...next, idle: 0 };
+    s.topMul = s.renderer.zoomMul = next.topMul;
+    s.chaseDist = next.chaseDist;
+    if (next.cam !== s.cam) {
+        s.topZoom = nearestIndex(TOP_ZOOMS, 'mul', s.topMul);
+        s.chaseZoom = nearestIndex(CHASE_ZOOMS, 'dist', s.chaseDist);
+        setCam(next.cam);
+        if (s.cam !== next.cam) s.pinch = { ...pinchSettle({ ...next, cam: s.cam }), idle: 0 }; // 3D gick inte
+    }
 }
 
 // Pekarlåset (dator, 3D): önskat när man spelar — inte i menyer, på stora kartan eller med SMS uppe.
@@ -711,7 +747,7 @@ function camOpts(s, mode) {
     } else {
         o.yaw = (Number.isFinite(s.look.camYaw) ? s.look.camYaw : (v ? v.angle : p.angle)) + o.lookYaw;
         o.pitch = v && fl.pitch ? fl.pitch : undefined;
-        o.dist = (CHASE_ZOOMS[s.chaseZoom] || CHASE_ZOOMS[CHASE_DEFAULT]).dist;
+        o.dist = s.chaseDist;
     }
     return o;
 }
@@ -812,6 +848,7 @@ function frame(ts) {
         const inp = s.input;
         // Blicken (låst mus, touch-look) läses varje bild: syns direkt, vridningen går in vid nästa steg
         const look = inp.takeLook ? inp.takeLook() : null;
+        const pinch = inp.takePinch ? inp.takePinch() : 1; // nyp bakom en meny räknas inte
         if (s.modalType) {
             // Tangenter i modaler
             if (inp.pressed('act')) {
@@ -839,6 +876,7 @@ function frame(ts) {
             const wheel = inp.takeWheel();
             s.wheelT = Math.max(0, s.wheelT - dt);
             if (wheel && s.wheelT <= 0) wheelCam(wheel);
+            pinchCam(pinch, dt);
             if (s.world.player.vehicle && inp.pressed('r')) cycleRadio(); // till fots betyder R rån
             applyLook(s, look, shownCam(s), dt);
         }

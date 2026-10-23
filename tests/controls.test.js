@@ -437,7 +437,8 @@ describe('Input: tangenter, fokus, pekarlås och blick', () => {
             fire(t, e = {}) { const ev = { preventDefault() { }, ...e }; (ls[t] || []).forEach(f => f(ev)); return ev; }
         };
     }
-    function setup() {
+    // stick: med joystickzonen (.ct-stick) nere till vänster, som på touch
+    function setup({ stick = false } = {}) {
         const win = target();
         const doc = Object.assign(target(), {
             hidden: false, activeElement: { tagName: 'BODY' }, pointerLockElement: null,
@@ -449,7 +450,14 @@ describe('Input: tangenter, fokus, pekarlås och blick', () => {
             setPointerCapture() { },
             requestPointerLock: vi.fn(() => { doc.pointerLockElement = canvas; doc.fire('pointerlockchange'); })
         });
-        const root = { querySelector: s => (s === 'canvas' ? canvas : null), querySelectorAll: () => [], getBoundingClientRect: () => ({ left: 0, top: 0, width: 800, height: 600 }) };
+        const el = () => ({ style: {}, offsetWidth: 120, classList: { add() { }, remove() { }, toggle() { } } });
+        const base = el(), knob = el();
+        const zone = stick ? Object.assign(target(), {
+            getBoundingClientRect: () => ({ left: 0, top: 240, width: 360, height: 360 }),
+            setPointerCapture() { },
+            querySelector: s => (s === '.ct-stick-base' ? base : s === '.ct-stick-knob' ? knob : null)
+        }) : null;
+        const root = { querySelector: s => (s === 'canvas' ? canvas : s === '.ct-stick' ? zone : null), querySelectorAll: () => [], getBoundingClientRect: () => ({ left: 0, top: 0, width: 800, height: 600 }) };
         globalThis.window = win;
         globalThis.document = doc;
         const inp = new Input(root);
@@ -457,7 +465,10 @@ describe('Input: tangenter, fokus, pekarlås och blick', () => {
         const key = (code, type = 'keydown', extra = {}) => win.fire(type, { code, target: doc.activeElement, ...extra });
         // pointerup lyssnas på window (släpps knappen utanför canvasen)
         const mouse = (type, x = 400, y = 300, extra = {}) => (type === 'pointerup' ? win : canvas).fire(type, { pointerType: 'mouse', button: 0, pointerId: 1, clientX: x, clientY: y, ...extra });
-        return { inp, win, doc, canvas, key, mouse };
+        // Ett finger: på canvasen (pointerup går till window, som i webbläsaren efter fångsten)
+        const touch = (type, id, x, y) => (type === 'pointerup' ? win : canvas).fire(type, { pointerType: 'touch', pointerId: id, button: 0, clientX: x, clientY: y });
+        const thumb = (type, x, y, id = 3) => zone.fire(type, { pointerType: 'touch', pointerId: id, button: 0, clientX: x, clientY: y });
+        return { inp, win, doc, canvas, key, mouse, touch, thumb };
     }
 
     it('W/S = fwd och gas, A/D = strafe och ratt, mx/my bara från joysticken', () => {
@@ -581,6 +592,103 @@ describe('Input: tangenter, fokus, pekarlås och blick', () => {
         inp.ignoreMouse = () => true;                         // minikartan
         t('pointerdown', 10, 10);
         t('pointermove', 60, 10);
+        expect(inp.takeLook()).toEqual({ dx: 0, dy: 0 });
+    });
+
+    it('nyp: två fingrar isär = zooma in (>1), ihop = ut (<1); läsningen nollställer', () => {
+        const { inp, touch } = setup();
+        expect(inp.takePinch()).toBe(1);
+        touch('pointerdown', 7, 400, 300);
+        touch('pointerdown', 8, 500, 300);                   // 100 px isär
+        expect(inp.pinching).toBe(true);
+        expect(inp.takePinch()).toBe(1);                     // ingen rörelse än
+        touch('pointermove', 8, 550, 300);                   // 150
+        touch('pointermove', 7, 350, 300);                   // 200
+        expect(inp.takePinch()).toBeCloseTo(2, 12);
+        expect(inp.takePinch()).toBe(1);
+        touch('pointermove', 8, 450, 300);                   // 100
+        expect(inp.takePinch()).toBeCloseTo(0.5, 12);
+        // vridning med samma avstånd ändrar inget
+        touch('pointermove', 8, 350, 400);                   // (350,300)→(350,400): 100
+        expect(inp.takePinch()).toBeCloseTo(1, 12);
+        // fingrar ovanpå varandra ger ingen jättefaktor
+        touch('pointermove', 8, 351, 301);
+        touch('pointermove', 8, 350, 400);
+        expect(inp.takePinch()).toBeCloseTo(1, 12);
+    });
+
+    it('under nypet: ingen blick och inga slag; kvarvarande finger tittar inte förrän det lyfts', () => {
+        const { inp, touch } = setup();
+        touch('pointerdown', 7, 400, 300);
+        touch('pointermove', 7, 405, 300);                   // första fingret hann dra lite
+        touch('pointerdown', 8, 500, 300);
+        touch('pointermove', 7, 300, 250);
+        touch('pointermove', 8, 600, 350);
+        expect(inp.takeLook()).toEqual({ dx: 0, dy: 0 });
+        expect(inp.state()).toMatchObject({ punch: false, attack: false, action: false });
+        expect(inp.takePinch()).toBeGreaterThan(1);
+        touch('pointerup', 8, 600, 350);                     // ena fingret lyfts
+        expect(inp.pinching).toBe(false);
+        touch('pointermove', 7, 200, 200);                   // det andra drar vidare: ingen blick, inget nyp
+        expect(inp.takeLook()).toEqual({ dx: 0, dy: 0 });
+        expect(inp.takePinch()).toBe(1);
+        touch('pointerdown', 9, 400, 200);                   // nytt finger bredvid = nytt nyp
+        expect(inp.pinching).toBe(true);
+        touch('pointermove', 9, 600, 200);
+        expect(inp.takePinch()).toBeCloseTo(2, 12);
+        touch('pointerup', 7, 200, 200); touch('pointerup', 9, 600, 200);
+        // alla lyfta: ett finger tittar igen
+        touch('pointerdown', 10, 300, 300);
+        touch('pointermove', 10, 320, 295);
+        expect(inp.takeLook()).toEqual({ dx: 20, dy: -5 });
+        expect(inp.pinching).toBe(false);
+    });
+
+    it('tummen på joysticken + ett finger på canvasen = blick, inte nyp', () => {
+        const { inp, touch, thumb } = setup({ stick: true });
+        thumb('pointerdown', 80, 500);
+        thumb('pointermove', 80, 440);
+        expect(inp.stick.active).toBe(true);
+        expect(inp.state().my).toBeLessThan(-0.5);           // går (upp på skärmen)
+        touch('pointerdown', 7, 600, 300);
+        touch('pointermove', 7, 640, 310);
+        expect(inp.pinching).toBe(false);
+        expect(inp.takePinch()).toBe(1);
+        expect(inp.takeLook()).toEqual({ dx: 40, dy: 10 });
+        expect(inp.stick.active).toBe(true);
+        // ett andra finger på canvasen blir nyp (tummen räknas fortfarande inte)
+        touch('pointerdown', 8, 700, 300);
+        expect(inp.pinching).toBe(true);
+        expect(inp.stick.active).toBe(true);                 // man kan gå och zooma samtidigt
+    });
+
+    it('första fingret på minikartan räknas inte; det andra fingret i ett nyp gör det; ett tredje ignoreras', () => {
+        const { inp, touch } = setup();
+        inp.ignoreMouse = (x) => x > 700;                    // "minikartan" till höger
+        touch('pointerdown', 7, 750, 100);
+        touch('pointermove', 7, 760, 120);
+        expect(inp.takeLook()).toEqual({ dx: 0, dy: 0 });
+        touch('pointerup', 7, 760, 120);
+        touch('pointerdown', 8, 500, 300);
+        touch('pointerdown', 9, 720, 300);                   // landar på kartan men är nypets andra finger
+        expect(inp.pinching).toBe(true);
+        touch('pointerdown', 10, 100, 100);                  // tredje fingret
+        touch('pointermove', 10, 0, 0);
+        expect(inp.takePinch()).toBe(1);
+        touch('pointermove', 9, 610, 300);                   // 220 → 110
+        expect(inp.takePinch()).toBeCloseTo(0.5, 12);
+    });
+
+    it('fokusbyte mitt i ett nyp släpper allt', () => {
+        const { inp, touch, win } = setup();
+        touch('pointerdown', 7, 400, 300);
+        touch('pointerdown', 8, 500, 300);
+        touch('pointermove', 8, 600, 300);
+        win.fire('blur');
+        expect(inp.pinching).toBe(false);
+        expect(inp.takePinch()).toBe(1);
+        touch('pointermove', 8, 700, 300);
+        expect(inp.takePinch()).toBe(1);
         expect(inp.takeLook()).toEqual({ dx: 0, dy: 0 });
     });
 
