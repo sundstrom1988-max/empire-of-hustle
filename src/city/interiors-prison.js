@@ -13,15 +13,20 @@
 //    state.lockdown   larm: fångarna in i cellerna, gallret stängs, vakterna till slussen
 //    state.riot       bråk på gården: fångarna samlas i grupper och skriker
 //    state.panic      slagsmål (brawl.js): fångarna samlas runt och hejar, besökarna går
-//    state.lockCells  [i] = true håller cell i:s gallerdörr stängd (t.ex. spelarens)
-//  state.prison.doors[i] = hur öppen cell i:s gallerdörr är (1 öppen, 0 stängd).
+//    state.lockCells  hela arrayen, t.ex. state.lockCells = [true, false, ...]: håller
+//                     cell i:s gallerdörr stängd (spelarens). Finns inte förrän första
+//                     bildrutan — tilldela hela arrayen eller använd setCellLocked().
+//  state.prison?.doors[i] = hur öppen cell i:s gallerdörr är (1 öppen, 0 stängd);
+//  cellDoorOpen(state, i) läser den säkert redan före första bildrutan.
 //  Gallerdörrarna är gångbara rutor — stängda dörrar ritas bara (kollision sköts av världen).
+//  presentAt(state, id): står personen bakom interaktionen ('dealer', 'guard', 'warden')
+//  på plats just nu? Visa och aktivera bara etiketten då.
 //
 //  Barbråk (brawl.js): n.brawl → vi rör inte NPC:n. Efteråt (leaving) går
 //  fångar till sin cell, vakter tillbaka på sin runda och besökare ut och bort.
 // ═══════════════════════════════════════════
 
-import { registerInterior, KIT } from './interiors.js';
+import { registerInterior, collideInterior, KIT } from './interiors.js';
 
 const {
     TS, PI, TAU, tc, rand, pick, clamp, SKINS, HAIRS, SHIRTS, SIGN_FONT,
@@ -60,11 +65,14 @@ const ROWS = (() => {
     // Korridoren, dörrar till matsalen och gården
     rect(1, 5, 30, 2, '.');
     set(8, 7, '+'); set(9, 7, '+'); set(21, 7, '+'); set(22, 7, '+');
-    // Matsalen: köket (rad 8) bakom serveringsdisken, långbord med bänkar, kortbordet
+    // Matsalen: köket (rad 8) bakom serveringsdisken, långbord med bänkar, kortbordet.
+    // Brickstället och soptunnan (kolumn 1) stänger vänstra kanten, så vägen ner till
+    // besöksrummet går i gången (kolumn 8) mellan långbordet och kortbordet och sen rad 14
     rect(1, 8, 10, 7, '.');
     rect(1, 9, 6, 1, '_');
     rect(2, 11, 6, 1, '>'); rect(2, 12, 6, 1, '<'); rect(2, 13, 6, 1, '>');
-    set(9, 12, '<'); set(9, 11, '>'); set(9, 13, '>');
+    rect(1, 11, 1, 3, '}');
+    set(9, 12, '<'); set(9, 11, '>'); set(9, 13, '>'); set(10, 12, '>');
     set(1, 15, '+');
     // Besöksrummet: glasvägg med fyra bås, fångsidan uppe och besökssidan nere
     rect(1, 16, 10, 7, '.');
@@ -137,7 +145,7 @@ const PRISON_DEF = {
         { id: 'bail', label: 'E — Vakten: borgen och frisläppning', x: 544, y: tc(21) - 6, r: 48 },
         { id: 'warden', label: 'E — Prata med direktören', x: 480, y: tc(11) - 4, r: 52 },
         { id: 'weights', label: 'E — Träna', x: tc(21) + 2, y: 21 * TS, r: 46 },
-        { id: 'dealer', label: 'E — Snacka med Snus-Sune', x: tc(12), y: tc(6), r: 48 },
+        { id: 'dealer', label: 'E — Snacka med Snus-Sune', x: tc(12), y: 176, r: 48 },
         { id: 'tunnel', label: 'E — Gräv', x: tc(1), y: tc(3), r: 40 },
         { id: 'phone', label: 'E — Ring crewet', x: tc(1), y: tc(17), r: 44 },
         { id: 'guard', label: 'E — Snacka med vakten', x: tc(28), y: tc(6), r: 50 }
@@ -186,10 +194,12 @@ function navOf(def, kind) {
 const tileIdx = (def, x, y) => clamp(Math.floor(y / TS), 0, def.h - 1) * def.w + clamp(Math.floor(x / TS), 0, def.w - 1);
 
 const NEI = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]];
-const LOS_R = 7;
+// Rutterna håller LOS_R från väggar och möbler, provat var 2:a px (minst 6 px marginal
+// mellan proven). De som går kollar 5 px, knuffar (separate/jostle/sidosteg) kräver 6.
+const LOS_R = 7, WALK_R = 5, PUSH_R = 6;
 function lineClear(def, M, a, b) {
-    const d = Math.hypot(b.x - a.x, b.y - a.y), n = Math.ceil(d / 5);
-    for (let i = 1; i < n; i++) {
+    const d = Math.hypot(b.x - a.x, b.y - a.y), n = Math.ceil(d / 2);
+    for (let i = 1; i <= n; i++) {
         const k = i / n, x = a.x + (b.x - a.x) * k, y = a.y + (b.y - a.y) * k;
         if (!M[tileIdx(def, x, y)] || !circleClear(def, x, y, LOS_R)) return false;
     }
@@ -238,12 +248,15 @@ function findPath(def, x0, y0, x1, y1, M) {
         for (let c = ix(g[0], g[1]); c !== ix(s[0], s[1]); c = prev[c]) tiles.push({ x: tc(c % Wd), y: tc((c / Wd) | 0) });
         tiles.reverse();
     }
-    const pts = [{ x: x0, y: y0 }, ...tiles, end];
+    // startrutans mitt finns med som reserv: når man inte nästa ruta rakt härifrån
+    // (står nära en karm) går man först till mitten av sin egen ruta
+    const pts = [{ x: x0, y: y0 }, { x: tc(s[0]), y: tc(s[1]) }, ...tiles, end];
+    // sträck rutten: gå så långt fram det går rakt, sen nästa bit
     const out = [];
     let i = 0;
     while (i < pts.length - 1) {
-        let j = pts.length - 1;
-        while (j > i + 1 && !lineClear(def, M, pts[i], pts[j])) j--;
+        let j = i + 1;
+        while (j + 1 < pts.length && lineClear(def, M, pts[i], pts[j + 1])) j++;
         out.push(pts[j]); i = j;
     }
     return out;
@@ -297,24 +310,29 @@ const CROWD_LINES = ['Slagsmål!', 'Kör, kör!', 'Ge honom!', 'Oooh!', 'Hörru!
 const SCARED = ['Jag går nu!', 'Hjälp!', 'Vakten!', 'Inte här...'];
 
 // ── Platser ──
+// Långbordet: övre bänken nås bara längst till höger (rad 10 framför disken är kön),
+// nedre bänken från rad 14
 const EAT_SEATS = [];
 for (let x = 2; x <= 7; x++) {
-    EAT_SEATS.push({ fx: tc(x), fy: tc(10), sx: tc(x), sy: tc(11) + 1, a: PI / 2 });
+    if (x >= 6) EAT_SEATS.push({ fx: tc(x), fy: tc(10) + 4, sx: tc(x), sy: tc(11) + 1, a: PI / 2 });
     EAT_SEATS.push({ fx: tc(x), fy: tc(14), sx: tc(x), sy: tc(13) - 1, a: -PI / 2 });
 }
+// Kortbordet: pallarna ovanför och under, backen (solid) till höger. Vänster sida är gången.
 const CARD_SEATS = [
     { fx: tc(9), fy: tc(10), sx: tc(9), sy: tc(11) + 2, a: PI / 2 },
     { fx: tc(9), fy: tc(14), sx: tc(9), sy: tc(13) - 2, a: -PI / 2 },
-    { fx: tc(10), fy: tc(12), sx: tc(10) - 1, sy: tc(12), a: PI },
-    { fx: tc(8), fy: tc(12), sx: tc(8) + 1, sy: tc(12), a: 0 }
+    { fx: tc(10), fy: tc(13) + 4, sx: tc(10) - 1, sy: tc(12), a: PI }
 ];
 const BENCH_SEAT = { fx: tc(21), fy: 21 * TS, sx: tc(20), sy: 21 * TS, a: -PI / 2 };
 const YARD_SEATS = [24, 25, 26].map(x => ({ fx: tc(x), fy: tc(21), sx: tc(x), sy: tc(22) - 3, a: -PI / 2 }));
 const HANG_C = { x: tc(25), y: tc(18) };
 const HANG = [0.4, 2.5, 4.5].map(a => ({ x: HANG_C.x + Math.cos(a) * 17, y: HANG_C.y + Math.sin(a) * 17, a: a + PI }));
-const MILL = [{ x: tc(4), y: tc(6), a: -2.4 }, { x: tc(16), y: tc(6), a: -PI / 2 }, { x: tc(19) + 6, y: tc(5), a: PI }, { x: tc(24), y: tc(6), a: -PI / 2 }];
+// Häng i korridoren: mot väggarna och mellan celldörrarna, aldrig i gångfilen
+const WALL_Y = 5 * TS + 10, SOUTH_Y = 7 * TS - 12;
+const MILL = [{ x: tc(4), y: SOUTH_Y, a: -2.4 }, { x: tc(16), y: WALL_Y, a: PI / 2 }, { x: tc(24), y: WALL_Y, a: PI * 0.75 }, { x: tc(25), y: SOUTH_Y, a: -PI / 2 }];
 const WALK = [[20, 16], [28, 16], [28, 20], [24, 20]].map(([x, y]) => ({ x: tc(x), y: tc(y) }));
-const COUNTER_X = [2, 3, 4, 5];
+// Kön vid serveringsdisken: en plats framför varje bleck (bokas som 'q0'–'q3')
+const QUEUE = [52, 89, 126, 163].map(x => ({ x, y: 10 * TS + 8 }));
 const GATE_SPOTS = [[19, 17], [19, 19], [20, 18], [17, 17], [17, 19], [20, 16], [20, 20], [16, 18]].map(([x, y]) => ({ x: tc(x), y: tc(y) }));
 const RIOT_AT = [{ x: tc(23), y: tc(12) }, { x: tc(26) + 4, y: tc(18) - 4 }];
 const COURT = { x0: 20 * TS + 8, y0: 9 * TS + 8, x1: 30 * TS + 20, y1: 15 * TS };
@@ -334,11 +352,17 @@ const GATE_STEPS = [
     V(tc(17), tc(17), 0, 'idle', 3, 6)
 ];
 const BRIBE_STEPS = [V(tc(28), tc(6), PI, 'idle', 8, 14), V(tc(27), tc(5), -PI / 2, 'idle', 3, 5)];
-const CORRIDOR_STEPS = [...CELL_X.map(x0 => V(tc(x0 + 1), tc(5), -PI / 2, 'idle', 2, 4)), V(tc(25), tc(6), PI, 'idle', 2, 4)];
+// Korridorvakten står mot cellmuren mellan dörrarna (inte i dörrlinjen) och kikar in snett
+const CORRIDOR_STEPS = [
+    V(tc(4), WALL_Y, -PI * 0.75, 'idle', 2, 4),
+    V(tc(8), WALL_Y, -PI * 0.25, 'idle', 2, 4),
+    V(tc(20), WALL_Y, -PI * 0.75, 'idle', 2, 4),
+    V(tc(26), WALL_Y + 4, -PI / 2, 'idle', 2, 4)
+];
 const YARD_STEPS = [
     V(tc(20), tc(9), PI / 4, 'idle', 4, 8),
     V(tc(19), tc(15), 0, 'idle', 4, 8),
-    V(tc(28), tc(16), -PI / 2, 'idle', 4, 9),
+    V(tc(29), tc(14), PI, 'idle', 4, 9),
     V(tc(23), tc(17), -PI / 2, 'idle', 3, 6),
     V(tc(29), tc(12), PI, 'idle', 4, 8)
 ];
@@ -350,7 +374,8 @@ const WARDEN_STEPS = [
     V(tc(13), tc(8), PI, 'work', 3, 5)
 ];
 const COOK_STEPS = [V(tc(2), tc(8), PI / 2, 'work', 3, 7), V(tc(4), tc(8), PI / 2, 'work', 3, 7), V(tc(6), tc(8), PI / 2, 'work', 3, 6)];
-const DEALER_STEPS = [V(tc(12), tc(6) + 2, -PI / 2, 'idle', 10, 22), V(tc(13) + 4, tc(6), -PI * 0.7, 'idle', 3, 6)];
+// Snus-Sune lutar sig mot cellmuren mellan dörrarna A3 och A4, ur gångfilen
+const DEALER_STEPS = [V(tc(12), WALL_Y, PI / 2, 'idle', 10, 22), V(tc(12) - 9, WALL_Y + 3, PI * 0.35, 'idle', 3, 6)];
 
 // ── Utseenden ──
 const GUARD_SHIRTS = ['#1e3a5f', '#1c355a', '#21406a'];
@@ -379,7 +404,9 @@ function actor(kind, role, x, y, rnd, o = {}) {
         script: null, seat: null, slide: null, after: null, slot: null, act: null,
         cell: o.cell == null ? -1 : o.cell, spot: o.spot || 0, face: o.angle || 0, bx: x, by: y,
         ov: null, homing: false, brawled: false, bt: 0, bwalk: false, bspeed: 60, shoutT: rand(rnd, 1, 4),
-        tag: o.tag || null, gi: 0, grp: 0, cx: 0, cy: 0, inBooth: -1, partner: null, visitor: null, partnerT: 0
+        tag: o.tag || null, gi: 0, grp: 0, cx: 0, cy: 0, inBooth: -1, partner: null, visitor: null, partnerT: 0,
+        q: null, hold: 0, runK: 1, shifted: false, side: 0, sideT: 0, wasSide: false, pref: rnd() < 0.5 ? 1 : -1,
+        stx: x, sty: y, stT: 0, unst: 0
     };
     if (o.staff) n.staff = true;
     if (o.name) n.name = o.name;
@@ -390,18 +417,19 @@ function actor(kind, role, x, y, rnd, o = {}) {
 //  RUMMETS TILLSTÅND
 // ═══════════════════════════════════════════
 
-function prisonOf(state, rnd) {
+function prisonOf(state, rnd = () => 0.5) {
     let P = state.prison;
     if (!P) {
+        if (!Array.isArray(state.lockCells)) state.lockCells = CELL_X.map(() => false);
         P = state.prison = {
-            taken: new Map(), doors: CELL_X.map(() => 1),
+            // en cell som redan är låst när man kommer in (spelaren är inburad) börjar stängd
+            taken: new Map(), doors: CELL_X.map((_, i) => (state.lockCells[i] ? 0 : 1)),
             lockOn: false, lockT: 0, riotOn: false, riotT: 0, panicOn: false, crowdT: 0,
             visT: rand(rnd, 12, 24), shoutT: 1, depth: 0,
             ball: { mode: 'loose', x: tc(24), y: tc(12), vx: 0, vy: 0, holder: null, to: null, from: null, x0: 0, y0: 0, tx: 0, ty: 0, z0: 0, z1: 0, k: 0, dur: 1, peak: 0, hold: 0, wait: 0.5, made: false, swish: 0 },
             st: state, def: state.def, rnd
         };
         for (const n of state.npcs) if (n.p && n.p.slot) P.taken.set(n.p.slot, n);
-        if (!Array.isArray(state.lockCells)) state.lockCells = CELL_X.map(() => false);
         if (!(state.lockdown >= 0)) state.lockdown = 0;
         if (!(state.riot >= 0)) state.riot = 0;
     }
@@ -424,13 +452,34 @@ function take(P, n, key) {
     release(P, n);
     if (key) { P.taken.set(key, n); n.p.slot = key; }
 }
+// Köplatserna vid disken: närmast gången först. -1 = kön är full.
+function freeQueue(P, n) {
+    if (!P || !P.taken) return 0;
+    for (let i = QUEUE.length - 1; i >= 0; i--) {
+        const o = P.taken.get('q' + i);
+        if (!o || o === n || o.dead || !o.p || o.p.q !== 'q' + i || !P.st.npcs.includes(o)) return i;
+    }
+    return -1;
+}
+function takeQueue(P, n, i) {
+    if (!P || !P.taken) return;
+    releaseQueue(P, n);
+    P.taken.set('q' + i, n); n.p.q = 'q' + i;
+}
+function releaseQueue(P, n) {
+    const p = n.p;
+    if (p.q && P.taken.get(p.q) === n) P.taken.delete(p.q);
+    p.q = null;
+}
+
 function release(P, n) {
     const p = n.p;
     if (p.slot && P.taken.get(p.slot) === n) P.taken.delete(p.slot);
     p.slot = null;
+    releaseQueue(P, n);
     const B = P.ball;
     if (B.holder === n) looseBall(P, n);
-    if (B.to === n) B.to = null;
+    if (B.to === n) dropBall(P); // mottagaren försvann mitt i passningen: bollen faller där den är
     if (p.partner) { const m = p.partner; p.partner = null; if (m.p && m.p.visitor === n) m.p.visitor = null; }
     if (p.visitor) { const v = p.visitor; p.visitor = null; if (v.p && v.p.partner === n) v.p.partner = null; }
 }
@@ -458,6 +507,7 @@ function setSteps(P, n, steps, o = {}) {
 function startStep(P, n) {
     const p = n.p;
     if (P.depth > 3) { p.mode = 'stay'; p.wait = 1.5; p.steps = []; p.si = 0; return; } // inget går: stå still en stund
+    p.shifted = false; p.wasSide = false; p.stT = 0; p.stx = n.x; p.sty = n.y; p.unst = 0;
     P.depth++;
     try {
         for (let guard = 0; guard < 10; guard++) {
@@ -549,37 +599,178 @@ function poseTick(n, dt) {
     }
 }
 
+// Får NPC:n stå här? (rätt nät och fritt från väggar/möbler med marginal r)
+const okAt = (P, n, x, y, r) => navOf(P.def, n.p.nav)[tileIdx(P.def, x, y)] === 1 && circleClear(P.def, x, y, r);
+
+// Står still (ett hinder att gå runt): står, sitter, glider in/ut, spelar basket på stället, slåss
+function standing(o) {
+    if (o.brawl || o.pose === 'sit') return true;
+    const q = o.p;
+    if (!q) return true;
+    return q.mode === 'stay' || q.mode === 'slide' || (q.mode === 'basket' && !q.bwalk) || q.hold > 0;
+}
+
+// Vart den gående är på väg (enhetsvektor) — för möten i gångarna
+function heading(o) {
+    const q = o.p, pt = q && q.mode === 'walk' && q.path && q.path[q.pi];
+    if (!pt) return null;
+    const dx = pt.x - o.x, dy = pt.y - o.y, d = Math.hypot(dx, dy);
+    return d > 0.5 ? { x: dx / d, y: dy / d } : null;
+}
+
+// Sidosteg: står någon (eller möter någon) inom ~16 px framför, gå förbi vid sidan om
+// i stället för igenom. Ger hur mycket åt höger (+) eller vänster (−) man ska styra.
+const LOOK = 24, CLEAR = 16;
+function sidestep(P, n, ux, uy, d) {
+    const p = n.p, npcs = P.st.npcs, last = p.pi >= p.path.length - 1;
+    // de som står still går först (dem får man aldrig gå igenom), sen möten med gående
+    let best = null, bAlong = Infinity, bLat = 0, bStill = false;
+    for (let i = 0; i < npcs.length; i++) {
+        const o = npcs[i];
+        if (o === n || o.dead) continue;
+        const rx = o.x - n.x, ry = o.y - n.y, along = rx * ux + ry * uy;
+        if (along <= 0 || along > LOOK) continue;
+        if (last && along > d - 6) continue; // står vid målet: det sköts av ankomstkollen
+        const lat = -rx * uy + ry * ux;
+        if (Math.abs(lat) >= CLEAR) continue;
+        const still = standing(o);
+        if (!still) {
+            // gående: bara möten (åt motsatt håll)
+            const h = heading(o);
+            if (!h || h.x * ux + h.y * uy > -0.3) continue;
+        }
+        if ((still && !bStill) || (still === bStill && along < bAlong)) { best = o; bAlong = along; bLat = lat; bStill = still; }
+    }
+    if (!best) return 0;
+    // höger (+) = (−uy, ux). Fritt där man vill förbi?
+    const free = sd => okAt(P, n, n.x - uy * 12 * sd + ux * 6, n.y + ux * 12 * sd + uy * 6, PUSH_R);
+    let side;
+    if (!bStill) side = 1; // möte: båda håller till höger
+    else if (Math.abs(bLat) > 3) side = bLat > 0 ? -1 : 1; // gå på den sida där hon inte står
+    else side = p.sideT > 0 && p.side ? p.side : p.pref; // rakt framför: håll fast vid valet en stund
+    if (!free(side)) { if (!free(-side)) return 0; side = -side; }
+    p.side = side; p.sideT = 0.6;
+    return side * clamp(1.5 * (CLEAR - Math.abs(bLat)) / CLEAR + 0.25, 0, 1.6);
+}
+
+// Ankomst: står redan någon på stoppet? Flytta stoppet en bit åt en ledig sida
+// (inom samma rum/cell), annars hoppa till nästa punkt. true = rutten ändrad.
+function claimStop(P, n, pt) {
+    const p = n.p, s = p.steps[p.si];
+    if (!s || p.shifted) return false;
+    const tx = s.k === 'sit' ? s.fx : s.x, ty = s.k === 'sit' ? s.fy : s.y;
+    if (tx == null || Math.hypot(pt.x - tx, pt.y - ty) > 2) return false; // inte stegets slutpunkt
+    let occ = null;
+    for (const o of P.st.npcs) if (o !== n && !o.dead && standing(o) && Math.hypot(o.x - tx, o.y - ty) < 14) { occ = o; break; }
+    if (!occ) return false;
+    if (s.k === 'sit') { // glid in härifrån när man är nära nog
+        if (Math.hypot(n.x - tx, n.y - ty) > 20) return false;
+        p.shifted = true; arrive(P, n); return true;
+    }
+    p.shifted = true;
+    if (s.k === 'go' || s.k === 'basket') { nextStep(P, n); return true; }
+    const def = P.def, cell = def.cells.findIndex(c => inBox({ x: tx, y: ty }, c.box));
+    const zone = zoneAt(def, Math.floor(tx / TS), Math.floor(ty / TS));
+    const a0 = Math.atan2(n.y - ty, n.x - tx);
+    for (const r of [18, 22]) for (let k = 0; k < 10; k++) {
+        const a = a0 + (k & 1 ? 1 : -1) * Math.ceil(k / 2) * 0.62 + (k ? 0 : PI / 2);
+        const x = tx + Math.cos(a) * r, y = ty + Math.sin(a) * r;
+        if (!okAt(P, n, x, y, LOS_R) || zoneAt(def, Math.floor(x / TS), Math.floor(y / TS)) !== zone) continue;
+        if (cell >= 0 && !inBox({ x, y }, def.cells[cell].box)) continue;
+        let busy = false;
+        for (const o of P.st.npcs) if (o !== n && !o.dead && Math.hypot(o.x - x, o.y - y) < 13) { busy = true; break; }
+        if (busy) continue;
+        const M = navOf(def, p.nav);
+        if (lineClear(def, M, n, { x, y })) { p.path = [{ x, y }]; p.pi = 0; p.tx = x; p.ty = y; return true; }
+        const path = findPath(def, n.x, n.y, x, y, M);
+        if (path) { p.path = path; p.pi = 0; p.tx = x; p.ty = y; return true; }
+    }
+    // ingen plats: personalen går vidare på rundan, andra ställer sig ändå
+    if (p.loop && p.steps.length > 1) { nextStep(P, n); return true; }
+    return false;
+}
+
+// Fast vid en karm eller i ett hörn: tillbaka till mitten av rutan man står i (alltid fri)
+// och planera därifrån. Hjälper inte det heller går man vidare till nästa steg.
+function unstick(P, n) {
+    const p = n.p, def = P.def;
+    if (!circleClear(def, n.x, n.y, WALK_R)) collideInterior(def, n, WALK_R + 0.5);
+    p.unst++;
+    if (p.unst > 2) { p.unst = 0; p.stT = 0; nextStep(P, n); return; }
+    const cx = tc(Math.floor(n.x / TS)), cy = tc(Math.floor(n.y / TS));
+    const M = navOf(def, p.nav);
+    const rest = findPath(def, cx, cy, p.tx, p.ty, M) || (p.nav !== 'staff' ? findPath(def, cx, cy, p.tx, p.ty, navOf(def, 'staff')) : null);
+    p.path = [{ x: cx, y: cy }, ...(rest || [])];
+    p.pi = 0;
+}
+
 function walkStep(P, n, dt, speed) {
     const p = n.p, def = P.def, pt = p.path && p.path[p.pi];
     if (!pt) return true;
+    if (p.sideT > 0) p.sideT -= dt;
     const dx = pt.x - n.x, dy = pt.y - n.y, d = Math.hypot(dx, dy), m = speed * dt;
+    // sista biten: är stoppet redan upptaget?
+    if (d < 34 && p.pi >= p.path.length - 1 && claimStop(P, n, pt)) return false;
     const ox = n.x, oy = n.y;
-    if (d <= m + 0.01) { n.x = pt.x; n.y = pt.y; p.pi++; } else {
-        n.x += dx / d * m; n.y += dy / d * m;
-        turnToward(n, Math.atan2(dy, dx), dt * 10);
+    if (d <= m + 0.01) { n.x = pt.x; n.y = pt.y; p.pi++; p.unst = 0; } else {
+        const ux = dx / d, uy = dy / d;
+        let mx = ux, my = uy, side = false;
+        const s = sidestep(P, n, ux, uy, d);
+        if (s) {
+            const sx = ux - uy * s, sy = uy + ux * s, k = Math.hypot(sx, sy);
+            if (okAt(P, n, n.x + sx / k * m * 3, n.y + sy / k * m * 3, PUSH_R)) { mx = sx / k; my = sy / k; side = true; }
+        }
+        if (!side && p.wasSide && !lineClear(def, navOf(def, p.nav), n, pt)) {
+            // förbi, men den gamla linjen skär en karm härifrån: ny rutt från där man står
+            const old = p.path, opi = p.pi;
+            if (!aim(P, n, p.tx, p.ty)) { p.path = old; p.pi = opi; }
+            const q = p.path[p.pi], qx = q.x - n.x, qy = q.y - n.y, qd = Math.hypot(qx, qy);
+            if (qd > 0.01) { mx = qx / qd; my = qy / qd; }
+        }
+        p.wasSide = side;
+        n.x += mx * m; n.y += my * m;
+        turnToward(n, Math.atan2(my, mx), dt * 10);
     }
-    n.phase += Math.hypot(n.x - ox, n.y - oy) * 0.12;
     n.pose = 'walk';
-    // aldrig in i väggar och möbler: backa och planera om
-    if (!circleClear(def, n.x, n.y, 5) && circleClear(def, ox, oy, 5)) { n.x = ox; n.y = oy; aim(P, n, p.tx, p.ty); }
+    // aldrig in i väggar och möbler: backa och gå via mitten av rutan
+    if (!circleClear(def, n.x, n.y, WALK_R)) {
+        if (circleClear(def, ox, oy, WALK_R)) { n.x = ox; n.y = oy; }
+        unstick(P, n);
+        if (p.mode !== 'walk') return false;
+    }
+    n.phase += Math.hypot(n.x - ox, n.y - oy) * 0.12; // benen rör sig bara när man faktiskt flyttar sig
     return !p.path || p.pi >= p.path.length;
 }
 
-// Mjuk knuff så att gående inte går rakt igenom varandra
-function separate(P, n, dt) {
-    const npcs = P.st.npcs, def = P.def;
+// Står den gående still för länge (trängsel, hörn)? Planera om från mitten av rutan.
+function stuckCheck(P, n, dt) {
+    const p = n.p;
+    if (Math.hypot(n.x - p.stx, n.y - p.sty) > 4) { p.stx = n.x; p.sty = n.y; p.stT = 0; p.unst = 0; return; }
+    if ((p.stT += dt) > 1.6) { p.stT = 0; p.stx = n.x; p.sty = n.y; unstick(P, n); }
+}
+
+// Mjuk knuff så att gående inte går rakt igenom varandra. Vid inlåsningen (rush)
+// bara mellan dem som springer, och svagare.
+function separate(P, n, dt, rush) {
+    const npcs = P.st.npcs;
     let px = 0, py = 0;
     for (let i = 0; i < npcs.length; i++) {
         const o = npcs[i];
-        if (o === n || o.pose === 'sit' || o.brawl) continue;
+        if (o === n || o.pose === 'sit' || o.brawl || o.dead) continue;
+        if (rush && !(o.p && o.p.run && o.p.mode === 'walk')) continue;
         const dx = n.x - o.x, dy = n.y - o.y, d2 = dx * dx + dy * dy;
-        if (d2 > 225 || d2 < 0.01) continue;
-        const d = Math.sqrt(d2), k = (15 - d) / 15;
-        px += dx / d * k; py += dy / d * k;
+        if (d2 > 225) continue;
+        let d = Math.sqrt(d2), ex = dx / d, ey = dy / d;
+        if (d2 < 0.01) { d = 0.1; ex = n.p.pref; ey = 0; } // exakt ovanpå: isär åt ett håll
+        const k = (15 - d) / 15;
+        px += ex * k; py += ey * k;
     }
     if (px || py) {
-        const nx = n.x + px * 30 * dt, ny = n.y + py * 30 * dt;
-        if (circleClear(def, nx, ny, 6)) { n.x = nx; n.y = ny; }
+        // aldrig bakåt: två som möts i en smal gång tränger sig förbi i stället för att låsa varandra
+        const h = heading(n);
+        if (h) { const back = px * h.x + py * h.y; if (back < 0) { px -= back * h.x; py -= back * h.y; } }
+        const f = rush ? 22 : 30, nx = n.x + px * f * dt, ny = n.y + py * f * dt;
+        if (okAt(P, n, nx, ny, PUSH_R)) { n.x = nx; n.y = ny; }
     }
 }
 
@@ -597,7 +788,7 @@ function stayStep(P, n, dt) {
         const off = Math.sin(st.t * 2.6 + p.bx * 0.07) * 3.2, side = Math.cos(st.t * 1.7 + p.by * 0.05) * 2;
         const c = Math.cos(p.face), sn = Math.sin(p.face);
         const nx = p.bx + c * off - sn * side, ny = p.by + sn * off + c * side;
-        if (circleClear(def, nx, ny, 6)) { n.x = nx; n.y = ny; }
+        if (okAt(P, n, nx, ny, PUSH_R)) { n.x = nx; n.y = ny; }
         n.pose = Math.sin(st.t * 1.3 + p.bx) > -0.2 ? 'cheer' : 'idle';
     }
     if (s.shout && (p.shoutT -= dt) <= 0) {
@@ -617,6 +808,7 @@ function stayStep(P, n, dt) {
     p.wait -= dt;
     if (p.wait > 0) return;
     if (s.give) n.prop = s.give;
+    if (s.queue) releaseQueue(P, n); // brickan fylld: lämna köplatsen
     if (p.role === 'visitor' && p.inBooth >= 0) { p.inBooth = -1; release(P, n); }
     if (p.seat) {
         p.slide = { x0: n.x, y0: n.y, x1: p.seat.fx, y1: p.seat.fy, t: 0, dur: 0.45, out: true };
@@ -689,7 +881,8 @@ function basketStep(P, n, dt) {
 function cellSteps(cell, spot, t, run) {
     const x0 = CELL_X[cell];
     if (spot === 0) return [{ k: 'sit', fx: tc(x0 + 1), fy: tc(2), sx: tc(x0), sy: 2 * TS, a: PI / 2, lie: true, t: t.slice(), run, say: run ? null : SAY.rest }];
-    if (spot === 1) return [{ k: 'visit', x: tc(x0 + 1), y: tc(3), a: PI / 2, pose: 'idle', t: t.slice(), run, say: run ? null : SAY.cell }];
+    // vid gallret i hörnet (dörrlinjen x0+1 hålls fri)
+    if (spot === 1) return [{ k: 'visit', x: tc(x0 + 2) + 2, y: tc(3) + 2, a: PI * 0.6, pose: 'idle', t: t.slice(), run, say: run ? null : SAY.cell }];
     return [{ k: 'visit', x: tc(x0 + 2), y: tc(2) + 3, a: PI, pose: 'sit', t: t.slice(), run, say: run ? null : SAY.cell }];
 }
 
@@ -713,13 +906,15 @@ const ACTS = [
     { act: 'bench', w: 1.2, keys: ['w0'], build: () => [{ k: 'sit', ...BENCH_SEAT, t: [14, 28], prop: 'barbell', say: SAY.bench }] },
     { act: 'curl', w: 1, keys: ['w1'], build: () => [V(tc(22), tc(21) - 3, PI / 2, 'idle', 12, 24, { prop: 'dumbbells', say: SAY.curl })] },
     {
-        act: 'eat', w: 2.6, keys: EAT_SEATS.map((_, i) => 'e' + i),
+        // en ledig köplats vid disken bokas också (p.q), annars ingen mat just nu
+        act: 'eat', w: 2.6, keys: (n, P) => (P && freeQueue(P, n) < 0 ? [] : EAT_SEATS.map((_, i) => 'e' + i)),
         build: (P, n, key) => {
-            const s = EAT_SEATS[+key.slice(1)], cx = COUNTER_X[Math.min(3, Math.floor(P.rnd() * 4))];
-            return [V(tc(cx), tc(10), -PI / 2, 'idle', 2, 3.6, { give: 'tray', say: SAY.queue }), { k: 'sit', ...s, t: [18, 34], prop: 'tray', say: SAY.eat }];
+            const s = EAT_SEATS[+key.slice(1)], qi = Math.max(0, freeQueue(P, n)), q = QUEUE[qi];
+            takeQueue(P, n, qi);
+            return [V(q.x, q.y, -PI / 2, 'idle', 2, 3.6, { give: 'tray', say: SAY.queue, queue: true }), { k: 'sit', ...s, t: [18, 34], prop: 'tray', say: SAY.eat }];
         }
     },
-    { act: 'cards', w: 1.6, keys: ['c0', 'c1', 'c2', 'c3'], build: (P, n, key) => [{ k: 'sit', ...CARD_SEATS[+key.slice(1)], t: [26, 50], prop: 'cards', say: SAY.cards }] },
+    { act: 'cards', w: 1.6, keys: CARD_SEATS.map((_, i) => 'c' + i), build: (P, n, key) => [{ k: 'sit', ...CARD_SEATS[+key.slice(1)], t: [26, 50], prop: 'cards', say: SAY.cards }] },
     { act: 'rest', w: 2, keys: n => [restKey(n)], build: (P, n) => cellSteps(n.p.cell, n.p.spot, [18, 40], false) },
     { act: 'walk', w: 1.3, keys: ['wk0', 'wk1'], build: (P, n) => walkSteps(P, n) },
     { act: 'yardsit', w: 1.1, keys: ['ys0', 'ys1', 'ys2'], build: (P, n, key) => [{ k: 'sit', ...YARD_SEATS[+key.slice(2)], t: [14, 30], say: SAY.hang }] },
@@ -737,7 +932,7 @@ function chooseActivity(P, n) {
     let total = 0;
     for (const A of ACTS) {
         if (A.act === p.act && rnd() < 0.75) continue; // gärna något annat än nyss
-        const keys = (typeof A.keys === 'function' ? A.keys(n) : A.keys).filter(k => slotFree(P, k));
+        const keys = (typeof A.keys === 'function' ? A.keys(n, P) : A.keys).filter(k => slotFree(P, k));
         if (!keys.length) continue;
         opts.push([A, keys]); total += A.w;
     }
@@ -832,6 +1027,8 @@ function lockOne(P, n) {
         if (p.act === 'rest' && inCell(def, n, p.cell) && p.mode === 'stay') { p.wait = 1e9; return; }
         release(P, n);
         p.act = 'lock';
+        // var och en reagerar lite olika snabbt och springer olika fort: ingen följer exakt samma linje
+        p.hold = rand(P.rnd, 0, 0.8); p.runK = rand(P.rnd, 0.9, 1.1);
         setSteps(P, n, cellSteps(p.cell, p.spot, LONG, true));
         return;
     }
@@ -960,6 +1157,17 @@ function looseBall(P, from) {
     B.vx = (rnd() - 0.5) * 50; B.vy = (rnd() - 0.5) * 50; B.wait = rand(rnd, 0.4, 1.2);
 }
 
+// Passningen avbryts (mottagaren gick, larm, bråk): bollen faller ner där den är just nu
+// och blir lös — den får aldrig flyga vidare mot ett gammalt mål
+const BALL_BOX = { x0: 19 * TS + 6, y0: 8 * TS + 30, x1: 31 * TS - 6, y1: 23 * TS - 6 };
+function dropBall(P) {
+    const B = P.ball, c = ballPos(P, P.st.t);
+    B.to = null; B.from = null;
+    B.mode = 'drop'; B.k = 0; B.dur = 0.22; B.peak = 2;
+    B.x0 = c.x; B.y0 = c.y; B.z0 = c.z; B.z1 = 0;
+    B.tx = clamp(c.x, BALL_BOX.x0, BALL_BOX.x1); B.ty = clamp(c.y, BALL_BOX.y0, BALL_BOX.y1);
+}
+
 function handPos(n) {
     const c = Math.cos(n.angle), s = Math.sin(n.angle);
     return { x: n.x + c * 9 - s * 7, y: n.y + s * 9 + c * 7 };
@@ -991,18 +1199,15 @@ function updateBall(P, dt) {
     const players = [];
     for (const n of st.npcs) if (n.p && n.p.mode === 'basket' && !n.brawl && !n.p.ov && !n.dead) players.push(n);
     if (B.holder && !players.includes(B.holder)) looseBall(P, B.holder);
-    if (B.to && !players.includes(B.to)) {
-        const cur = ballPos(P, st.t);
-        B.to = null; B.tx = cur.x; B.ty = cur.y + (B.mode === 'shot' ? 0 : 0);
-    }
+    if (B.to && !players.includes(B.to)) dropBall(P);
     if (B.swish > 0) B.swish = Math.max(0, B.swish - dt);
     switch (B.mode) {
         case 'loose': {
             B.x += B.vx * dt; B.y += B.vy * dt;
             const k = Math.max(0, 1 - 2.4 * dt); B.vx *= k; B.vy *= k;
-            if (B.x < 19 * TS + 6 || B.x > 31 * TS - 6) B.vx = -B.vx;
-            if (B.y < 8 * TS + 30 || B.y > 23 * TS - 6) B.vy = -B.vy;
-            B.x = clamp(B.x, 19 * TS + 6, 31 * TS - 6); B.y = clamp(B.y, 8 * TS + 30, 23 * TS - 6);
+            if (B.x < BALL_BOX.x0 || B.x > BALL_BOX.x1) B.vx = -B.vx;
+            if (B.y < BALL_BOX.y0 || B.y > BALL_BOX.y1) B.vy = -B.vy;
+            B.x = clamp(B.x, BALL_BOX.x0, BALL_BOX.x1); B.y = clamp(B.y, BALL_BOX.y0, BALL_BOX.y1);
             if (players.length && (B.wait -= dt) <= 0) {
                 let best = players[0], bd = Infinity;
                 for (const n of players) { const d = Math.hypot(n.x - B.x, n.y - B.y); if (d < bd) { bd = d; best = n; } }
@@ -1069,11 +1274,21 @@ function stepPrison(n, state, dt, rnd) {
     // fången är hemma i sin cell: bråket är glömt
     if (n.leaving && p.role === 'inmate' && p.mode !== 'walk' && p.mode !== 'slide' && inCell(P.def, n, p.cell)) { n.leaving = false; p.homing = false; }
     if (p.mode === 'new') startStep(P, n);
+    // larmet har just gått: en kort reaktion innan man springer
+    if (p.hold > 0) {
+        p.hold -= dt;
+        if (n.pose === 'walk') n.pose = 'idle';
+        poseTick(n, dt);
+        return true;
+    }
     switch (p.mode) {
-        case 'walk':
-            if (walkStep(P, n, dt, p.run ? RUN : p.homing && p.role === 'visitor' ? 60 : p.speed)) arrive(P, n);
-            else if (p.ov !== 'lock') separate(P, n, dt);
+        case 'walk': {
+            const done = walkStep(P, n, dt, p.run ? RUN * p.runK : p.homing && p.role === 'visitor' ? 60 : p.speed);
+            if (p.mode !== 'walk') break;
+            if (done) arrive(P, n);
+            else { separate(P, n, dt, p.ov === 'lock'); stuckCheck(P, n, dt); }
             break;
+        }
         case 'stay': stayStep(P, n, dt); break;
         case 'slide': slideStep(P, n, dt); break;
         case 'basket': basketStep(P, n, dt); break;
@@ -1200,7 +1415,7 @@ function populatePrison(def, rnd) {
     // ── fångarna: cell 1–5, tre i varje (spelarens cell 0 står tom) ──
     const PLAN = ['rest', 'rest', 'eat', 'basket', 'basket', 'cards', 'cards', 'eat', 'bench', 'basket', 'cards', 'booth', 'walk', 'curl', 'dealer'];
     const keyUse = new Set();
-    const firstKey = A => { const ks = typeof A.keys === 'function' ? null : A.keys; const k = ks && ks.find(x => !keyUse.has(x)); if (k) keyUse.add(k); return k; };
+    const firstKey = (A, n) => { const ks = typeof A.keys === 'function' ? A.keys(n, null) : A.keys; const k = ks && ks.find(x => !keyUse.has(x)); if (k) keyUse.add(k); return k; };
     const fake = { rnd, st: { npcs, t: 0 }, def };
     PLAN.forEach((act, i) => {
         const cell = 1 + (i % 5), spot = Math.floor(i / 5);
@@ -1223,7 +1438,7 @@ function populatePrison(def, rnd) {
             return;
         }
         const A = ACT_BY[act];
-        const key = act === 'rest' ? restKey(n) : firstKey(A);
+        const key = act === 'rest' ? restKey(n) : firstKey(A, n);
         claim(n, key); p.act = act;
         const steps = A.build(fake, n, key);
         p.steps = steps;
@@ -1600,9 +1815,24 @@ function paintMess(g) {
     disc(g, 4 * TS + 10, 12 * TS + 16, 2.2, '#f8fafc'); disc(g, 4 * TS + 15, 12 * TS + 16, 2.2, '#292524'); // salt och peppar
     disc(g, 6 * TS + 20, 12 * TS + 10, 3, '#e5e7eb'); disc(g, 6 * TS + 20, 12 * TS + 10, 2, '#7dd3fc');
     for (let k = 0; k < 8; k++) { const r = tileHash(k, 63); g.fillStyle = 'rgba(120,90,50,0.4)'; g.fillRect(2 * TS + 8 + (r % 170), 12 * TS + 6 + ((r >> 9) % 18), 1.4, 1.4); }
-    // kortbordet: pallar, backar och spelet
+    // brickstället och soptunnan längs vänsterväggen
+    const rx = TS + 3, ry = 11 * TS + 2;
+    softShadow(g, rx + 13, ry + 30, 13, 30, 0.3);
+    box(g, rx, ry, 26, 60, '#4b5563'); box(g, rx + 2, ry + 2, 22, 56, '#9aa4ae');
+    for (let k = 0; k < 7; k++) {
+        const yy = ry + 5 + k * 7.6;
+        box(g, rx + 3, yy, 20, 4.6, k % 3 === 1 ? '#a16207' : '#8b6844'); box(g, rx + 3, yy, 20, 1, 'rgba(255,255,255,0.28)');
+        box(g, rx + 2, yy + 5.2, 22, 1, '#4b5563');
+    }
+    box(g, rx, ry, 26, 1.5, 'rgba(255,255,255,0.4)');
+    const bx0 = tc(1), by0 = 13 * TS + 15;
+    softShadow(g, bx0, by0, 12, 12, 0.35);
+    disc(g, bx0, by0, 11.5, '#1f2937'); disc(g, bx0, by0, 10, '#374151'); disc(g, bx0, by0, 7.6, '#111827');
+    disc(g, bx0 - 2, by0 + 1, 3, '#e5e7eb'); disc(g, bx0 + 3, by0 - 2, 2.4, '#a16207'); box(g, bx0 - 1, by0 - 5, 6, 2.6, '#f8fafc'); // skräp
+    g.strokeStyle = 'rgba(255,255,255,0.25)'; g.lineWidth = 1; g.beginPath(); g.arc(bx0, by0, 10, PI * 1.1, PI * 1.7); g.stroke();
+    // kortbordet: pallar, backen och spelet (vänster sida är gången ner mot besöksrummet)
     stool(g, tc(9), tc(11) + 2); stool(g, tc(9), tc(13) - 2);
-    for (const cx of [tc(8) + 1, tc(10) - 1]) {
+    for (const cx of [tc(10) - 1]) {
         softShadow(g, cx, tc(12), 10, 10, 0.3);
         box(g, cx - 10, tc(12) - 10, 20, 20, '#1d4ed8'); box(g, cx - 8, tc(12) - 8, 16, 16, '#1e40af');
         g.fillStyle = 'rgba(0,0,0,0.35)'; for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) g.fillRect(cx - 7 + i * 5.2, tc(12) - 7 + j * 5.2, 3.2, 3.2);
@@ -2286,5 +2516,35 @@ registerInterior(PRISON_DEF, {
     glows: GLOWS,
     lights: lightsPrison
 });
+
+// ═══════════════════════════════════════════
+//  HJÄLP ÅT INTEGRATIONEN
+// ═══════════════════════════════════════════
+
+// Interaktioner som hör till en person: tagg på NPC:n och hur nära punkten den ska stå
+const PRESENT = { dealer: ['dealer', 40], guard: ['bribe', 52], warden: ['warden', 72] };
+
+// Står personen bakom interaktionen på plats? (Sune inlåst, Berra vid slussen,
+// direktören vid fönstret → nej.) Interaktioner utan person (borgen, gym, tunnel,
+// telefon) är alltid på plats.
+export function presentAt(state, id) {
+    const w = PRESENT[id];
+    if (!w) return true;
+    const a = state.def.interactions.find(i => i.id === id);
+    if (!a) return false;
+    return state.npcs.some(n => n.p && n.p.tag === w[0] && !n.dead && !n.brawl && !n.leaving && Math.hypot(n.x - a.x, n.y - a.y) <= w[1]);
+}
+
+// Lås/lås upp en cells gallerdörr — fungerar även före första bildrutan
+export function setCellLocked(state, i, on) {
+    if (!Array.isArray(state.lockCells)) state.lockCells = CELL_X.map(() => false);
+    state.lockCells[i] = !!on; // före första bildrutan börjar dörren stängd, annars glider den igen
+}
+
+// Hur öppen cell i:s gallerdörr är (1 öppen, 0 stängd) — även före första bildrutan
+export function cellDoorOpen(state, i) {
+    if (state.prison) return state.prison.doors[i];
+    return Array.isArray(state.lockCells) && state.lockCells[i] ? 0 : 1;
+}
 
 export { PRISON_DEF, CELL_X, PLAYER_CELL };

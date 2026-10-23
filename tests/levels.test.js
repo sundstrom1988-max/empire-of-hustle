@@ -1,16 +1,19 @@
 import { describe, it, expect } from 'vitest';
 import {
-    MAX_LEVEL, XP_MAX, MAX_AWARD, RANKS, XP_TOTAL, xpToNext, xpForLevel, levelOf, levelFromXp, legendStars,
+    MAX_LEVEL, XP_MAX, MAX_AWARD, XP_CUBIC, RANKS, XP_TOTAL, xpToNext, xpForLevel, levelOf, levelFromXp, legendStars,
     rankOf, rankIndex, ranksBetween, levelBadge, clampLevel, playerLevel,
     UNLOCKS, getUnlock, requiredLevel, unlockLevel, isUnlocked, unlocksAt, unlocksBetween, nextUnlocks, lockLabel, lockInfo,
     missionCap, goodsCap, fenceCap, crewMax, crewRecover, gunDiscount,
     dmgMult, damageMultiplier, critChance, npcDamage, meleeBase, crewDmgMult, knockMult,
-    pvpMult, newbieShield, pvpDamage, oppsCount, oppsArmed, npcHpMult,
+    pvpMult, newbieShield, pvpDamage, oppsCount, oppsArmed, copHpMult, levelStats,
+    NEWBIE_MAX_LEVEL, CREW_TIERS, crewTier, crewTierMult, crewNpcDamage, crewNpcHurt,
+    backupPerRound, bribeCops, doctorMult, lostTrackMult,
+    ACTIVE_FAS, isActiveUnlock, comingSoon, RACE_GAP, raceLevel, roomMinLevel,
     respGain, respectMultiplier, scaleRespectDelta, failRespect, startRespect, respectFloor, respectPayMult,
-    respectMilestones, fearMult, robFightChance, shopRobKickChance, muggerInterval,
+    respectMilestones, fearMult, robFightChance, isOrdinaryPed, shopRobKickChance, muggerInterval,
     XP, XP_SOURCES, MILESTONES, BUCKETS, COOLDOWNS,
     missionXp, bizXp, upgradeXp, carXp, shopRobXp, fenceXp, chaseXp, respMilestoneXp, koSource,
-    pvpXp, pvpXpGate, mentorMult, aiStartXp,
+    pvpXp, pvpXpGate, pvpReward, mentorMult, aiStartXp,
     bucketTake, bucketPeek, cooldownOk, createCareer, normalizeCareer,
     awardXp, levelUpRewards, normalizeLevelFields, unseenLevels, markLevelSeen, retroXp
 } from '../src/game/levels.js';
@@ -74,7 +77,9 @@ describe('XP-kurva', () => {
         expect(XP_TOTAL).toHaveLength(101);
         expect(XP_TOTAL[1]).toBe(0);
         expect(XP_TOTAL[2]).toBe(45);
-        expect(XP_TOTAL[100]).toBe(175220);
+        expect(XP_CUBIC).toBe(0.0025);
+        expect(XP_TOTAL[85]).toBe(87935);
+        expect(XP_TOTAL[100]).toBe(138475);
     });
     it('är strikt växande och går i femsteg', () => {
         for (let L = 1; L < 99; L++) expect(xpToNext(L + 1)).toBeGreaterThan(xpToNext(L));
@@ -85,9 +90,9 @@ describe('XP-kurva', () => {
         expect(xpToNext(100)).toBe(0);
     });
     it('stämmer med designens nyckelnivåer', () => {
-        const table = [[5, 270, 105], [6, 375, 120], [10, 950, 185], [11, 1135, 200], [16, 2305, 285], [20, 3560, 360],
-            [23, 4705, 425], [30, 8155, 590], [31, 8745, 615], [41, 16190, 920], [51, 27125, 1325], [60, 40840, 1795],
-            [63, 46405, 1975], [75, 74645, 2845], [85, 107045, 3760]];
+        const table = [[2, 45, 60], [5, 270, 105], [6, 375, 120], [10, 945, 185], [11, 1130, 200], [16, 2285, 280], [20, 3505, 350],
+            [23, 4610, 405], [30, 7865, 550], [31, 8415, 570], [41, 15175, 815], [51, 24690, 1125], [60, 36155, 1470],
+            [63, 40690, 1600], [75, 63100, 2210], [85, 87935, 2840]];
         for (const [L, total, next] of table) {
             expect(xpForLevel(L)).toBe(total);
             expect(xpToNext(L)).toBe(next);
@@ -97,8 +102,8 @@ describe('XP-kurva', () => {
         expect(levelOf(0)).toBe(1);
         expect(levelOf(44)).toBe(1);
         expect(levelOf(45)).toBe(2);
-        expect(levelOf(175219)).toBe(99);
-        expect(levelOf(175220)).toBe(100);
+        expect(levelOf(138474)).toBe(99);
+        expect(levelOf(138475)).toBe(100);
     });
     it('har nivå 100 som tak', () => {
         expect(levelOf(XP_MAX)).toBe(100);
@@ -168,7 +173,11 @@ describe('upplåsningar', () => {
             'bm:smuggle': 5, 'bm:counterfeit': 9, 'bm:crypto_scam': 13, 'bm:hack': 17, 'bm:insider': 21,
             'deal:launder': 7, 'deal:bribe': 12,
             'perk:torpedo': 23, 'perk:backup': 31, 'perk:bribecop': 35, 'perk:kapo': 51, 'perk:lawyer': 63,
-            'perk:chauffeur': 70, 'perk:family': 75, 'perk:legend': 80, 'perk:offer': 85, 'perk:godcar': 85
+            'perk:chauffeur': 70, 'perk:family': 75, 'perk:legend': 80, 'perk:offer': 85, 'perk:godcar': 85,
+            // fas 1-poster som fyller luckorna efter nivå 40
+            'perk:backup2': 44, 'perk:doctor': 58, 'perk:heat': 68, 'perk:crewheal': 73, 'cap:missions6': 78,
+            'perk:bribecop2': 82, 'perk:discount30': 88, 'cap:goods25': 90, 'perk:doctorfree': 93, 'cap:fence5': 95,
+            'perk:heat2': 97, 'cosm:donstar': 100
         };
         for (const [id, L] of Object.entries(design)) expect(requiredLevel(id), id).toBe(L);
         // start: allt som inte står i listan
@@ -198,6 +207,68 @@ describe('upplåsningar', () => {
         expect(nextUnlocks(14, 3).map(u => u.id)).toEqual(['cap:missions4', 'weapon:uzi', 'house:house-industrin']);
         expect(nextUnlocks(100)).toEqual([]);
     });
+    it('fas 2 firas aldrig som upplåst', () => {
+        expect(ACTIVE_FAS).toBe(1);
+        expect(unlocksAt(26)).toEqual([]);
+        expect(unlocksAt(26, { all: true }).map(u => u.id)).toEqual(['mission:collect']);
+        expect(unlocksBetween(25, 26)).toEqual([]);
+        expect(unlocksBetween(89, 90).map(u => u.id)).toEqual(['cap:goods25']);
+        expect(nextUnlocks(24).map(u => u.id)).toEqual(['house:house-centrum', 'perk:discount10', 'prop:stripclub']);
+        expect(nextUnlocks(97).map(u => u.id)).toEqual(['cosm:donstar']);
+        for (const u of nextUnlocks(1, 999)) expect(isActiveUnlock(u)).toBe(true);
+        expect(comingSoon().map(u => u.id)).toEqual(['mission:collect', 'cosm:goldguns', 'cosm:rose', 'cosm:statue', 'prestige']);
+        expect(comingSoon().every(u => u.fas > ACTIVE_FAS)).toBe(true);
+        const p = { xp: XP_TOTAL[26] - 1 };
+        const r = awardXp(p, 'opps', { career: createCareer(T0) }, T0);
+        expect(r.to).toBe(26);
+        expect(r.unlocked).toEqual([]);
+        expect(unseenLevels({ xp: XP_TOTAL[100], lvSeen: 25 }).unlocked.every(isActiveUnlock)).toBe(true);
+    });
+    it('något nytt i byggd fas minst var fjärde nivå, ända till 100', () => {
+        const levels = [...new Set(UNLOCKS.filter(isActiveUnlock).map(u => u.level))];
+        for (let L = 1; L < 100; L++) {
+            const next = levels.find(x => x > L);
+            expect(next, `efter nivå ${L}`).toBeDefined();
+            expect(next - L, `efter nivå ${L}`).toBeLessThanOrEqual(4);
+        }
+        // varje titel kommer med något
+        for (const r of RANKS.slice(1)) expect(unlocksAt(r.from).length, r.title).toBeGreaterThan(0);
+    });
+    it('racet: det som ger pengar räknas på rummets lägsta nivå + 10', () => {
+        expect(RACE_GAP).toBe(10);
+        expect(raceLevel(60, 1)).toBe(11);
+        expect(raceLevel(60, 55)).toBe(60);
+        expect(raceLevel(60, null)).toBe(60);
+        expect(raceLevel(60, undefined)).toBe(60);
+        expect(raceLevel(60, 'x')).toBe(60);
+        const vet = { xp: XP_TOTAL[60] }, newbie = { xp: 0 }, ai = { xp: XP_TOTAL[90], isAI: true };
+        expect(roomMinLevel([vet, newbie, ai])).toBe(1);
+        expect(roomMinLevel([vet, ai])).toBeNull();     // en människa: solo
+        expect(roomMinLevel([vet])).toBeNull();
+        expect(roomMinLevel(null)).toBeNull();
+        const roomMin = roomMinLevel([vet, newbie]);
+        // pengar: kapas
+        for (const id of ['rob:bank', 'prop:stripclub', 'perk:kapo', 'perk:paytier', 'bm:insider', 'deal:bribe', 'car:lambo', 'cap:goods20', 'perk:turfprice']) {
+            expect(getUnlock(id).race, id).toBe(true);
+            expect(isUnlocked(vet, id), id).toBe(true);
+            expect(isUnlocked(vet, id, { roomMin }), id).toBe(false);
+        }
+        for (const id of ['mission:smash', 'bm:counterfeit', 'rob:shop']) expect(isUnlocked(vet, id, { roomMin }), id).toBe(true);
+        expect(getUnlock('perk:lawyer').race).toBe(true);
+        // inte pengar: egen nivå gäller
+        for (const id of ['weapon:shotgun', 'crew:slot4', 'house:house-centrum', 'perk:fastrecover']) {
+            expect(getUnlock(id).race, id).toBe(false);
+            expect(isUnlocked(vet, id, { roomMin }), id).toBe(true);
+        }
+        expect(isUnlocked(ai, 'rob:bank', { roomMin })).toBe(true);   // AI spärras aldrig
+        const info = lockInfo(vet, 'rob:bank', { roomMin });
+        expect(info).toMatchObject({ locked: true, left: 0, roomCapped: true, hint: 'rummets gräns: Nv 11 (lägsta spelaren + 10)' });
+        expect(lockInfo(newbie, 'rob:bank', { roomMin })).toMatchObject({ locked: true, roomCapped: false, left: 19 });
+        // gränserna tar raceLevel
+        expect(missionCap(raceLevel(60, roomMin))).toBe(3);
+        expect(goodsCap(raceLevel(60, roomMin))).toBe(10);
+        expect(respectPayMult(80, raceLevel(60, roomMin))).toBe(1.3);
+    });
     it('skriver låstexten', () => {
         expect(lockLabel('weapon:uzi')).toBe('🔒 Nivå 16 · Hustlare');
         expect(lockLabel('prop:stripclub')).toBe('🔒 Nivå 28 · Torped');
@@ -210,13 +281,18 @@ describe('upplåsningar', () => {
 
 describe('gränser per runda och crew', () => {
     it('följer formlerna', () => {
-        expect([1, 14, 15, 39, 40, 100].map(L => missionCap(L))).toEqual([3, 3, 4, 4, 5, 5]);
+        expect([1, 14, 15, 39, 40, 77, 78, 100].map(L => missionCap(L))).toEqual([3, 3, 4, 4, 5, 5, 6, 6]);
         expect(missionCap(15, 2)).toBe(3);
-        expect([1, 34, 35, 59, 60].map(goodsCap)).toEqual([10, 10, 15, 15, 20]);
-        expect([32, 33].map(fenceCap)).toEqual([3, 4]);
+        expect([1, 34, 35, 59, 60, 89, 90].map(goodsCap)).toEqual([10, 10, 15, 15, 20, 20, 25]);
+        expect([32, 33, 94, 95].map(fenceCap)).toEqual([3, 4, 4, 5]);
         expect([7, 8, 13, 14, 21, 22, 29, 30, 100].map(crewMax)).toEqual([0, 1, 1, 2, 2, 3, 3, 4, 4]);
-        expect([54, 55].map(crewRecover)).toEqual([25, 12]);
-        expect([24, 25, 37, 38].map(gunDiscount)).toEqual([1, 0.9, 0.9, 0.8]);
+        expect([54, 55, 72, 73].map(crewRecover)).toEqual([25, 12, 12, 8]);
+        expect([24, 25, 37, 38, 87, 88].map(gunDiscount)).toEqual([1, 0.9, 0.9, 0.8, 0.8, 0.7]);
+        expect([30, 31, 43, 44].map(backupPerRound)).toEqual([0, 1, 1, 2]);
+        expect([34, 35, 81, 82].map(L => bribeCops(L))).toEqual([
+            { perRound: 0, perStar: 1000 }, { perRound: 1, perStar: 1000 }, { perRound: 1, perStar: 1000 }, { perRound: 2, perStar: 500 }]);
+        expect([57, 58, 92, 93].map(doctorMult)).toEqual([1, 0.5, 0.5, 0]);
+        expect([67, 68, 96, 97].map(lostTrackMult)).toEqual([1, 0.75, 0.75, 0.5]);
     });
     it('stämmer med upplåsningslistan', () => {
         for (let n = 1; n <= 4; n++) {
@@ -226,12 +302,25 @@ describe('gränser per runda och crew', () => {
         }
         expect(missionCap(requiredLevel('cap:missions4'))).toBe(4);
         expect(missionCap(requiredLevel('cap:missions5'))).toBe(5);
+        expect(missionCap(requiredLevel('cap:missions6'))).toBe(6);
         expect(goodsCap(requiredLevel('cap:goods15'))).toBe(15);
         expect(goodsCap(requiredLevel('cap:goods20'))).toBe(20);
+        expect(goodsCap(requiredLevel('cap:goods25'))).toBe(25);
         expect(fenceCap(requiredLevel('cap:fence4'))).toBe(4);
+        expect(fenceCap(requiredLevel('cap:fence5'))).toBe(5);
         expect(gunDiscount(requiredLevel('perk:discount10'))).toBe(0.9);
         expect(gunDiscount(requiredLevel('perk:discount20'))).toBe(0.8);
+        expect(gunDiscount(requiredLevel('perk:discount30'))).toBe(0.7);
         expect(crewRecover(requiredLevel('perk:fastrecover'))).toBe(12);
+        expect(crewRecover(requiredLevel('perk:crewheal'))).toBe(8);
+        expect(backupPerRound(requiredLevel('perk:backup'))).toBe(1);
+        expect(backupPerRound(requiredLevel('perk:backup2'))).toBe(2);
+        expect(bribeCops(requiredLevel('perk:bribecop')).perRound).toBe(1);
+        expect(bribeCops(requiredLevel('perk:bribecop2'))).toEqual({ perRound: 2, perStar: 500 });
+        expect(doctorMult(requiredLevel('perk:doctor'))).toBe(0.5);
+        expect(doctorMult(requiredLevel('perk:doctorfree'))).toBe(0);
+        expect(lostTrackMult(requiredLevel('perk:heat'))).toBe(0.75);
+        expect(lostTrackMult(requiredLevel('perk:heat2'))).toBe(0.5);
     });
 });
 
@@ -257,8 +346,12 @@ describe('skada', () => {
         expect(Math.floor(bat5[0] * dmgMult(100))).toBe(64);
         expect(Math.floor(bat5[1] * dmgMult(100))).toBe(79);
         expect(WEAPONS.pistol.dmg * dmgMult(51)).toBeCloseTo(30);
-        // pistolen sänker aldrig opps på ett skott
-        expect(WEAPONS.pistol.dmg * dmgMult(100)).toBeLessThan(35 * npcHpMult(100));
+        // opps har alltid 35 hp: pistolen sänker dem på ett skott först från nivå 93 (utan kritisk träff)
+        expect(WEAPONS.pistol.dmg * dmgMult(92)).toBeLessThan(35);
+        expect(WEAPONS.pistol.dmg * dmgMult(93)).toBeGreaterThanOrEqual(35);
+        // ... och med en kritisk träff redan från nivå 10 (1 % chans), men aldrig på nivå 9
+        expect(WEAPONS.pistol.dmg * dmgMult(10) * 1.5).toBeGreaterThanOrEqual(35);
+        expect(critChance(9)).toBe(0);
     });
     it('kritiska träffar från nivå 10', () => {
         expect(critChance(9)).toBe(0);
@@ -283,8 +376,41 @@ describe('skada', () => {
         expect(oppsArmed(40, false)).toBe(1);
         expect(oppsArmed(80, true)).toBe(4);
         for (const L of allLevels) expect(oppsArmed(L, true)).toBeLessThanOrEqual(oppsCount(L));
-        expect(Math.round(35 * npcHpMult(100))).toBe(47);
-        expect(Math.round(40 * npcHpMult(100))).toBe(53);
+        expect(copHpMult(1)).toBeCloseTo(1 + 1 / 600);
+        expect(Math.round(40 * copHpMult(100))).toBe(47);
+        // snutarna blir aldrig tuffare än skadan växer
+        for (const L of allLevels) expect(copHpMult(L)).toBeLessThan(dmgMult(L) + 0.01);
+    });
+    it('den högre skadan märks: färre slag mot opps och snutar', () => {
+        const hits = (dmg, hp) => Math.ceil(hp / dmg - 1e-9);
+        const bat = WEAPONS.bat.dmg[0] + (WEAPONS.bat.dmg[1] - WEAPONS.bat.dmg[0]) / 2;   // snitt 33
+        expect(hits(bat * dmgMult(1), 35)).toBe(2);
+        expect(hits(bat * dmgMult(30), 35)).toBe(1);
+        const uzi = WEAPONS.uzi.dmg;
+        expect(hits(uzi * dmgMult(1), 40 * copHpMult(1))).toBe(4);
+        expect(hits(uzi * dmgMult(40), 40 * copHpMult(40))).toBe(3);
+        const fists = (WEAPONS.fists.dmg[0] + WEAPONS.fists.dmg[1]) / 2;   // snitt 18
+        expect(hits(fists * dmgMult(1), 40 * copHpMult(1))).toBe(3);
+        expect(hits(fists * dmgMult(40), 40 * copHpMult(40))).toBe(2);
+    });
+    it('levelStats visar det som växer varje nivå', () => {
+        expect(levelStats(1)).toEqual({ level: 1, dmgPct: 0, critPct: 0, respPct: 0, fearPct: 0 });
+        expect(levelStats(23)).toMatchObject({ dmgPct: 11, critPct: 2.3, respPct: 22 });
+        expect(levelStats(100)).toEqual({ level: 100, dmgPct: 49.5, critPct: 10, respPct: 99, fearPct: 40 });
+        for (let L = 2; L <= 100; L++) expect(levelStats(L).dmgPct).toBeGreaterThan(levelStats(L - 1).dmgPct);
+    });
+    it('crewets klass gäller bara mot NPC:er', () => {
+        expect(crewTier(40)).toBeNull();
+        expect(crewTier(41)).toBe(CREW_TIERS.veteran);
+        expect(crewTier(65)).toBe(CREW_TIERS.elite);
+        expect(crewTier(41).unlock).toBe('crew:veteran');
+        expect(crewTierMult('elite')).toBe(1.4);
+        expect(crewTierMult(null)).toBe(1);
+        expect(crewTierMult('constructor')).toBe(1);
+        expect(crewNpcDamage(20, 1, 'elite')).toBeCloseTo(28);
+        expect(crewNpcDamage(20, 100, 'veteran')).toBeCloseTo(20 * crewDmgMult(100) * 1.2);
+        expect(crewNpcHurt(28, 'elite')).toBeCloseTo(20);
+        expect(crewNpcHurt(10)).toBe(10);
     });
     it('PvP håller sig inom ±10 %', () => {
         for (let a = 1; a <= 100; a += 3) for (let t = 1; t <= 100; t += 3) {
@@ -299,9 +425,12 @@ describe('skada', () => {
     it('PvP-skada: taket före nivån, nybörjarskydd', () => {
         expect(pvpDamage(53, 45, 50, 50)).toBe(45);
         expect(pvpDamage(53, 45, 70, 50)).toBeCloseTo(49.5);
+        expect(NEWBIE_MAX_LEVEL).toBe(15);
         expect(newbieShield(15, 5)).toBe(true);
         expect(newbieShield(14, 5)).toBe(false);
-        expect(newbieShield(40, 6)).toBe(false);
+        expect(newbieShield(40, 6)).toBe(true);     // skyddet räcker till och med Langare
+        expect(newbieShield(25, 15)).toBe(true);
+        expect(newbieShield(40, 16)).toBe(false);   // Hustlare har uzi: inget skydd
         expect(newbieShield(15, 5, true)).toBe(false);
         expect(pvpDamage(20, 45, 30, 3)).toBeCloseTo(20 * 1.1 * 0.5);
         expect(pvpDamage(20, 45, 30, 3, { aggro: true })).toBeCloseTo(22);
@@ -341,10 +470,22 @@ describe('respekt', () => {
     it('gaturespekt: folk fruktar dig', () => {
         expect(fearMult(1)).toBe(1);
         expect(fearMult(100)).toBeCloseTo(0.604);
-        expect(robFightChance(0.3, 1, 'civ')).toBeCloseTo(0.3);
-        expect(robFightChance(0.3, 80, 'civ')).toBe(0);
-        expect(robFightChance(0.1, 80, 'metro')).toBe(0);
-        expect(robFightChance(1, 80, 'gang')).toBeCloseTo(fearMult(80));
+        const civ = { type: 'civ' }, metro = { type: 'metro' };
+        expect(robFightChance(0.3, 1, civ)).toBeCloseTo(0.3);
+        expect(robFightChance(0.3, 79, civ)).toBeCloseTo(0.3 * fearMult(79));
+        expect(robFightChance(0.3, 80, civ)).toBe(0);
+        expect(robFightChance(0.1, 80, metro)).toBe(0);
+        expect(robFightChance(1, 80, { type: 'gang', gang: 'kebab' })).toBeCloseTo(fearMult(80));
+        // snutar, tuffingar och rånare har också type 'civ' (ai.js) men är inte vanligt folk
+        expect(robFightChance(1, 80, { type: 'civ', cop: true })).toBeCloseTo(fearMult(80));
+        expect(robFightChance(0.8, 80, { type: 'civ', tough: true })).toBeCloseTo(0.8 * fearMult(80));
+        expect(robFightChance(0.8, 100, { type: 'civ', tough: true, mugger: false, wasMugger: true })).toBeCloseTo(0.8 * fearMult(100));
+        // utan ped gäller bara fearMult, aldrig nollan
+        expect(robFightChance(1, 80)).toBeCloseTo(fearMult(80));
+        expect(robFightChance(1, 80, 'civ')).toBeCloseTo(fearMult(80));
+        expect(isOrdinaryPed(civ)).toBe(true);
+        expect(isOrdinaryPed({ type: 'civ', cop: true })).toBe(false);
+        expect(isOrdinaryPed(null)).toBe(false);
         expect(shopRobKickChance(1)).toBe(0.5);
         expect(muggerInterval(100, 0)).toBe(140);
         expect(muggerInterval(1, 1)).toBeCloseTo(140.6);
@@ -405,6 +546,9 @@ describe('XP-källor', () => {
         expect(koSource({ type: 'civ' })).toBe('ko.civ');
         expect(koSource({ type: 'civ', tough: true })).toBe('ko.tough');
         expect(koSource({ type: 'civ', tough: true, mugger: true })).toBe('ko.mugger');
+        // world.js nollar ped.mugger i knockout-grenen; wasMugger stannar kvar
+        expect(koSource({ type: 'civ', tough: true, mugger: false, wasMugger: true })).toBe('ko.mugger');
+        expect(koSource({ type: 'civ', tough: true, mugger: false })).toBe('ko.tough');
         expect(koSource({ type: 'metro' })).toBe('ko.metro');
         expect(koSource({ type: 'gang' })).toBe('ko.gang');
         expect(koSource({ type: 'civ', cop: true })).toBe('ko.cop');
@@ -566,6 +710,102 @@ describe('awardXp', () => {
         c2.buckets.street = { v: 4, t: T0 };
         expect(awardXp(fresh(), 'rob', { career: c2, milestone: null, mentor: 1.5 }, T0)).toMatchObject({ base: 6, capped: true });
     });
+    it('tom hink förbrukar inte once-nyckeln', () => {
+        const career = createCareer(T0);
+        career.buckets.office = { v: 0, t: T0 };
+        const p = fresh();
+        expect(awardXp(p, 'buyBiz', { career, amount: 10, once: 'buy:kebab', milestone: null }, T0)).toMatchObject({ gained: 0, blocked: 'bucket' });
+        expect(p.xpOnce).toEqual([]);
+        // en timme senare (full hink): samma köp ger XP, och först nu förbrukas nyckeln
+        expect(awardXp(p, 'buyBiz', { career, amount: 10, once: 'buy:kebab', milestone: null }, T0 + 60 * MIN).gained).toBe(10);
+        expect(p.xpOnce).toEqual(['buy:kebab']);
+        expect(awardXp(p, 'buyBiz', { career, amount: 10, once: 'buy:kebab' }, T0 + 120 * MIN).blocked).toBe('once');
+    });
+    it('halvtom hink: delbelopp nu, hela beloppet senare', () => {
+        const career = createCareer(T0);
+        career.buckets.office = { v: 5, t: T0 };
+        const p = fresh();
+        expect(awardXp(p, 'stripclub', { career }, T0)).toMatchObject({ gained: 5, capped: true });
+        expect(p.xpOnce).toEqual([]);
+        expect(awardXp(p, 'stripclub', { career }, T0 + 60 * MIN).gained).toBe(60);
+        expect(awardXp(p, 'stripclub', { career }, T0 + 120 * MIN).blocked).toBe('once');
+    });
+    it('once-nycklar kapas vid 40 tecken så att de överlever normalizeLevelFields', () => {
+        const p = fresh();
+        awardXp(p, 'opps', { career: createCareer(T0), once: 'x'.repeat(60) }, T0);
+        expect(p.xpOnce).toEqual(['x'.repeat(40)]);
+        expect(normalizeLevelFields(p).xpOnce).toEqual(['x'.repeat(40)]);
+        expect(awardXp(p, 'opps', { career: createCareer(T0), once: 'x'.repeat(60) }, T0).blocked).toBe('once');
+    });
+    it('ärvda nyckelnamn ignoreras och XP minskar aldrig', () => {
+        for (const bad of ['toString', 'constructor', '__proto__', 'hasOwnProperty']) {
+            const career = createCareer(T0);
+            const a = fresh({ xp: 5000 });
+            expect(awardXp(a, 'opps', { career, milestone: bad }, T0)).toMatchObject({ gained: 25, bonus: 0, milestone: null });
+            expect(a.xp).toBe(5025);
+            const b = fresh({ xp: 5000 });
+            expect(awardXp(b, 'opps', { career, bucket: bad }, T0).gained).toBe(25);
+            expect(b.xp).toBe(5025);
+            const c = fresh({ xp: 5000 });
+            expect(awardXp(c, bad, { career }, T0)).toMatchObject({ gained: 0, blocked: 'unknown' });
+            expect(c.xp).toBe(5000);
+            expect(missionXp({ type: bad })).toBe(50);
+            expect(respMilestoneXp(bad)).toBe(0);
+        }
+        for (const amount of [NaN, -1e9, 'x', {}, Infinity]) {
+            const p = fresh({ xp: 5000 });
+            expect(awardXp(p, 'opps', { career: createCareer(T0), amount }, T0).gained).toBeGreaterThanOrEqual(0);
+            expect(p.xp).toBeGreaterThanOrEqual(5000);
+        }
+    });
+    it('titelrespekten betalar respektstegen (imperiets väg)', () => {
+        const p = fresh({ xp: XP_TOTAL[6] - 1 });
+        p.respect.kebab = 27;
+        const r = awardXp(p, 'pitch', { career: createCareer(T0), milestone: null }, T0);
+        expect(p.respect.kebab).toBe(32);
+        expect(r.respMilestones).toEqual([{ gang: 'kebab', step: 30, xp: 40 }]);
+        expect(r.gained).toBe(6 + 40);
+        expect(p.xpOnce).toContain('resp:kebab:30');
+        expect(r.rewards.milestones).toEqual([{ gang: 'kebab', step: 30 }]);
+        // steget betalas en gång per match: ett nytt titelband till 30+ ger inget nytt
+        p.respect.kebab = 25;
+        const again = awardXp(p, 'opps', { career: createCareer(T0), amount: XP_TOTAL[11] - p.xp }, T0);
+        expect(again.to).toBe(11);
+        expect(again.respMilestones).toEqual([]);
+    });
+    it('stadens väg (applyRespect: false) betalar inte stegen — det gör setRespect', () => {
+        const p = fresh({ xp: XP_TOTAL[6] - 1 });
+        p.respect.kebab = 27;
+        const r = awardXp(p, 'rob', { career: createCareer(T0), milestone: null, applyRespect: false }, T0);
+        expect(p.respect.kebab).toBe(27);
+        expect(r.respMilestones).toEqual([]);
+        expect(r.rewards.milestones).toEqual([{ gang: 'kebab', step: 30 }]);
+        expect(p.xpOnce).toEqual([]);
+    });
+    it('steg-XP som ger en ny titel betalar även den titelns respekt', () => {
+        // nivå 10 → 11 (Langare): +5 tar kebab 55 → 60 (steg 60, 60 XP) ...
+        const p = fresh({ xp: XP_TOTAL[11] - 1 });
+        p.respect.kebab = 55;
+        const r = awardXp(p, 'opps', { career: createCareer(T0), amount: 1 }, T0);
+        expect(r.respMilestones.map(m => m.step)).toEqual([60]);
+        expect(r.to).toBe(levelOf(p.xp));
+        expect(p.respect.kebab).toBe(60);
+        // ... och när XP:n från stegen räcker till nästa titel läggs dess respekt också på
+        const q = fresh({ xp: XP_TOTAL[6] - 1 });
+        for (const id of GANG_IDS) q.respect[id] = 95;
+        q.respect.kebab = 22;
+        const r2 = awardXp(q, 'opps', { career: createCareer(T0), amount: 1, mentor: 1.75 }, T0);
+        // Hangaround: fem gäng 95 → 100 (5 × 100 × 1,75 = 875 XP) räcker till Langare (nivå 11) ...
+        expect(r2.ranks.map(x => x.id)).toEqual(['hangaround', 'langare']);
+        expect(r2.to).toBe(11);
+        // ... vars +5 tar kebab 27 → 32 och betalar steget 30 i andra varvet
+        expect(q.respect.kebab).toBe(32);
+        expect(r2.respMilestones.filter(m => m.step === 100)).toHaveLength(5);
+        expect(r2.respMilestones.filter(m => m.gang === 'kebab')).toEqual([{ gang: 'kebab', step: 30, xp: 70 }]);
+        expect(r2.gained).toBe(2 + 5 * 175 + 70);
+        expect(r2.rewards.rep).toBe((11 - 5) + 2 * 5);
+        expect(q.rep).toBe(r2.rewards.rep);
+    });
     it('p.level räknas alltid om ur XP', () => {
         const p = fresh({ xp: XP_TOTAL[10], level: 99 });
         awardXp(p, 'opps', { career: createCareer(T0) }, T0);
@@ -597,24 +837,47 @@ describe('hinkar och spärrar', () => {
         expect(r.got).toBe(0);
         expect(r.b.t).toBe(T0);
     });
-    it('cooldownOk stämplar bara när den godkänner', () => {
+    it('cooldownOk stämplar när den godkänner, och flyttar en stämpel från framtiden', () => {
         const c = createCareer(T0);
         expect(cooldownOk(c, 'lastBankXp', COOLDOWNS.bank.ms, T0)).toBe(true);
         expect(c.lastBankXp).toBe(T0);
         expect(cooldownOk(c, 'lastBankXp', COOLDOWNS.bank.ms, T0 + MIN)).toBe(false);
-        expect(c.lastBankXp).toBe(T0);
-        expect(cooldownOk(c, 'lastBankXp', COOLDOWNS.bank.ms, T0 - 60 * MIN)).toBe(false);   // klockan bakåt
+        expect(c.lastBankXp).toBe(T0);   // vanlig nekning stämplar inte
+        // klockan har gått bakåt en timme: nekas, och stämpeln flyttas till nu
+        expect(cooldownOk(c, 'lastBankXp', COOLDOWNS.bank.ms, T0 - 60 * MIN)).toBe(false);
+        expect(c.lastBankXp).toBe(T0 - 60 * MIN);
+        // ... så spärren blir 10 min från den nya tiden, inte 70 min
+        expect(cooldownOk(c, 'lastBankXp', COOLDOWNS.bank.ms, T0 - 51 * MIN)).toBe(false);
+        expect(cooldownOk(c, 'lastBankXp', COOLDOWNS.bank.ms, T0 - 50 * MIN)).toBe(true);
         expect(cooldownOk(null, 'lastBankXp', 1, T0)).toBe(false);
     });
     it('pvpXpGate: samma par var 10:e minut, högst 6 i timmen', () => {
         const host = {};
-        expect(pvpXpGate(host, 'a', 'b', T0)).toBe(true);
-        expect(pvpXpGate(host, 'a', 'b', T0 + 5 * MIN)).toBe(false);
-        expect(pvpXpGate(host, 'a', 'b', T0 + 10 * MIN)).toBe(true);
-        for (let i = 0; i < 4; i++) expect(pvpXpGate(host, 'a', `v${i}`, T0 + 11 * MIN)).toBe(true);
-        expect(pvpXpGate(host, 'a', 'v9', T0 + 12 * MIN)).toBe(false);   // sjätte i timmen redan tagen
-        expect(pvpXpGate(host, 'z', 'b', T0 + 12 * MIN)).toBe(true);
-        expect(pvpXpGate(host, 'a', 'v9', T0 + 71 * MIN)).toBe(true);
+        expect(pvpXpGate(host, 'a', 'b', 40, T0)).toBe(true);
+        expect(pvpXpGate(host, 'a', 'b', 40, T0 + 5 * MIN)).toBe(false);
+        expect(pvpXpGate(host, 'a', 'b', 40, T0 + 10 * MIN)).toBe(true);
+        for (let i = 0; i < 4; i++) expect(pvpXpGate(host, 'a', `v${i}`, 40, T0 + 11 * MIN)).toBe(true);
+        expect(pvpXpGate(host, 'a', 'v9', 40, T0 + 12 * MIN)).toBe(false);   // sjätte i timmen redan tagen
+        expect(pvpXpGate(host, 'z', 'b', 40, T0 + 12 * MIN)).toBe(true);
+        expect(pvpXpGate(host, 'a', 'v9', 40, T0 + 71 * MIN)).toBe(true);
+    });
+    it('pvpXpGate: kills som ger 0 XP stämplar ingenting', () => {
+        const host = {};
+        for (let i = 0; i < 6; i++) expect(pvpXpGate(host, 'a', `n${i}`, pvpXp(50, 1, true), T0 + i)).toBe(false);
+        for (const bad of [0, -5, undefined, NaN, 'x']) expect(pvpXpGate(host, 'a', 'b', bad, T0)).toBe(false);
+        expect(host.hour?.a).toBeUndefined();
+        expect(Object.keys(host.pair || {})).toEqual([]);
+        // timkvoten är orörd: en riktig kill direkt efter ger XP
+        expect(pvpXpGate(host, 'a', 'real', pvpXp(50, 50), T0 + 100)).toBe(true);
+    });
+    it('pvpReward räknar pvpXp och grinden i ett anrop', () => {
+        const host = {};
+        for (let i = 0; i < 6; i++) expect(pvpReward(host, { killer: 'a', victim: `n${i}`, killerLevel: 50, victimLevel: 3, shielded: true }, T0 + i)).toBe(0);
+        expect(pvpReward(host, { killer: 'a', victim: 'b', killerLevel: 20, victimLevel: 40 }, T0)).toBe(80);
+        expect(pvpReward(host, { killer: 'a', victim: 'b', killerLevel: 20, victimLevel: 40 }, T0 + MIN)).toBe(0);   // samma par
+        expect(pvpReward(host, { killer: 'a', victim: 'c', killerLevel: 60, victimLevel: 20 }, T0 + MIN)).toBe(0);   // 40 nivåer under
+        expect(pvpReward(host, {}, T0)).toBe(40);
+        expect(pvpReward(null, { killer: 'a', victim: 'b', killerLevel: 1, victimLevel: 1 }, T0)).toBe(0);
     });
     it('karriären normaliseras', () => {
         const c = normalizeCareer({ xp: '5000', milestones: ['firstRob', 'firstRob', 'hack', 7], buckets: { street: { v: 999, t: T0 }, office: 'x' }, lastBankXp: -4, migrated: 1 }, T0);
@@ -625,13 +888,14 @@ describe('hinkar och spärrar', () => {
         expect(c.lastBankXp).toBe(0);
         expect(c.migrated).toBe(true);
         expect(normalizeCareer(null, T0)).toEqual(createCareer(T0));
+        expect(normalizeCareer({ milestones: ['constructor', 'toString', '__proto__', 'hasOwnProperty', 'firstBank'] }, T0).milestones).toEqual(['firstBank']);
     });
 });
 
 describe('levelUpRewards', () => {
     it('gör ingenting utan nivå-upp', () => {
         const p = fresh();
-        expect(levelUpRewards(p, 5, 5)).toEqual({ rep: 0, respect: {}, ranks: [] });
+        expect(levelUpRewards(p, 5, 5)).toEqual({ rep: 0, respect: {}, ranks: [], milestones: [] });
         expect(levelUpRewards(p, 9, 3).rep).toBe(0);
         expect(p.rep).toBe(0);
         expect(levelUpRewards(null, 1, 50).rep).toBe(0);
@@ -641,6 +905,15 @@ describe('levelUpRewards', () => {
         const r = levelUpRewards(p, 1, 11);
         expect(r.rep).toBe(10 + 10);
         for (const id of GANG_IDS) expect(p.respect[id]).toBe(10);
+    });
+    it('rapporterar respektstegen som titelrespekten passerar', () => {
+        const p = fresh({ gang: 'kebab' });
+        p.respect.kebab = 27; p.respect.taco = 58; p.respect.dods = 29;
+        const r = levelUpRewards(p, 5, 6);
+        expect(r.milestones).toEqual([{ gang: 'kebab', step: 30 }, { gang: 'taco', step: 60 }]);   // dods är rival
+        const q = fresh(); q.respect.kebab = 27;
+        expect(levelUpRewards(q, 5, 6, { applyRespect: false }).milestones).toEqual([{ gang: 'kebab', step: 30 }]);
+        expect(q.respect.kebab).toBe(27);
     });
 });
 

@@ -18,6 +18,8 @@ import { GANGS, GANG_IDS, RESPECT_MIN, RESPECT_MAX } from '../city/constants.js'
 import { SHOPS } from '../data/gameData.js';
 
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+// Bara egna nycklar: 'toString', 'constructor' och '__proto__' får aldrig slå igenom
+const own = (o, k) => (typeof k === 'string' || typeof k === 'number') && Object.prototype.hasOwnProperty.call(o, k);
 const MIN = 60000;
 const HOUR = 3600000;
 
@@ -74,8 +76,11 @@ export function levelBadge(level) {
 }
 
 // ── XP-kurva ──
-// need(L) = 5 · round((30 + 15·L + 0,004·L³) / 5): XP från nivå L till L+1
-function stepXp(L) { return 5 * Math.round((30 + 15 * L + 0.004 * L ** 3) / 5); }
+// need(L) = 5 · round((30 + 15·L + 0,0025·L³) / 5): XP från nivå L till L+1.
+// 0,0025 (inte 0,004) så att en vanlig spelare (cirka 33 XP/min) når Gudfadern
+// på cirka 45 h och nivå 100 på cirka 70 h. Se docs/levels.md avsnitt 2.
+export const XP_CUBIC = 0.0025;
+function stepXp(L) { return 5 * Math.round((30 + 15 * L + XP_CUBIC * L ** 3) / 5); }
 
 export function xpToNext(level) {
     const L = clampLevel(level);
@@ -134,7 +139,12 @@ export function playerLevel(who) {
 
 // ── Upplåsningar ──
 // status: befintligt (finns, får en spärr) · nytt (måste byggas) · bonus (en siffra ändras) · kosmetiskt
-const U = (level, id, kind, label, status = 'befintligt', fas = 1) => Object.freeze({ id, level, kind, label, status, fas });
+// race: ger pengar i racet till 1 miljon. När minst två människor spelar räknas
+// de på raceLevel (min(egen nivå, rummets lägsta + RACE_GAP)), se raceLevel nedan.
+const RACE_KINDS = new Set(['mission', 'crime', 'market', 'deal', 'car', 'pimp', 'cap', 'prop']);
+const RACE_IDS = new Set(['perk:paytier', 'perk:kapo', 'perk:turfprice', 'perk:lawyer']);
+const U = (level, id, kind, label, status = 'befintligt', fas = 1) =>
+    Object.freeze({ id, level, kind, label, status, fas, race: RACE_KINDS.has(kind) || RACE_IDS.has(id) });
 export const UNLOCKS = Object.freeze([
     U(2, 'weapon:bat', 'weapon', 'Basebollträ hos Pang-Pelle'),
     U(2, 'car:moped', 'car', 'Moped EPA i garaget'),
@@ -192,28 +202,44 @@ export const UNLOCKS = Object.freeze([
     U(35, 'perk:bribecop', 'perk', 'Muta snuten: −1 stjärna för 1 000 kr', 'nytt'),
     U(38, 'perk:discount20', 'perk', 'Pang-Pelle −20 %', 'bonus'),
     U(40, 'cap:missions5', 'cap', '5 uppdrag per runda', 'bonus'),
-    U(41, 'crew:veteran', 'crew', 'Veteraner hos Rekryteraren (+20 % hälsa och skada)', 'nytt'),
+    U(41, 'crew:veteran', 'crew', 'Veteraner hos Rekryteraren (+20 % hälsa och skada mot NPC:er)', 'nytt'),
     U(41, 'perk:paytier', 'perk', 'Respekt ≥ 80 ger ×1,45 i uppdragslön', 'bonus'),
+    U(44, 'perk:backup2', 'perk', 'Ring backup två gånger per runda', 'bonus'),
     U(45, 'cosm:goldguns', 'cosmetic', 'Guldpistol och kromad uzi', 'kosmetiskt', 2),
     U(48, 'perk:armoredride', 'perk', 'Bepansrad gängbil vid HQ (+50 % hp)', 'bonus'),
     U(51, 'perk:kapo', 'perk', 'Kapo-jobbet: dubbel lön och dubbel XP', 'nytt'),
     U(55, 'perk:fastrecover', 'perk', 'Crewet reser sig efter 12 s', 'bonus'),
+    U(58, 'perk:doctor', 'perk', 'Doktorn tar halva priset', 'bonus'),
     U(60, 'cap:goods20', 'cap', 'Langa 20 varor per runda', 'bonus'),
     U(60, 'perk:turfprice', 'perk', '+20 % pris på ditt gängs turf', 'bonus'),
     U(63, 'perk:lawyer', 'perk', 'Advokaten: kortare häkte och halva böter', 'bonus'),
     U(63, 'perk:nofailloss', 'perk', 'Misslyckade jobb kostar ingen respekt', 'bonus'),
-    U(65, 'crew:elite', 'crew', 'Elitrekryter (+40 % hälsa och skada)', 'nytt'),
+    U(65, 'crew:elite', 'crew', 'Elitrekryter (+40 % hälsa och skada mot NPC:er)', 'nytt'),
+    U(68, 'perk:heat', 'perk', 'Snuten tappar spåret 25 % snabbare', 'bonus'),
     U(70, 'perk:chauffeur', 'perk', 'Privatchaufför: gratis taxi, även med 1 stjärna', 'bonus'),
+    U(73, 'perk:crewheal', 'perk', 'Crewet reser sig efter 8 s', 'bonus'),
     U(75, 'perk:family', 'perk', 'Familjens skydd: gängrespekten går aldrig under +50', 'bonus'),
+    U(78, 'cap:missions6', 'cap', '6 uppdrag per runda', 'bonus'),
     U(80, 'perk:legend', 'perk', 'Gatans legend: vanligt folk slåss aldrig emot', 'bonus'),
+    U(82, 'perk:bribecop2', 'perk', 'Muta snuten: 500 kr per stjärna, två gånger per runda', 'bonus'),
     U(85, 'perk:offer', 'perk', 'Ett erbjudande: alla gängbossar svarar, även rivalen', 'nytt'),
     U(85, 'cosm:goldname', 'cosmetic', 'Guldnamn och krona i stan och listorna', 'nytt'),
     U(85, 'perk:godcar', 'perk', 'Gudfaderns svarta Rolls vid HQ', 'nytt'),
+    U(88, 'perk:discount30', 'perk', 'Pang-Pelle −30 %', 'bonus'),
+    U(90, 'cap:goods25', 'cap', 'Langa 25 varor per runda', 'bonus'),
     U(90, 'cosm:rose', 'cosmetic', 'Rosen på kavajen och gyllene basebollträ', 'kosmetiskt', 2),
+    U(93, 'perk:doctorfree', 'perk', 'Doktorn lappar ihop dig gratis', 'bonus'),
+    U(95, 'cap:fence5', 'cap', 'Skrota 5 bilar per runda', 'bonus'),
     U(95, 'cosm:statue', 'cosmetic', 'Staty av dig vid HQ', 'kosmetiskt', 2),
-    U(100, 'prestige', 'prestige', 'Don-stjärna med guldaura och Prestige', 'nytt', 2)
+    U(97, 'perk:heat2', 'perk', 'Snuten tappar spåret dubbelt så snabbt', 'bonus'),
+    U(100, 'cosm:donstar', 'cosmetic', 'Don-stjärna i namnskylten och Legend-stjärnor', 'kosmetiskt'),
+    U(100, 'prestige', 'prestige', 'Guldaura och valfri Prestige', 'nytt', 2)
 ]);
 const UNLOCK_BY_ID = new Map(UNLOCKS.map(u => [u.id, u]));
+
+// Fasen som är byggd. Poster med högre fas visas som "Kommer snart", aldrig som "Upplåst".
+export const ACTIVE_FAS = 1;
+export function isActiveUnlock(u) { return !!u && u.fas <= ACTIVE_FAS; }
 
 export function getUnlock(id) { return UNLOCK_BY_ID.get(id) || null; }
 
@@ -221,27 +247,53 @@ export function getUnlock(id) { return UNLOCK_BY_ID.get(id) || null; }
 export function requiredLevel(id) { return UNLOCK_BY_ID.get(id)?.level ?? 1; }
 export const unlockLevel = requiredLevel;
 
-// who: spelare (läser p.xp) eller nivå. AI-spelare spärras aldrig.
-export function isUnlocked(who, id) {
-    if (who && typeof who === 'object' && who.isAI) return true;
-    return playerLevel(who) >= requiredLevel(id);
+// ── Racet till 1 miljon ──
+// När minst två människor spelar (online eller hotseat) räknas allt som ger pengar
+// (race: true, missionCap, goodsCap, fenceCap, respectPayMult, Kapo, turfpris, advokaten)
+// på min(egen nivå, rummets lägsta mänskliga nivå + RACE_GAP). Då kan en veteran
+// aldrig tjäna mer än en spelare tio nivåer över nybörjaren. Solo: egen nivå.
+export const RACE_GAP = 10;
+export function raceLevel(level, roomMin = null) {
+    const L = clampLevel(level);
+    if (roomMin === null || roomMin === undefined || roomMin === '' || !Number.isFinite(Number(roomMin))) return L;
+    return Math.min(L, clampLevel(roomMin) + RACE_GAP);
+}
+// Rummets lägsta mänskliga nivå, eller null när färre än två människor spelar
+export function roomMinLevel(players) {
+    const humans = (Array.isArray(players) ? players : []).filter(p => p && typeof p === 'object' && !p.isAI);
+    if (humans.length < 2) return null;
+    return Math.min(...humans.map(p => levelOf(p.xp)));
 }
 
-export function unlocksAt(level) {
+// who: spelare (läser p.xp) eller nivå. AI-spelare spärras aldrig.
+// opts.roomMin: rummets lägsta nivå (roomMinLevel) — gäller bara poster med race: true.
+export function isUnlocked(who, id, { roomMin = null } = {}) {
+    if (who && typeof who === 'object' && who.isAI) return true;
+    const L = playerLevel(who);
+    return (getUnlock(id)?.race ? raceLevel(L, roomMin) : L) >= requiredLevel(id);
+}
+
+// opts.all = true tar med poster från fas som inte är byggd än
+const phase = (list, all) => (all ? list : list.filter(isActiveUnlock));
+
+export function unlocksAt(level, { all = false } = {}) {
     const L = clampLevel(level);
-    return UNLOCKS.filter(u => u.level === L);
+    return phase(UNLOCKS.filter(u => u.level === L), all);
 }
 
 // Allt som låses upp efter `from` och senast på `to`
-export function unlocksBetween(from, to) {
+export function unlocksBetween(from, to, { all = false } = {}) {
     const a = clampLevel(from), b = clampLevel(to);
-    return UNLOCKS.filter(u => u.level > a && u.level <= b);
+    return phase(UNLOCKS.filter(u => u.level > a && u.level <= b), all);
 }
 
-export function nextUnlocks(level, n = 3) {
+export function nextUnlocks(level, n = 3, { all = false } = {}) {
     const L = clampLevel(level);
-    return UNLOCKS.filter(u => u.level > L).slice(0, Math.max(0, n));
+    return phase(UNLOCKS.filter(u => u.level > L), all).slice(0, Math.max(0, n));
 }
+
+// Poster som inte är byggda än ("Kommer snart")
+export function comingSoon() { return UNLOCKS.filter(u => !isActiveUnlock(u)); }
 
 // "🔒 Nivå 16 · Hustlare"
 export function lockLabel(id) {
@@ -249,30 +301,46 @@ export function lockLabel(id) {
     return `🔒 Nivå ${L} · ${rankOf(L).title}`;
 }
 
-// Allt låst-UI:t behöver: { locked, need, rank, label, left, hint }
-export function lockInfo(who, id) {
+// Allt låst-UI:t behöver: { locked, need, rank, label, left, hint, roomCapped }
+// roomCapped: egen nivå räcker, men rummets gräns (raceLevel) gör det inte.
+export function lockInfo(who, id, { roomMin = null } = {}) {
     const L = playerLevel(who), need = requiredLevel(id);
-    const locked = !isUnlocked(who, id);
+    const locked = !isUnlocked(who, id, { roomMin });
     const left = Math.max(0, need - L);
+    const roomCapped = locked && left === 0;
+    const cap = raceLevel(L, roomMin);
     return {
-        locked, need, rank: rankOf(need), label: lockLabel(id), left,
-        hint: locked ? `du: Nv ${L} · ${left} ${left === 1 ? 'nivå' : 'nivåer'} kvar` : ''
+        locked, need, rank: rankOf(need), label: lockLabel(id), left, roomCapped,
+        hint: !locked ? ''
+            : roomCapped ? `rummets gräns: Nv ${cap} (lägsta spelaren + ${RACE_GAP})`
+                : `du: Nv ${L} · ${left} ${left === 1 ? 'nivå' : 'nivåer'} kvar`
     };
 }
 
 // ── Gränser per runda och crew ──
+// Gränserna för pengar (missionCap, goodsCap, fenceCap) tar raceLevel(L, roomMin) när fler än en människa spelar.
 export function missionCap(level, base = 3) {
     const L = clampLevel(level);
-    return base + (L >= 15 ? 1 : 0) + (L >= 40 ? 1 : 0);
+    return base + (L >= 15 ? 1 : 0) + (L >= 40 ? 1 : 0) + (L >= 78 ? 1 : 0);
 }
-export function goodsCap(level) { const L = clampLevel(level); return L >= 60 ? 20 : L >= 35 ? 15 : 10; }
-export function fenceCap(level) { return clampLevel(level) >= 33 ? 4 : 3; }
+export function goodsCap(level) { const L = clampLevel(level); return L >= 90 ? 25 : L >= 60 ? 20 : L >= 35 ? 15 : 10; }
+export function fenceCap(level) { const L = clampLevel(level); return L >= 95 ? 5 : L >= 33 ? 4 : 3; }
 export function crewMax(level) {
     const L = clampLevel(level);
     return L >= 30 ? 4 : L >= 22 ? 3 : L >= 14 ? 2 : L >= 8 ? 1 : 0;
 }
-export function crewRecover(level) { return clampLevel(level) >= 55 ? 12 : 25; }
-export function gunDiscount(level) { const L = clampLevel(level); return L >= 38 ? 0.8 : L >= 25 ? 0.9 : 1; }
+export function crewRecover(level) { const L = clampLevel(level); return L >= 73 ? 8 : L >= 55 ? 12 : 25; }
+export function gunDiscount(level) { const L = clampLevel(level); return L >= 88 ? 0.7 : L >= 38 ? 0.8 : L >= 25 ? 0.9 : 1; }
+// Ring backup (nivå 31) och muta snuten (nivå 35): gånger per runda och pris per stjärna
+export function backupPerRound(level) { const L = clampLevel(level); return L >= 44 ? 2 : L >= 31 ? 1 : 0; }
+export function bribeCops(level) {
+    const L = clampLevel(level);
+    return L >= 82 ? { perRound: 2, perStar: 500 } : L >= 35 ? { perRound: 1, perStar: 1000 } : { perRound: 0, perStar: 1000 };
+}
+// Doktorns pris gånger det här (0 = gratis)
+export function doctorMult(level) { const L = clampLevel(level); return L >= 93 ? 0 : L >= 58 ? 0.5 : 1; }
+// Tiden utom synhåll innan snuten tappar spåret (wanted.js LOST_AFTER) gånger det här
+export function lostTrackMult(level) { const L = clampLevel(level); return L >= 97 ? 0.5 : L >= 68 ? 0.75 : 1; }
 
 // ── Skada ──
 export const DMG_MULT_MAX = 1.5;
@@ -302,17 +370,41 @@ export function meleeBase(roll, strength = 0) {
 export function crewDmgMult(level) { return Math.min(1.25, 1 + 0.0025 * (clampLevel(level) - 1)); }
 export function knockMult(level) { return clampLevel(level) >= 23 ? 1.25 : 1; }   // Torpedslaget: 160 → 200 px/s
 
+// Veteraner (nivå 41) och elit (nivå 65) hos Rekryteraren. Faktorn gäller BARA mot NPC:er:
+// crewmedlemmen sparar sin basskada och bashälsa och sin klass (tier). I PvP skickas alltid
+// basskadan, och träffar från andra spelare dras av rakt — annars gick klassen förbi ±10 %.
+export const CREW_TIERS = Object.freeze({
+    veteran: Object.freeze({ id: 'veteran', unlock: 'crew:veteran', mult: 1.2, cost: 1.5, prefix: 'Veteran' }),
+    elite: Object.freeze({ id: 'elite', unlock: 'crew:elite', mult: 1.4, cost: 2, prefix: 'Elit' })
+});
+// Den bästa klassen Rekryteraren erbjuder på nivån, eller null
+export function crewTier(level) {
+    const L = clampLevel(level);
+    if (L >= requiredLevel('crew:elite')) return CREW_TIERS.elite;
+    if (L >= requiredLevel('crew:veteran')) return CREW_TIERS.veteran;
+    return null;
+}
+export function crewTierMult(tierId) { return own(CREW_TIERS, tierId) ? CREW_TIERS[tierId].mult : 1; }
+// Crewets skada mot en NPC: bas · crewDmgMult(L) · klass
+export function crewNpcDamage(base, level, tierId = null) {
+    return Math.max(0, Number(base) || 0) * crewDmgMult(level) * crewTierMult(tierId);
+}
+// Skada som en NPC gör på crewet delas med klassen (motsvarar mer hälsa, men bara mot NPC:er)
+export function crewNpcHurt(dmg, tierId = null) { return Math.max(0, Number(dmg) || 0) / crewTierMult(tierId); }
+
 // PvP: 0,90–1,10
 export function pvpMult(attackerLevel, targetLevel) {
     const d = clamp(clampLevel(attackerLevel) - clampLevel(targetLevel), -PVP_LEVEL_SPREAD, PVP_LEVEL_SPREAD);
     return 1 + 0.005 * d;
 }
 
-// Nybörjarskydd: målet på nivå ≤ 5 och anfallaren minst 10 nivåer över.
-// aggro = nybörjaren slog själv anfallaren de senaste 30 s.
+// Nybörjarskydd: målet på nivå ≤ 15 (Springpojke–Langare, innan uzin) och anfallaren
+// minst 10 nivåer över. aggro = nybörjaren slog själv anfallaren de senaste 30 s.
+export const NEWBIE_MAX_LEVEL = 15;
+export const NEWBIE_GAP = 10;
 export function newbieShield(attackerLevel, targetLevel, aggro = false) {
     const a = clampLevel(attackerLevel), t = clampLevel(targetLevel);
-    return !aggro && t <= 5 && a - t >= 10;
+    return !aggro && t <= NEWBIE_MAX_LEVEL && a - t >= NEWBIE_GAP;
 }
 
 // Värdens PvP-skada: taket läggs FÖRE nivåmultiplikatorn
@@ -323,12 +415,26 @@ export function pvpDamage(base, max, attackerLevel, targetLevel, { aggro = false
     return Math.min(cap, b) * pvpMult(attackerLevel, targetLevel) * shield;
 }
 
-// Motvikt så att gatan aldrig blir trivial
+// Motvikt så att gatan aldrig blir trivial: fler opps och fler skyttar.
+// Opps-hälsan skalas INTE (35), annars åt den upp dmgMult och skadan märktes aldrig.
 export function oppsCount(level) { return Math.min(7, 4 + Math.floor(clampLevel(level) / 30)); }
 export function oppsArmed(level, hasGun) {
     return Math.min(oppsCount(level), (hasGun ? 2 : 0) + Math.floor(clampLevel(level) / 40));
 }
-export function npcHpMult(level) { return 1 + clampLevel(level) / 300; }   // opps 35 → 47, snutar 40 → 53
+// Snutar till fots: 40 → 47 hp (hälften så brant som skadan)
+export function copHpMult(level) { return 1 + clampLevel(level) / 600; }
+
+// Det som växer med varje nivå, för Karriär-kortet och nivå-upp-rutan (procent)
+export function levelStats(level) {
+    const L = clampLevel(level);
+    return {
+        level: L,
+        dmgPct: Math.round((dmgMult(L) - 1) * 1000) / 10,
+        critPct: Math.round(critChance(L) * 1000) / 10,
+        respPct: Math.round((respGain(L) - 1) * 100),
+        fearPct: Math.round((1 - fearMult(L)) * 100)
+    };
+}
 
 // ── Respekt ──
 export const TITLE_RESPECT = 5;            // vid varje ny titel, hos alla gäng som inte är rival till ditt
@@ -374,10 +480,19 @@ export function respectMilestones(before, after) {
 // Gaturespekt: folk fruktar dig
 export function fearMult(level) { return 1 - (clampLevel(level) - 1) / 250; }
 
-// Chansen att någon slåss emot vid rån. pedKind 'civ'/'metro' slåss aldrig från nivå 80.
-export function robFightChance(base, level, pedKind = 'civ') {
+// Vanligt folk: civila och metro som inte är snut, tuffing eller rånare.
+// Snutar, tuffingar och rånare har också ped.type === 'civ' i ai.js, så typen räcker inte.
+export function isOrdinaryPed(ped) {
+    if (!ped || typeof ped !== 'object') return false;
+    if (ped.cop || ped.tough || ped.mugger || ped.wasMugger || ped.gang) return false;
+    return ped.type === 'civ' || ped.type === 'metro';
+}
+
+// Chansen att någon slåss emot vid rån: bas · fearMult. Gatans legend (nivå 80):
+// vanligt folk (isOrdinaryPed) slåss aldrig. Ta peden, inte bara typen.
+export function robFightChance(base, level, ped = null) {
     const b = clamp(Number(base) || 0, 0, 1);
-    if (clampLevel(level) >= 80 && (pedKind === 'civ' || pedKind === 'civil' || pedKind === 'metro')) return 0;
+    if (clampLevel(level) >= requiredLevel('perk:legend') && isOrdinaryPed(ped)) return 0;
     return b * fearMult(level);
 }
 
@@ -487,7 +602,7 @@ const round5 = v => Math.round(v / 5) * 5;
 
 // Uppdrag: bas + 20 % om ≥ 40 % av tiden var kvar, + 20 % för eget gäng, ×2 för Kapo-jobb. Avrundat till 5.
 export function missionXp(m, { member = false, kapo = false } = {}) {
-    const base = XP.mission[m?.type] ?? XP.mission.delivery;
+    const base = own(XP.mission, m?.type) ? XP.mission[m.type] : XP.mission.delivery;
     const limit = Number(m?.timeLimit) || 0, used = Number(m?.elapsed) || 0;
     const fast = limit > 0 && (limit - used) / limit >= 0.4;
     return round5(base * (fast ? 1.2 : 1) * (member ? 1.2 : 1) * (kapo ? 2 : 1));
@@ -498,12 +613,14 @@ export function carXp(price) { return 10 + Math.round(Math.max(0, Number(price) 
 export function shopRobXp(slot) { return 10 + 2 * (clamp(Math.floor(Number(slot) || 0), 0, 7) + 1); }
 export function fenceXp(value) { return XP.fence + ((Number(value) || 0) >= 2500 ? XP.fenceRich : 0); }
 export function chaseXp(maxStars) { const s = clamp(Math.floor(Number(maxStars) || 0), 0, 5); return s >= 2 ? XP.chasePerStar * s : 0; }
-export function respMilestoneXp(step) { return XP.respMilestone[step] || 0; }
+export function respMilestoneXp(step) { return own(XP.respMilestone, step) ? XP.respMilestone[step] : 0; }
 
-// Vilken knockout-källa en ped ger
+// Vilken knockout-källa en ped ger. world.js nollar ped.mugger i knockout-grenen, så
+// spawnMugger sätter också ped.wasMugger = true (stannar kvar) — och anropa koSource
+// innan flaggorna nollas.
 export function koSource(ped) {
     if (!ped) return 'ko.civ';
-    if (ped.mugger) return 'ko.mugger';
+    if (ped.mugger || ped.wasMugger) return 'ko.mugger';
     if (ped.cop) return 'ko.cop';
     if (ped.type === 'gang') return 'ko.gang';
     if (ped.tough) return 'ko.tough';
@@ -519,11 +636,14 @@ export function pvpXp(killerLevel, victimLevel, shielded = false) {
 }
 
 // Värdens gräns för PvP-XP: samma par högst 1 gång per 10 min, högst 6 per timme och mördare.
-// state är värdens egna objekt { pair: {}, hour: {} }; stämplas när det godkänns.
+// state är värdens egna objekt { pair: {}, hour: {} }. xp är det pvpXp gav: en kill som
+// ger 0 XP (skyddad nybörjare, 30+ nivåer under) nekas utan att stämpla, så den äter
+// aldrig upp timkvoten. Stämplas bara när det godkänns.
 export const PVP_XP_PAIR_MS = 10 * MIN;
 export const PVP_XP_PER_HOUR = 6;
-export function pvpXpGate(state, killerId, victimId, now = Date.now()) {
+export function pvpXpGate(state, killerId, victimId, xp, now = Date.now()) {
     if (!state || typeof state !== 'object') return false;
+    if (!(Number(xp) > 0)) return false;
     if (!state.pair || typeof state.pair !== 'object') state.pair = {};
     if (!state.hour || typeof state.hour !== 'object') state.hour = {};
     const key = `${killerId}>${victimId}`;
@@ -535,6 +655,13 @@ export function pvpXpGate(state, killerId, victimId, now = Date.now()) {
     state.pair[key] = now;
     hist.push(now);
     return true;
+}
+
+// Värdens hela PvP-belöning i ett anrop (citynet 'down'): pvpXp och sedan grinden.
+// → XP att skicka i 'pvp'-eventet (0 när grinden nekar).
+export function pvpReward(state, { killer, victim, killerLevel, victimLevel, shielded = false } = {}, now = Date.now()) {
+    const xp = pvpXp(killerLevel, victimLevel, shielded);
+    return pvpXpGate(state, killer, victim, xp, now) ? xp : 0;
 }
 
 // Mentorbonus online: +2,5 % per nivå under rummets högsta mänskliga spelare, högst +75 %
@@ -568,6 +695,9 @@ export function bucketPeek(b, now = Date.now(), def = BUCKETS.street) {
 }
 
 // Spärr i realtid. Godkänd → stämplar career[field] = now.
+// Nekad stämplar inte — utom när stämpeln ligger i framtiden (klockan har gått bakåt):
+// då flyttas den till now och nekas, så spärren blir ms från nu i stället för att
+// låsa ända tills klockan hunnit ikapp den gamla stämpeln.
 export function cooldownOk(career, field, ms, now = Date.now()) {
     if (!career || typeof career !== 'object') return false;
     const last = Number(career[field]) || 0;
@@ -593,7 +723,7 @@ export function normalizeCareer(raw, now = Date.now()) {
     const c = createCareer(now);
     if (!raw || typeof raw !== 'object') return c;
     c.xp = cleanXp(raw.xp);
-    if (Array.isArray(raw.milestones)) c.milestones = [...new Set(raw.milestones.filter(k => typeof k === 'string' && k in MILESTONES))];
+    if (Array.isArray(raw.milestones)) c.milestones = [...new Set(raw.milestones.filter(k => typeof k === 'string' && own(MILESTONES, k)))];
     for (const k of Object.keys(BUCKETS)) {
         const b = raw.buckets?.[k];
         if (b && Number.isFinite(b.v) && Number.isFinite(b.t)) c.buckets[k] = { v: clamp(b.v, 0, BUCKETS[k].cap), t: b.t };
@@ -615,9 +745,11 @@ function careerFor(player, opts, now) {
 // ── Nivå-upp ──
 // +1 ⭐ per nivå, +5 ⭐ per ny titel och +5 respekt per ny titel hos alla
 // gäng som inte är rival till ditt. opts.applyRespect = false → bara deltan.
+// milestones: respektstegen (30/60/100) som titelrespekten passerar, [{ gang, step }].
+// awardXp betalar dem själv när den lägger på respekten; annars gör world.setRespect det.
 export function levelUpRewards(player, from, to, { applyRespect = true } = {}) {
     const a = clampLevel(from), b = clampLevel(to);
-    const out = { rep: 0, respect: {}, ranks: [] };
+    const out = { rep: 0, respect: {}, ranks: [], milestones: [] };
     if (!player || typeof player !== 'object' || b <= a) return out;
     out.ranks = ranksBetween(a, b);
     out.rep = (b - a) * REP_PER_LEVEL + out.ranks.length * REP_PER_RANK;
@@ -631,11 +763,24 @@ export function levelUpRewards(player, from, to, { applyRespect = true } = {}) {
             const after = clamp(before + TITLE_RESPECT * out.ranks.length, RESPECT_MIN, RESPECT_MAX);
             if (after === before) continue;
             out.respect[id] = after - before;
+            for (const step of respectMilestones(before, after)) out.milestones.push({ gang: id, step });
             if (applyRespect) player.respect[id] = after;
         }
     }
     return out;
 }
+
+const ONCE_MAX = 300;
+function pushOnce(player, key) {
+    player.xpOnce.push(key);
+    if (player.xpOnce.length > ONCE_MAX) player.xpOnce.splice(0, player.xpOnce.length - ONCE_MAX);
+}
+// Once-nycklar är strängar på högst 40 tecken (normalizeLevelFields slänger längre)
+function onceKeyOf(k) {
+    if (k === null || k === undefined || k === false || k === '') return null;
+    return String(k).slice(0, 40);
+}
+const finiteOr0 = v => (Number.isFinite(v) ? v : 0);
 
 // ── Dela ut XP ──
 // awardXp(player, source, opts, now) → resultat. Muterar player.xp, player.level
@@ -649,10 +794,12 @@ export function levelUpRewards(player, from, to, { applyRespect = true } = {}) {
 //  opts.cooldown   { field, ms } | null — ersätter källans
 //  opts.mentor     multiplikator från mentorMult (1..1,75); false = ingen
 //  opts.levelRewards false → ingen ⭐/respekt vid nivå-upp
-//  opts.applyRespect false → titelrespekten returneras men läggs inte på
+//  opts.applyRespect false → titelrespekten returneras men läggs inte på (och dess
+//                   respektsteg betalas inte här — world.setRespect gör det)
 // Resultat: { gained, base, bonus, from, to, levelsGained, unlocked, rankUp, rank,
-//             ranks, capped, blocked, milestone, rewards, source }
+//             ranks, capped, blocked, milestone, rewards, respMilestones, source }
 //  blocked: null | 'ai' | 'unknown' | 'once' | 'cooldown' | 'bucket'
+//  unlocked: bara poster i byggd fas (ACTIVE_FAS)
 export function awardXp(player, source, opts = {}, now) {
     opts = opts || {};
     const t = Number.isFinite(now) ? now : Number.isFinite(opts.now) ? opts.now : Date.now();
@@ -660,18 +807,18 @@ export function awardXp(player, source, opts = {}, now) {
         const L = player && typeof player === 'object' ? levelOf(player.xp) : 1;
         return {
             gained: 0, base: 0, bonus: 0, from: L, to: L, levelsGained: 0, unlocked: [], rankUp: false,
-            rank: rankOf(L), ranks: [], capped: false, blocked, milestone: null, rewards: null, source
+            rank: rankOf(L), ranks: [], capped: false, blocked, milestone: null, rewards: null, respMilestones: [], source
         };
     };
     if (!player || typeof player !== 'object') return empty('unknown');
     if (player.isAI) return empty('ai');
-    const def = XP_SOURCES[source] || null;
+    const def = own(XP_SOURCES, source) ? XP_SOURCES[source] : null;
     const raw = opts.amount !== undefined ? opts.amount : def?.xp;
     if (raw === undefined || raw === null) return empty('unknown');
     const amount = clamp(Math.floor(Number(raw) || 0), 0, MAX_AWARD);
 
     const career = careerFor(player, opts, t);
-    const onceKey = opts.once !== undefined ? opts.once : def?.once;
+    const onceKey = onceKeyOf(opts.once !== undefined ? opts.once : def?.once);
     if (!Array.isArray(player.xpOnce)) player.xpOnce = [];
     if (onceKey && player.xpOnce.includes(onceKey)) return empty('once');
     const cd = opts.cooldown !== undefined ? opts.cooldown : def?.cooldown;
@@ -680,20 +827,20 @@ export function awardXp(player, source, opts = {}, now) {
     // Hinken begränsar basen; mentorbonusen läggs på det man fick
     const bucketId = opts.bucket !== undefined ? opts.bucket : def?.bucket;
     let got = amount;
-    if (bucketId && BUCKETS[bucketId]) {
+    if (bucketId && own(BUCKETS, bucketId)) {
         if (!career.buckets || typeof career.buckets !== 'object') career.buckets = {};
-        const r = bucketTake(career.buckets[bucketId], amount, t, BUCKETS[bucketId]);
+        const r = bucketTake(own(career.buckets, bucketId) ? career.buckets[bucketId] : undefined, amount, t, BUCKETS[bucketId]);
         career.buckets[bucketId] = r.b;
-        got = r.got;
+        got = finiteOr0(r.got);
     }
     const mentorOn = opts.mentor !== false && def?.mentor !== false;
     const mentor = mentorOn && Number.isFinite(opts.mentor) ? clamp(opts.mentor, 1, 1.75) : 1;
-    const base = Math.round(got * mentor);
+    const base = finiteOr0(Math.round(got * mentor));
 
     // Karriärmilstolpe: utanför hinken, ingen mentorbonus
     const msKey = opts.milestone !== undefined ? opts.milestone : def?.milestone;
     let bonus = 0, milestone = null;
-    if (msKey && MILESTONES[msKey]) {
+    if (msKey && own(MILESTONES, msKey)) {
         if (!Array.isArray(career.milestones)) career.milestones = [];
         if (!career.milestones.includes(msKey)) {
             career.milestones.push(msKey);
@@ -702,30 +849,57 @@ export function awardXp(player, source, opts = {}, now) {
         }
     }
 
-    if (onceKey) {
-        player.xpOnce.push(onceKey);
-        if (player.xpOnce.length > 300) player.xpOnce.splice(0, player.xpOnce.length - 300);
-    }
+    // Once-nyckeln förbrukas bara när hela beloppet betalades. En tom eller halvtom hink
+    // ska inte kosta engångs-XP:n för resten av matchen (köpet ger resten senare).
+    if (onceKey && got >= amount) pushOnce(player, onceKey);
 
     const before = cleanXp(player.xp);
     const from = levelOf(before);
-    player.xp = cleanXp(before + base + bonus);
-    const to = levelOf(player.xp);
+    // XP kan aldrig minska, hur trasigt anropet än är
+    player.xp = Math.max(before, cleanXp(before + base + bonus));
+
+    // Nivå-upp: rykte och titelrespekt. Titelrespekten kan passera respektsteg (30/60/100);
+    // när awardXp själv lägger på respekten betalas stegens XP här (once 'resp:<gäng>:<steg>'),
+    // och den XP:n kan i sin tur ge en ny nivå — därav slingan.
+    const applyRespect = opts.applyRespect !== false;
+    const respMentor = opts.mentor !== false && Number.isFinite(opts.mentor) ? clamp(opts.mentor, 1, 1.75) : 1;
+    let rewards = null;
+    const respMilestones = [];
+    let lo = from, to = levelOf(player.xp);
+    if (to > from && opts.levelRewards !== false) {
+        rewards = { rep: 0, respect: {}, ranks: [], milestones: [] };
+        for (let guard = 0; to > lo && guard < MAX_LEVEL; guard++) {
+            const r = levelUpRewards(player, lo, to, { applyRespect });
+            rewards.rep += r.rep;
+            rewards.ranks.push(...r.ranks);
+            rewards.milestones.push(...r.milestones);
+            for (const [id, d] of Object.entries(r.respect)) rewards.respect[id] = (rewards.respect[id] || 0) + d;
+            lo = to;
+            if (applyRespect) {
+                for (const { gang, step } of r.milestones) {
+                    const key = `resp:${gang}:${step}`;
+                    if (player.xpOnce.includes(key)) continue;
+                    pushOnce(player, key);
+                    const xp = Math.round(respMilestoneXp(step) * respMentor);
+                    player.xp = cleanXp(player.xp + xp);
+                    respMilestones.push({ gang, step, xp });
+                }
+            }
+            to = levelOf(player.xp);
+        }
+    }
     player.level = to;
     career.xp = Math.max(cleanXp(career.xp), player.xp);
 
     const gained = player.xp - before;
     const levelsGained = to - from;
     const ranks = ranksBetween(from, to);
-    const rewards = levelsGained > 0 && opts.levelRewards !== false
-        ? levelUpRewards(player, from, to, { applyRespect: opts.applyRespect !== false })
-        : null;
     return {
         gained, base, bonus, from, to, levelsGained,
         unlocked: levelsGained > 0 ? unlocksBetween(from, to) : [],
         rankUp: ranks.length > 0, rank: rankOf(to), ranks,
         capped: got < amount, blocked: amount > 0 && got === 0 && bonus === 0 ? 'bucket' : null,
-        milestone, rewards, source
+        milestone, rewards, respMilestones, source
     };
 }
 

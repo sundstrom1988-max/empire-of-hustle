@@ -11,7 +11,7 @@ Den rena logiken finns i `src/game/levels.js` och testas i `tests/levels.test.js
 **Grunden är Förslag 1.** Det har tre fördelar framför de andra:
 
 - **Bäst skydd mot farmning.** XP-hinkar och spärrar i realtid fungerar även i solo, där en ny runda bara kostar ett klick på Avsluta tur.
-- **Rättvisast PvP.** Värden räknar skadan, och nivån ändrar den bara mellan ×0,9 och ×1,1.
+- **Rättvisast PvP.** Värden räknar skadan, och nivån ändrar själva skadeformeln bara mellan ×0,9 och ×1,1. Vapen, väst och crew låses upp med nivån, så nybörjare får ett skydd upp till nivå 15 (se 6.3).
 - **Kontrollerad kurva.** Kurvan bygger på spelets riktiga XP-källor, och alla siffror i tabellerna är omräknade.
 
 **Från Förslag 3 tar vi:**
@@ -37,7 +37,9 @@ Den rena logiken finns i `src/game/levels.js` och testas i `tests/levels.test.js
 - AI:n åker aldrig till stan, och en del spelare kör bara brädspelet.
 - Online skulle en veteran kunna köpa Skyskrapan direkt när pengarna räcker. Då avgörs racet av hur många timmar man spelat tidigare, inte av hur man spelar nu.
 
-Nivån styr därför allt i stan: vapen, crew, uppdrag, brott, gömställen och Club Diamant. I imperiet styr den sidosakerna, som påverkar racet mindre: bilar, pimp, svarta marknaden och telefondeals. **Ägaren bör bekräfta det här beslutet.** Vill hen ändå spärra verksamheter föreslås kebab 1, frisör 2, gym 4, studio 6, nattklubb 9, tech 12, skyskrapa 16 och RocketFuel 20.
+Nivån styr därför allt i stan: vapen, crew, uppdrag, brott, gömställen och Club Diamant. I imperiet styr den sidosakerna: bilar, pimp, svarta marknaden och telefondeals. **Ägaren bör bekräfta det här beslutet.** Vill hen ändå spärra verksamheter föreslås kebab 1, frisör 2, gym 4, studio 6, nattklubb 9, tech 12, skyskrapa 16 och RocketFuel 20.
+
+**Racet skyddas också i stan (`raceLevel`).** Pengarna från stan räknas mot 1 000 000 kr, och nästan allt i stan som ger pengar är spärrat av nivån. Utan skydd tjänar en spelare på nivå 40 ungefär fem gånger mer per runda än en nybörjare (cirka 28 000 kr mot 5 800 kr vid runda 10). Därför gäller: **när minst två människor spelar samma match** (online eller hotseat) räknas allt som ger pengar på `min(egen nivå, rummets lägsta mänskliga nivå + 10)`. Det gäller uppdragstyperna, `missionCap`, `goodsCap`, `fenceCap`, butiks- och bankrån, Skroten, Club Diamant, svarta marknaden, telefondeals, bilar, pimp, lönesteget ×1,45, Kapo-jobbet, turfpriset och Advokaten (alla poster med `race: true`). Allt annat (vapen, crew, gömställen, tjänster, perks) följer den egna nivån. I solo gäller alltid den egna nivån. Även det här beslutet bör ägaren bekräfta; alternativet är en rumsinställning "Lika villkor" som stänger av alla spärrar.
 
 **Nivån följer karaktären mellan matcher (karriär).** `loadGame` raderar ett avgjort spel, så utan karriär går nivå 85–100 aldrig att nå.
 
@@ -71,48 +73,44 @@ Nivån styr därför allt i stan: vapen, crew, uppdrag, brott, gömställen och 
 ### Formel
 
 ```
-need(L)  = 5 · round((30 + 15·L + 0,004·L³) / 5)     XP från nivå L till L+1, L = 1..99
+need(L)  = 5 · round((30 + 15·L + 0,0025·L³) / 5)    XP från nivå L till L+1, L = 1..99
 XP_TOTAL[1] = 0,  XP_TOTAL[L] = Σ need(1..L−1)
 nivå     = största L ≤ 100 där XP_TOTAL[L] ≤ p.xp
 ```
 
 - Den linjära termen styr nivå 1–30. Där tar varje nivå 2–6 minuter, och det första jobbet ger nivå 2 direkt.
-- Den kubiska termen börjar märkas efter nivå 40 och gör nivå 85–100 till ett långsiktigt mål.
+- Den kubiska termen börjar märkas efter nivå 40 och gör nivå 85–100 till ett långsiktigt mål. Koefficienten är 0,0025 (`XP_CUBIC`). Med 0,004 tog Gudfadern 54 h och nivå 100 89 h för en vanlig spelare, alltså ungefär 25 % längre än målet.
 - XP per handling är fast, så ingen inflation. Takten ökar ändå lite med nivån, eftersom nya källor låses upp (bankrån, butiksrån, fler uppdrag, Kapo-jobb).
 
 ### Nyckelnivåer
 
-Kurvan är kontrollräknad i testerna: `need` är strikt växande och `XP_TOTAL[100] = 175 220`.
+Kurvan är kontrollräknad i testerna: `need` är strikt växande, `XP_TOTAL[85] = 87 935` och `XP_TOTAL[100] = 138 475`.
 
-| Nivå | Total XP för att nå nivån | XP till nästa nivå | Ungefärlig aktiv speltid |
-|---|---|---|---|
-| 2 | 45 | 60 | 2 min |
-| 5 | 270 | 105 | 10 min |
-| **6 Hangaround** | 375 | 120 | 15 min |
-| 10 | 950 | 185 | 35 min |
-| **11 Langare** | 1 135 | 200 | 40 min |
-| **16 Hustlare** | 2 305 | 285 | 1 h 20 min |
-| 20 | 3 560 | 360 | 2 h |
-| **23 Torped** | 4 705 | 425 | 2,5 h |
-| 30 | 8 155 | 590 | 4 h (en hel kväll) |
-| **31 Gängsoldat** | 8 745 | 615 | 4,3 h |
-| **41 Kvartersboss** | 16 190 | 920 | 7,5 h |
-| **51 Kapo** | 27 125 | 1 325 | 12 h |
-| 60 | 40 840 | 1 795 | 17,5 h |
-| **63 Consigliere** | 46 405 | 1 975 | 20 h |
-| **75 Underboss** | 74 645 | 2 845 | 31 h |
-| **85 Gudfadern** | 107 045 | 3 760 | 43 h |
-| 100 | 175 220 | – | 70 h |
+| Nivå | Total XP för att nå nivån | XP till nästa nivå | Vanlig spelare | Flitig spelare |
+|---|---|---|---|---|
+| 2 | 45 | 60 | 2 min | 2 min |
+| 5 | 270 | 105 | 13 min | 13 min |
+| **6 Hangaround** | 375 | 120 | 18 min | 18 min |
+| 10 | 945 | 185 | 36 min | 36 min |
+| **11 Langare** | 1 130 | 200 | 42 min | 42 min |
+| **16 Hustlare** | 2 285 | 280 | 1 h 20 min | 1 h 20 min |
+| 20 | 3 505 | 350 | 2 h | 2 h |
+| **23 Torped** | 4 610 | 405 | 2,5 h | 2,5 h |
+| 30 | 7 865 | 550 | 4,2 h | 3,9 h |
+| **31 Gängsoldat** | 8 415 | 570 | 4,5 h | 4,1 h |
+| **41 Kvartersboss** | 15 175 | 815 | 7,9 h | 7,1 h |
+| **51 Kapo** | 24 690 | 1 125 | 12,7 h | 11,2 h |
+| 60 | 36 155 | 1 470 | 18,5 h | 15,7 h |
+| **63 Consigliere** | 40 690 | 1 600 | 20,8 h | 17,4 h |
+| **75 Underboss** | 63 100 | 2 210 | 32 h | 26 h |
+| **85 Gudfadern** | 87 935 | 2 840 | 45 h | 36 h |
+| 100 | 138 475 | – | 70 h | 55 h |
 
-Det ursprungliga förslaget angav 75 som "XP till nästa nivå" på nivå 2, men formeln ger 60 (75 gäller nivå 3). Tabellen ovan följer formeln.
+**Speltidsmodellen:** en aktiv runda i stan består av 3 uppdrag (varav 2,5 lyckas), 10 langningar, 1–2 skrotade bilar, lite gatubrott och några klick i imperiet. Takten styrs mest av jobben och langningen; gatubrotten begränsas av Gatukassan.
+- **Vanlig spelare:** 21 XP/min på nivå 1–5, 31 XP/min på nivå 6–19 och 33 XP/min från nivå 20. Det är designens runda med ett jobb på cirka 2 minuter.
+- **Flitig spelare:** samma upp till nivå 19, sedan 38 XP/min på nivå 20–49 och 43 XP/min från nivå 50. Den spelaren gör dessutom butiksrån, bankrån, opps, dejter och Kapo-jobb varje runda och fyller alla gränser.
 
-**Speltidsmodellen:** en aktiv runda i stan består av 3 uppdrag (varav 2,5 lyckas), 10 langningar, 1–2 skrotade bilar, lite gatubrott och några klick i imperiet. Det ger ungefär:
-- 21 XP/min på nivå 1–5
-- 31 XP/min på nivå 6–19
-- 38 XP/min på nivå 20–49
-- 43 XP/min från nivå 50
-
-Engångsmilstolparna ger ungefär 80 XP extra under den första kvarten, så de första nivåerna går ännu fortare.
+Tabellen räknar utan engångsmilstolparna. De ger ungefär 80 XP extra under den första kvarten, så nivå 5–6 kommer några minuter tidigare (se exemplet).
 
 **Exempel, första kvarten:**
 
@@ -127,7 +125,7 @@ Engångsmilstolparna ger ungefär 80 XP extra under den första kvarten, så de 
 | Skrota bilen (15 + första gången 20) | 35 | 340 |
 | Ett uppdrag till | | nivå 6 (Hangaround) vid cirka 15 min |
 
-**Efter nivå 100:** XP räknas vidare. Varje 25 000 XP över nivå 100 ger en Legend-stjärna, som bara är kosmetisk (fas 2). `p.xp` kapas vid 10 000 000.
+**Efter nivå 100:** XP räknas vidare. Varje 25 000 XP över nivå 100 ger en Legend-stjärna (`legendStars`), som bara är kosmetisk. Räknaren och Don-stjärnan i namnskylten är fas 1 (`cosm:donstar`); guldauran och Prestige är fas 2. `p.xp` kapas vid 10 000 000.
 
 ---
 
@@ -156,7 +154,7 @@ Engångsmilstolparna ger ungefär 80 XP extra under den första kvarten, så de 
 - **Online** skapar värden en gästs spelare med `normalizePlayer({ charKey })`, alltså med xp 0. Gästen kör därför `applyCareer(myPlayer())` direkt efter `welcome` och anropar sedan `syncMe()`. Värden kör `applyCareer` på sin egen spelare när rummet skapas.
 - **Hotseat:** varje mänsklig spelare laddar sin egen karriär via sin `charKey`. Två personer som spelar samma karaktär på samma enhet delar alltså karriär. Det går att leva med.
 - **AI:** AI-spelare har ingen karriär. De startar på `aiStartXp(värdens nivå)` = `XP_TOTAL[max(1, värdens nivå − 5)]` och får `AI_TURN_XP` = +120 XP per AI-tur. Det används bara för att visa nivån, eftersom spärrarna aldrig rör AI:ns köp (`isUnlocked` returnerar alltid sant för `isAI`, och `awardXp` ger AI:n 0).
-- **Migrering av gamla sparfiler** görs första gången, när `career.migrated` saknas. `retroXp(p)` räknar ut retroaktiv XP och kapar den vid `XP_TOTAL[30] = 8 155`, så att ingen blir Gudfader direkt. Formeln är
+- **Migrering av gamla sparfiler** görs första gången, när `career.migrated` saknas. `retroXp(p)` räknar ut retroaktiv XP och kapar den vid `XP_TOTAL[30] = 7 865`, så att ingen blir Gudfader direkt. Formeln är
   `60·missions + 18·fenced + 5·sold + 15·heists + 35·dates + 40·pvpWins + 4·robbed` plus köp-XP (`bizXp`) för de verksamheter man äger.
   Allt man redan äger får man behålla. Spärrarna gäller bara nya köp.
 
@@ -177,6 +175,7 @@ Allt som kan spammas på några sekunder går genom en hink som fylls på i **re
 
 - En ny karriär börjar med båda hinkarna fulla.
 - En utdelning tar det som finns i hinken, vilket kan bli mindre än det man skulle ha fått (`capped: true`).
+- **Engångsköp och hinken:** en källa med once-nyckel (till exempel `buy:kebab`, `car:lambo`, `prop:stripclub`) förbrukar nyckeln först när **hela** beloppet betalades. Ger en tom eller halvtom hink 0 eller ett delbelopp, ger samma köp hela beloppet senare. Annars kunde ett köp när Kontoret råkade vara tomt kosta engångs-XP:n för resten av matchen. Hinken bromsar fortfarande, eftersom varje nytt försök tar ur samma hink.
 - Om klockan går bakåt fylls hinken inte på. En stämpel som ligger mer än ett dygn fram i tiden räknas som trasig, och då blir hinken full igen.
 - När hinken är tom (`blocked: 'bucket'`) visar stan en grå "+0 XP (gatan är het)" högst var 20:e sekund, plus ett meddelande i personsökaren en gång. Imperiet lägger "(Kontoret har stängt för idag)" i toasten.
 
@@ -193,18 +192,18 @@ Uppdrag, langning, skrotning, bankrån och dejter ligger **utanför** hinkarna. 
 | Bankrån | 120. Betalas först när stjärnorna är nere på 0 och man är i spelläge. BUSTED eller WASTED ger 0. | `bank` | `placeAction('robbank')` sätter `this.pendingHeistXp = XP.bank`. Betalas i `update()` när `stars === 0`. Nollas i `busted()` och `wasted()`. | 1 per runda, och minst 10 min realtid mellan två utbetalda bankrån (`COOLDOWNS.bank`, stämplas i `career.lastBankXp` först när XP:n betalas) |
 | Hålla stånd mot opps (beefen tar slut utan BUSTED eller WASTED) | 25 | `opps` | `spawnOpps` sätter `this.oppsWatch[g] = true`. I `update()`, när `beef[g]` går från >0 till 0 och `state === 'play'`. | Högst 2 per runda (`cityDone opps1/opps2`). Beefen från `leaveGang` räknas inte. |
 | Lyckad dejt | 35 | `date` | `world.endDate(true)` | 1 per runda (`dateThisRound`) |
-| Vinna ett barbråk (sista man stående, inte utslängd) | 20 | `brawlWin` | `brawl.js`, när bråket lugnar sig (`calmDown`) och spelaren var med | 1 per rum och runda (`cityDone 'brawl:'+id`) |
+| Vinna ett barbråk (sista man stående, inte utslängd) | 20 | `brawlWin` | `brawl.js updateBrawl`, i grenen `fighters === 0` där `F.on` blir `false`. Bara om spelaren deltog, själv eller crewet slog ut minst en (`F.kos > 0`) och spelaren inte blev utslängd. **Inte** i `calmDown`: den körs när bråket rinner ut utan att någon vann (ingen har gått på spelaren på 6 s), medan den som slår ut alla aldrig når `calmDown`. | 1 per rum och runda (`cityDone 'brawl:'+id`) |
 | Rymma från Kåken | 75 | `escapeJail` | Fängelseflödet, som byggs nu | 1 per fängelsevistelse. Att sitta av tiden ger 0, annars kan man farma genom att bli BUSTED med flit. |
-| PvP-seger | `40 · clamp(1 + (Loffer − Ldu)/20, 0,25, 2)`, avrundat, alltså 10–80 (`pvpXp`). 0 om offret ligger 30 eller fler nivåer under dig. 0 om offret har nybörjarskydd. | `pvp` | Värden räknar i `citynet hostHandle('down')` och skickar `xp` i `pvp`-eventet. Det läggs på i `world.onNet case 'pvp'` när `killer === me`. | Samma mördare och offer högst 1 gång per 10 min, och högst 6 PvP-belöningar per timme och spelare (`pvpXpGate`). Ingen mentorbonus. |
+| PvP-seger | `40 · clamp(1 + (Loffer − Ldu)/20, 0,25, 2)`, avrundat, alltså 10–80 (`pvpXp`). 0 om offret ligger 30 eller fler nivåer under dig. 0 om offret har nybörjarskydd. | `pvp` | Värden räknar i `citynet hostHandle('down')` med `pvpReward(host.pvpXp, { killer, victim, killerLevel, victimLevel, shielded }, now)` och skickar `xp` i `pvp`-eventet. Det läggs på i `world.onNet case 'pvp'` när `killer === me`. | Samma mördare och offer högst 1 gång per 10 min, och högst 6 PvP-belöningar per timme och spelare (`pvpXpGate`). En kill som ger 0 XP stämplar ingenting och äter inte av timkvoten. Ingen mentorbonus. |
 | Gå med i ett gäng | 100 | `join` | `world.joinGang` | 1 per match (once-nyckeln `join` är standard för källan) |
-| Respekt-milstolpe hos ett gäng: +30, +60, +100 | 40 / 60 / 100 (`respMilestoneXp`) | `respMilestone` | `world.setRespect(r)`, en ny funktion som alla respektändringar i världen går genom. Den jämför värdena före och efter (`respectMilestones`). | 1 per gäng och steg per match (`once: 'resp:<gang>:<steg>'`) |
+| Respekt-milstolpe hos ett gäng: +30, +60, +100 | 40 / 60 / 100 (`respMilestoneXp`) | `respMilestone` | I stan: `world.setRespect(r)`, en ny funktion som alla respektändringar i världen går genom. Den jämför värdena före och efter (`respectMilestones`). Titelrespekten (avsnitt 7) kan också passera ett steg: lägger `awardXp` på den själv (imperiets väg) betalar den stegen direkt och returnerar dem i `respMilestones`. | 1 per gäng och steg per match (`once: 'resp:<gang>:<steg>'`) |
 
 ### 4.3 Gatukassan (hink: tak 120, +4/min)
 
 | Handling | XP | Källa | Var | Spärr |
 |---|---|---|---|---|
 | Råna en person (R) | 6 om det lyckas, 3 för att länsa någon som ligger | `rob` / `loot` | `world.tryRob` | Redan 1 gång per person (`ped.robbed`) |
-| Knockout med slag, skott eller påkörning | Civil eller metro 2 · tuff 4 · gängmedlem eller opps 5 · snut 6 · rånare 15 | `koSource(ped)` → `ko.civ`, `ko.metro`, `ko.tough`, `ko.gang`, `ko.cop`, `ko.mugger` | `world.hitPed` (`ped.hp <= 0 && mine`) och `world.knockPed` (`v.driver === 'player'`) | 1 gång per person (`ped.xpKO = true`). Folk reser sig efter 4–6 s, så utan flaggan kunde man slå ner samma person om och om igen. |
+| Knockout med slag, skott eller påkörning | Civil eller metro 2 · tuff 4 · gängmedlem eller opps 5 · snut 6 · rånare 15 | `koSource(ped)` → `ko.civ`, `ko.metro`, `ko.tough`, `ko.gang`, `ko.cop`, `ko.mugger` | `world.hitPed` (`ped.hp <= 0 && mine`) och `world.knockPed` (`v.driver === 'player'`). Räkna `koSource(ped)` **innan** grenen nollar `ped.mugger` (hitPed och knockPed gör det i dag), och låt `spawnMugger` sätta `ped.wasMugger = true`, som stannar kvar. Annars ger rånaren 4 (tuff) i stället för 15. | 1 gång per person (`ped.xpKO = true`). Folk reser sig efter 4–6 s, så utan flaggan kunde man slå ner samma person om och om igen. |
 | Kvadda en bil | 2, snutbil 5 | `wreck` / `wreckCop` | `world.damageVehicle`, där `wrecked` sätts och `lastHitBy === 'player'` | – |
 | Skaka av snuten | 8 · högsta antal stjärnor under jakten, alltså 16–40 (`chaseXp`) | `chase` | `world.updateWantedState`: spara `this.chaseMax` och betala när `after === 0`, `before ≥ 2` och `lostTrack`. Frisyr, lack, hack och gömställe nollställer `chaseMax`. | Kräver minst 2 stjärnor |
 | Knockout i barbråk | Gäst 3, vakt 8 | `brawlKo.guest` / `brawlKo.guard` | `brawl.js knockOut`, när `by === 'player'` eller en i ditt crew | 1 gång per NPC (`n.xpKO`) |
@@ -256,6 +255,9 @@ Tärning och events, minispel och kasino, inkomst per runda, sälja en verksamhe
 2. **Det man redan äger behåller man** (gamla sparfiler, vapen, crew över taket, bilar). Spärrarna gäller nya köp. Ammo till ett vapen man äger får man alltid köpa.
 3. **Vapen på marken går alltid att plocka upp.** Ett vapen som är låst för spelaren blir **lånat** under det här stadsbesöket. Varken ammolådor eller Pang-Pelle fyller på det, och det försvinner när man åker hem. Floatern säger "🔫 Uzi (lånad), din från nivå 16". Det är en smakbit, inte en genväg.
 4. **Verksamheterna i Butik spärras inte.** Där räcker pengarna som spärr. Tjänsterna inne i dem spärras, men ägaren får alltid använda tjänsten i sin egen verksamhet.
+5. **Bara byggd fas firas.** `unlocksAt`, `unlocksBetween`, `nextUnlocks`, `awardXp().unlocked` och `unseenLevels` tar bara med poster med `fas ≤ ACTIVE_FAS` (1). Fas 2-poster (Indrivning, guldvapnen, rosen, statyn, Prestige) visas i Karriär-kortet som "Kommer snart" (`comingSoon()`), aldrig som "Upplåst". `{ all: true }` tar med allt.
+6. **Racet:** poster med `race: true` (uppdrag, brott, Skroten, Club Diamant, svarta marknaden, telefondeals, bilar, pimp, gränser, lönesteget, Kapo, turfpriset, Advokaten) räknas på `raceLevel(L, roomMin)` när minst två människor spelar. Se avsnitt 0. `isUnlocked(p, id, { roomMin })` och `lockInfo(p, id, { roomMin })` gör det; låst-UI:t visar då "rummets gräns: Nv 11 (lägsta spelaren + 10)".
+7. **Något nytt minst var fjärde nivå**, ända till 100 (testat). Dessutom växer skada, kritisk chans, respektvinst och gaturespekt lite på varje nivå (`levelStats`), och det visas i nivå-upp-rutan.
 
 **Kolumnen Status:** *befintligt* betyder att innehållet redan finns i koden och bara får en spärr. *Nytt* betyder att det måste byggas. *Bonus* betyder att en siffra ändras. *Kosmetiskt* betyder utseende. **Fas 1** är motorn plus allt som är billigt, **fas 2** är nytt innehåll som kräver grafik eller ny logik.
 
@@ -292,21 +294,33 @@ Tärning och events, minispel och kasino, inkomst per runda, sälja en verksamhe
 | 35 | Langning 15 varor per runda · Muta snuten i telefonen: −1 stjärna, 1 000 kr per stjärna, 1 gång per runda | gräns, tjänst | bonus + nytt (enkelt) | 1 |
 | 38 | Pang-Pelle −20 % | bonus | bonus | 1 |
 | 40 | 5 uppdrag per runda | gräns | bonus | 1 |
-| **41** | **🏙️ KVARTERSBOSS:** veteraner hos Rekryteraren (+20 % hälsa och skada) · respekt ≥ 80 ger ×1,45 i uppdragslön | titel | nytt (litet) + bonus | 1 |
+| **41** | **🏙️ KVARTERSBOSS:** veteraner hos Rekryteraren (+20 % hälsa och skada mot NPC:er) · respekt ≥ 80 ger ×1,45 i uppdragslön | titel | nytt (litet) + bonus | 1 |
+| 44 | Ring backup två gånger per runda | bonus | bonus | 1 |
 | 45 | Guldpistol och kromad uzi (samma skada, bara utseende) | kosmetiskt | nytt | 2 |
 | 48 | Din gängbil vid HQ är bepansrad (+50 % hp) | bonus | bonus | 1 |
 | **51** | **🎩 KAPO:** Kapo-jobbet, ett jobb per runda från din egen boss med dubbel lön och dubbel XP | titel | nytt (litet) | 1 |
 | 55 | Crewet reser sig efter 12 s i stället för 25 | bonus | bonus | 1 |
+| 58 | Doktorn tar halva priset | bonus | bonus | 1 |
 | 60 | Langning 20 varor per runda och +20 % pris på ditt gängs turf | bonus | bonus | 1 |
 | **63** | **🍷 CONSIGLIERE:** Advokaten (BUSTED ger 1 runda kortare häkte, dock minst 1, och halva böterna) · misslyckade jobb kostar ingen respekt | titel | bonus | 1 |
-| 65 | Elitrekryter hos Rekryteraren (+40 % hälsa och skada) | crew | nytt (litet) | 1 |
+| 65 | Elitrekryter hos Rekryteraren (+40 % hälsa och skada mot NPC:er) | crew | nytt (litet) | 1 |
+| 68 | Snuten tappar spåret 25 % snabbare (`LOST_AFTER × 0,75`) | bonus | bonus | 1 |
 | 70 | Privatchaufför: taxin är gratis och kör även med 1 stjärna | tjänst | bonus | 1 |
+| 73 | Crewet reser sig efter 8 s | bonus | bonus | 1 |
 | **75** | **🥃 UNDERBOSS:** Familjens skydd: respekten hos ditt gäng går aldrig under +50, och rivalens opps kommer hälften så ofta | titel | bonus | 1 |
-| 80 | Gatans legend: vanligt folk (civila och metro) slåss aldrig emot när du rånar dem | bonus | bonus | 1 |
+| 78 | 6 uppdrag per runda | gräns | bonus | 1 |
+| 80 | Gatans legend: vanligt folk (civila och metro, inte snutar, tuffingar eller rånare) slåss aldrig emot när du rånar dem | bonus | bonus | 1 |
+| 82 | Muta snuten: 500 kr per stjärna och två gånger per runda | bonus | bonus | 1 |
 | **85** | **🌹 GUDFADERN:** "Ett erbjudande man inte kan tacka nej till": alla gängbossar svarar och ger jobb, även rivalen · guldnamn och krona i stan, på kartan och i listorna · Gudfaderns svarta Rolls står vid HQ | titel | nytt | 1 (guldfälgarna fas 2) |
+| 88 | Pang-Pelle −30 % | bonus | bonus | 1 |
+| 90 | Langning 25 varor per runda | gräns | bonus | 1 |
 | 90 | Rosen på kavajen och ett gyllene basebollträ | kosmetiskt | nytt | 2 |
+| 93 | Doktorn lappar ihop dig gratis | bonus | bonus | 1 |
+| 95 | Skrota 5 bilar per runda | gräns | bonus | 1 |
 | 95 | Staty av dig vid HQ som alla online ser | kosmetiskt | nytt | 2 |
-| 100 | Don-stjärna med guldaura · valfri Prestige: börja om som Springpojke med en ⭐, och kosmetiken finns kvar | prestige | nytt | 2 |
+| 97 | Snuten tappar spåret dubbelt så snabbt (`LOST_AFTER × 0,5`) | bonus | bonus | 1 |
+| 100 | Don-stjärna i namnskylten och Legend-stjärnor (en per 25 000 XP över nivå 100) | kosmetiskt | nytt (litet) | 1 |
+| 100 | Guldaura · valfri Prestige: börja om som Springpojke med en ⭐, och kosmetiken finns kvar | prestige | nytt | 2 |
 
 **Upplåsnings-id:n** i koden (`UNLOCKS` i `levels.js`). Allt som inte står i listan kräver nivå 1 (`requiredLevel` returnerar 1), till exempel `svc:eat`, `car:cykel` och uppdragen `delivery` och `vip`.
 
@@ -331,22 +345,31 @@ Listan har också poster för bonusarna, så att nivå-upp-rutan och Karriär-ko
 
 ```
 perk:crit 10 · cap:missions4 15 · perk:discount10 25 · cap:fence4 33 · cap:goods15 35
-perk:discount20 38 · cap:missions5 40 · perk:paytier 41 · cosm:goldguns 45 (fas 2)
-perk:armoredride 48 · perk:fastrecover 55 · cap:goods20 60 · perk:turfprice 60
-perk:nofailloss 63 · cosm:goldname 85 · cosm:rose 90 (fas 2) · cosm:statue 95 (fas 2)
-prestige 100 (fas 2)
+perk:discount20 38 · cap:missions5 40 · perk:paytier 41 · perk:backup2 44 · cosm:goldguns 45 (fas 2)
+perk:armoredride 48 · perk:fastrecover 55 · perk:doctor 58 · cap:goods20 60 · perk:turfprice 60
+perk:nofailloss 63 · perk:heat 68 · perk:crewheal 73 · cap:missions6 78 · perk:bribecop2 82
+cosm:goldname 85 · perk:discount30 88 · cap:goods25 90 · cosm:rose 90 (fas 2) · perk:doctorfree 93
+cap:fence5 95 · cosm:statue 95 (fas 2) · perk:heat2 97 · cosm:donstar 100 · prestige 100 (fas 2)
 ```
+
+Varje post har `race: true` om den ger pengar i racet: alla av sorten `mission`, `crime`, `market`, `deal`, `car`, `pimp`, `cap` och `prop`, plus `perk:paytier`, `perk:kapo`, `perk:turfprice` och `perk:lawyer`.
 
 **Gränser som funktioner av nivån.** De ersätter de globala `gameState.max*PerRound`, som blir basvärden:
 
 ```
-missionCap(L) = 3 + (L ≥ 15) + (L ≥ 40)
-goodsCap(L)   = L ≥ 60 ? 20 : L ≥ 35 ? 15 : 10
-fenceCap(L)   = L ≥ 33 ? 4 : 3
-crewMax(L)    = L ≥ 30 ? 4 : L ≥ 22 ? 3 : L ≥ 14 ? 2 : L ≥ 8 ? 1 : 0
-crewRecover(L)= L ≥ 55 ? 12 : 25
-gunDiscount(L)= L ≥ 38 ? 0.8 : L ≥ 25 ? 0.9 : 1
+missionCap(L)     = 3 + (L ≥ 15) + (L ≥ 40) + (L ≥ 78)          ← raceLevel
+goodsCap(L)       = L ≥ 90 ? 25 : L ≥ 60 ? 20 : L ≥ 35 ? 15 : 10   ← raceLevel
+fenceCap(L)       = L ≥ 95 ? 5 : L ≥ 33 ? 4 : 3                    ← raceLevel
+crewMax(L)        = L ≥ 30 ? 4 : L ≥ 22 ? 3 : L ≥ 14 ? 2 : L ≥ 8 ? 1 : 0
+crewRecover(L)    = L ≥ 73 ? 8 : L ≥ 55 ? 12 : 25
+gunDiscount(L)    = L ≥ 88 ? 0.7 : L ≥ 38 ? 0.8 : L ≥ 25 ? 0.9 : 1
+backupPerRound(L) = L ≥ 44 ? 2 : L ≥ 31 ? 1 : 0
+bribeCops(L)      = L ≥ 82 ? { perRound: 2, perStar: 500 } : L ≥ 35 ? { 1, 1000 } : { 0, 1000 }
+doctorMult(L)     = L ≥ 93 ? 0 : L ≥ 58 ? 0.5 : 1
+lostTrackMult(L)  = L ≥ 97 ? 0.5 : L ≥ 68 ? 0.75 : 1
 ```
+
+Gränserna märkta `← raceLevel` får `raceLevel(L, roomMin)` i stället för L när minst två människor spelar.
 
 ---
 
@@ -362,7 +385,7 @@ skott      = WEAPONS[id].dmg · dmgMult(L)
 
 - **Kritiska träffar** (spelaren mot NPC:er, aldrig i PvP): från nivå 10 är chansen `L/1000`, alltså 1 % till 10 % (`critChance`). En kritisk träff gör ×1,5 skada (`CRIT_MULT`) och visar en orange floater "KRITISK!" (`#fb923c`) med dubbel gnista. `npcDamage(bas, L, rnd)` returnerar `{ dmg, crit }`.
 - **Torpedslaget** (från nivå 23): knuffen när spelaren slår i `hitPed` blir 200 px/s i stället för 160 (`knockMult` = 1,25).
-- **Crewet** (mot NPC:er): `crewDmgMult(L) = 1 + 0,0025·(L − 1)`, högst +25 %. Veteraner (×1,2) och elit (×1,4) får sin bonus inbakad i hälsa och skada redan när de rekryteras.
+- **Crewet** (mot NPC:er): `crewDmgMult(L) = 1 + 0,0025·(L − 1)`, högst +25 %. Veteraner (×1,2, nivå 41) och elit (×1,4, nivå 65) får sin klass (`crewTier(L)`, `CREW_TIERS`) men **bakas inte in** i hälsa och skada. Medlemmen sparar basskada, bashälsa och `tier`. Mot NPC:er gäller `crewNpcDamage(bas, L, tier)` = bas · crewDmgMult · klass, och skada från NPC:er delas med klassen (`crewNpcHurt`). I PvP skickas basskadan, och träffar från andra spelare dras av rakt. Annars gick klassen förbi ±10 %: en elitlivvakt gjorde 20–28 (25–35 med "Hårda nävar") och hade 126 hp mot en vanlig livvakts 14–20 och 90 hp.
 - **Påkörning med bil skalas inte**, så fysiken är oförändrad.
 
 | Nivå | Mult. | Nävar 15–21 | Trä 28–38 | Trä + styrka 5 (43–53) | Pistol 24 | Uzi 12 | Hagel 6×11 |
@@ -379,13 +402,25 @@ skott      = WEAPONS[id].dmg · dmgMult(L)
 |---|---|---|
 | Antal opps (`spawnOpps`) | `oppsCount(L) = min(7, 4 + floor(L/30))` | 4 → 7 |
 | Beväpnade opps | `oppsArmed(L, hasGun) = min(antal, (hasGun ? 2 : 0) + floor(L/40))` | +1 från nivå 40, +2 från nivå 80 |
-| Opps-hp | `35 · npcHpMult(L)`, där `npcHpMult(L) = 1 + L/300` | 35 → 47 |
-| Snutar till fots (`copGetsOut`) | `40 · npcHpMult(L)` | 40 → 53 |
+| Opps-hp | 35, skalas **inte** | 35 → 35 |
+| Snutar till fots (`copGetsOut`) | `40 · copHpMult(L)`, där `copHpMult(L) = 1 + L/600` | 40 → 47 |
 
 - Vakter och gäster i barbråken skalas **inte**. Det ska gå att slänga ut dem.
-- Spelaren blir ungefär 1,5 gånger starkare, medan motståndet blir ungefär 1,33 gånger tuffare. Man känner sig starkare men blir aldrig odödlig.
-- Pistolen sänker aldrig opps på ett skott: 36 i skada mot 47 hp på nivå 100 (testat).
+- Opps-hälsan skalades tidigare med `1 + L/300`. Det åt upp nästan hela `dmgMult`: pistolen och uzin behövde lika många skott på nivå 100 som på nivå 1, och ägarens krav att skadan ska växa märktes inte mot de fiender som slår tillbaka. Nu blir gatan tuffare genom **fler** opps och **fler skyttar**, och snutarna blir hälften så mycket tuffare som skadan växer.
+- Spelaren blir ungefär 1,5 gånger starkare, snutarna ungefär 1,17 gånger tuffare, och en opps-våg på nivå 100 har 7 man i stället för 4 och dubbelt så många skyttar. Man känner sig starkare men blir aldrig odödlig.
 - Spelarens hälsa skalas **inte** med nivån. Annars skulle PvP-kompressionen nedan inte hålla.
+
+**Så märks skadan** (snittskada, utan kritiska träffar, testat):
+
+| Vapen | Mot opps (35 hp) | Mot snut (40 → 47 hp) |
+|---|---|---|
+| Nävar (snitt 18) | 2 slag | 3 → 2 från nivå 37 |
+| Basebollträ (snitt 33) | 2 → 1 från nivå 14 | 2 → 1 från nivå 73 |
+| Pistol (24) | 2 → 1 från nivå 93 | 2 |
+| Uzi (12) | 3 → 2 från nivå 93 | 4 → 3 från nivå 37 |
+| Hagelgevär (6 × 11) | 1 | 1 |
+
+En kritisk träff (från nivå 10) kan sänka opps med ett pistolskott redan på nivå 10 (24 · 1,045 · 1,5 = 37,6). Det är meningen: kritiska träffar finns för att den högre skadan ska märkas.
 
 ### 6.3 PvP: rättvisa online
 
@@ -399,8 +434,9 @@ skott      = WEAPONS[id].dmg · dmgMult(L)
    pvpMult = 1 + 0,005 · clamp(Lanfallare − Lmål, −20, 20)          alltså 0,90–1,10
    ```
    Multiplikatorn läggs på **efter** taket. I dag kapas trä plus styrka 5 (53) till 45, och då skulle nivåbonusen annars försvinna. Nivån läses från värdens bild, alltså `lv` i den tvättade positionen och i andra hand `gameState.players`. Klienten kan aldrig skicka med sin nivå i själva träffen.
-3. **Nybörjarskydd** (`newbieShield`): om målet är på nivå 5 eller lägre och anfallaren ligger minst 10 nivåer över gäller `sköld = 0,5`. Offret tappar då inga pengar (`lost = 0` i `pvpDefeat`, och värden kapar `amount` till 0), och anfallaren får 0 i PvP-XP. Skyddet försvinner i 30 s om nybörjaren själv slog den anfallaren först (`host.aggro` med nyckeln `'nybörjare>anfallare'`, skickas som `aggro`).
-4. **Resultat:** nivå 100 mot nivå 1 ger högst +10 %, och samma nivå ger exakt dagens skada. PvP avgörs av vapen, väst, crew och skicklighet, inte av timmar. Det finns inga kritiska träffar i PvP.
+3. **Nybörjarskydd** (`newbieShield`): om målet är på nivå 15 eller lägre (`NEWBIE_MAX_LEVEL`, Springpojke till Langare, alltså innan uzin) och anfallaren ligger minst 10 nivåer över (`NEWBIE_GAP`) gäller `sköld = 0,5`. Offret tappar då inga pengar (`lost = 0` i `pvpDefeat`, och värden kapar `amount` till 0), och anfallaren får 0 i PvP-XP. Skyddet försvinner i 30 s om nybörjaren själv slog den anfallaren först (`host.aggro` med nyckeln `'nybörjare>anfallare'`, skickas som `aggro`).
+4. **Crewet i PvP:** crewets träffar skickar basskadan (roll · egenskap, utan nivå och utan klass, se 6.1). Värden kapar crewets PvP-skada vid rollens max · 1,25 (till exempel livvakt 20 · 1,25 = 25) i stället för bara `HIT_RULES.melee.max` (45), så en klient inte kan skicka med klassen. Rollen finns i den tvättade positionen (`crew[i].r`).
+5. **Resultat:** själva skadeformeln ger nivå 100 mot nivå 1 högst +10 %, och samma nivå ger exakt dagens skada. Det finns inga kritiska träffar i PvP. Men vapen, väst och crewplatser låses upp med nivån (pistol 6, väst 7, uzi 16, hagel 23, crew 8–30), så **nivån spelar roll i PvP genom utrustningen**. Det är progressionen, och tre saker håller den i schack: nybörjarskyddet upp till nivå 15, att vapen på marken alltid går att låna, och att crewets klass bara gäller mot NPC:er.
 
 ---
 
@@ -417,7 +453,7 @@ Spelet har två sorters respekt, och båda växer med nivån.
    - Det läggs in i `applyRespect` och `adjustRespect` som en ny parameter `level`.
 2. **Förlusterna är oförändrade:** rivalen −10, misslyckat jobb −5, fiendens turf −3, slag −4 eller −3. Gängkriget och valet av gäng ska fortfarande betyda något. Undantag: från nivå 63 kostar ett misslyckat jobb ingen respekt (`failRespect`).
 3. **Ryktet går före dig:** ett nytt spel startar med respekt `floor(L/5)` hos alla sex gäng, alltså +6 på nivå 30 och +20 på nivå 100 (`startRespect`). Det görs i `applyCareer(p, { newGame: true })`.
-4. **Ordet sprids:** vid varje ny titel får man +5 respekt (`TITLE_RESPECT`) hos alla gäng som inte är rival till ens eget gäng. `awardXp` lägger på det via `levelUpRewards`. I stan skickar `world.gainXp` `applyRespect: false` och lägger deltan genom `setRespect`, så att respekt-milstolparna räknas.
+4. **Ordet sprids:** vid varje ny titel får man +5 respekt (`TITLE_RESPECT`) hos alla gäng som inte är rival till ens eget gäng. `awardXp` lägger på det via `levelUpRewards`, och om titelrespekten passerar ett respektsteg (30/60/100) betalar `awardXp` stegets XP direkt (`once: 'resp:<gang>:<steg>'`, i resultatet som `respMilestones`). Den XP:n kan ge en ny nivå och titel, och då läggs även den titelns respekt på. I stan skickar `world.gainXp` `applyRespect: false` och lägger deltan genom `setRespect`, som betalar stegen; `levelUpRewards` rapporterar då stegen i `milestones` men betalar dem inte.
 5. **Nytt lönesteg:** från nivå 41 ger respekt ≥ 80 ×1,45 i `rewardFor` (`respectPayMult`). Dagens steg är ×1,15 vid 20 och ×1,3 vid 50.
 6. **Perks:**
    - Nivå 75: det egna gängets respekt går aldrig under +50 (`respectFloor`; golvet läggs i `world.setRespect`).
@@ -425,7 +461,7 @@ Spelet har två sorters respekt, och båda växer med nivån.
 
 **Gaturespekt**, alltså att folk fruktar dig:
 
-- Chansen att någon slåss emot vid rån (`fight` i `tryRob`) multipliceras med `fearMult(L) = 1 − (L − 1)/250`, alltså ×0,6 på nivå 100. Från nivå 80 är den 0 för civila och metro (`robFightChance`).
+- Chansen att någon slåss emot vid rån (`fight` i `tryRob`) multipliceras med `fearMult(L) = 1 − (L − 1)/250`, alltså ×0,6 på nivå 100. Från nivå 80 är den 0 för vanligt folk: `robFightChance(fight, L, ped)` tar **peden**, inte typen, och nollar bara när `isOrdinaryPed(ped)`, alltså `type` är `'civ'` eller `'metro'` och peden inte är snut, tuffing eller rånare. I `ai.js` har snutar, tuffingar och rånare också `type === 'civ'`, så typen ensam skulle stänga av motståndet för snutar på nivå 80. Utan ped gäller bara `fearMult`.
 - Risken att bli utslängd vid ett obeväpnat butiksrån blir `0,5 · fearMult(L)` (`shopRobKickChance`).
 - Nattens rånare kommer mer sällan: `muggerT = 80 + rnd·60 + 0,6·L` sekunder (`muggerInterval`).
 
@@ -462,7 +498,7 @@ När man får XP:
 
 | Fall | Hur det visas |
 |---|---|
-| Vanlig nivå (2,6 s) | "NIVÅ 24" i bandets färg, titeln under, och 1–2 rader "Upplåst: Uzi hos Pang-Pelle" plus "+1 till, se 📱". Ljudet `mission`. Partiklar med bandets emoji. |
+| Vanlig nivå (2,6 s) | "NIVÅ 24" i bandets färg, titeln under, och 1–2 rader "Upplåst: Uzi hos Pang-Pelle" plus "+1 till, se 📱". Bara poster i byggd fas (`r.unlocked`). En nivå utan upplåsning visar i stället det som växte, ur `levelStats`: "Skada +11,5 % · Kritisk 2,4 %". Ljudet `mission`. Partiklar med bandets emoji. |
 | Ny titel (4 s, blockerar inget) | Större text och en ton i bandets färg (15 %) över skärmen. Bandets emoji över titeln och raden "Ryktet sprider sig...". Klienten skickar dessutom `rank` till värden, som sprider det i flödet. |
 | Gudfadern (alla online) | Banner "👑 MEHMET ÄR GUDFADERN" hos alla, via `rank` med band 10. |
 | Mitt i ett uppdrag eller en jakt | Kompakt variant högre upp (y = H·0,22, 44 px). Den stora tonen skjuts upp tills uppdraget är slut eller stjärnorna är 0, dock högst 20 s. |
@@ -488,7 +524,7 @@ Vid nivå-upp i stan uppdaterar `world` direkt `maxMissions`, `maxGoods` och `ma
 
 Texterna kommer från `lockLabel(id)` och `lockInfo(spelare, id)`.
 
-- **Knappen** säger "🔒 Nivå 16 · Hustlare". Den är `disabled`, har mörk bakgrund och 1 px kant i färgen för det band som krävs. Under står i liten text "du: Nv 9 · 7 nivåer kvar".
+- **Knappen** säger "🔒 Nivå 16 · Hustlare". Den är `disabled`, har mörk bakgrund och 1 px kant i färgen för det band som krävs. Under står i liten text "du: Nv 9 · 7 nivåer kvar". Är det rummets gräns som låser (`lockInfo(...).roomCapped`, se avsnitt 0) står det "rummets gräns: Nv 11 (lägsta spelaren + 10)".
 - **Pang-Pelle (`showGuns`):** låsta rader visar ändå statistiken. Pelle säger: "Psst... den säljer jag bara till folk med namn. Kom tillbaka som Hustlare."
 - **Rekryteraren (`showRecruit`):** "👥 1/1 · 🔒 plats 2 på nivå 14". Kandidater med låst roll eller nivå visar "🔒 Nivå 18 · Skytt".
 - **Gängtelefonen (`showPhone`):** sista raden blir "🔒 Fler jobb på nivå 9: Krossa rivalerna". Har man respekt men för låg nivå säger bossen: "Kom tillbaka på nivå 6, Springpojke."
@@ -508,10 +544,11 @@ Texterna kommer från `lockLabel(id)` och `lockInfo(spelare, id)`.
 - **Befordran i stan** visas som overlay först när man kommer hem (`onCityClosed`). I stan visas den aldrig mitt i en jakt.
 - **Karriär-kortet** blir första kortet i Stan-panelen och är samma ruta som chipet öppnar. Det innehåller:
   - ett 64 px-märke, titeln och XP-stapeln med siffror
-  - raden "Skada +11 % · Kritisk 2,3 % · Respektvinst +22 %"
+  - raden "Skada +11 % · Kritisk 2,3 % · Respektvinst +22 %" (`levelStats(L)`)
   - hinkarna, "Gatukassan 45/120 (+4/min) · Kontoret 160/200 (+4/min)" (`bucketPeek`), så att man förstår varför ett rån gav 0 XP
-  - "Nästa: Nivå 16 · Uzi hos Pang-Pelle (2 nivåer kvar)" för de 3 nästa upplåsningarna (`nextUnlocks`)
+  - "Nästa: Nivå 16 · Uzi hos Pang-Pelle (2 nivåer kvar)" för de 3 nästa upplåsningarna (`nextUnlocks`, bara byggd fas)
   - titelstegen med alla 11 band: avklarade med ✔ och färg, det nuvarande lysande, kommande gråa med 2 nyckelupplåsningar var
+  - en grå rad "Kommer snart" med fas 2-posterna (`comingSoon()`), utan nivåsiffror som lovar något
 - **Panelens siffror** ("Uppdrag kvar 2/4" och så vidare) använder `missionCap(L)`, `goodsCap(L)` och `fenceCap(L)` i stället för `gameState.max*PerRound`.
 - **Inloggningskorten** (`renderLoginScreen`) visar karriärens "🔨 Torped · Nv 23" som huvudrad, med en mindre rad "Förmögenhet: Kebab-Mogul" under.
 - **Övrigt:**
@@ -529,7 +566,7 @@ Texterna kommer från `lockLabel(id)` och `lockInfo(spelare, id)`.
 
 ### 9.1 Nya filer
 
-**`src/game/levels.js`** (klar, se avsnitt 11) innehåller ren logik: ingen DOM och ingen lagring. Den importerar bara data utan sidoeffekter: `GANGS` och respektgränserna från `src/city/constants.js` (för titelrespekten) och `SHOPS` från `src/data/gameData.js` (för `retroXp`). Det gör filen enkel att testa.
+**`src/game/levels.js`** (klar, se avsnitt 11) innehåller ren logik: ingen DOM och ingen lagring. Den används inte av någon annan fil än, så API:t kan fortfarande ändras utan följdändringar. Den importerar bara data utan sidoeffekter: `GANGS` och respektgränserna från `src/city/constants.js` (för titelrespekten) och `SHOPS` från `src/data/gameData.js` (för `retroXp`). Det gör filen enkel att testa.
 
 **`src/game/career.js`** (nästa steg) sköter lagringen. Den går genom ett utbytbart lager: `globalThis.localStorage` i webbläsaren och ett minneslager i testerna. Alla anrop ligger i try/catch.
 
@@ -545,6 +582,9 @@ export function grantXp(p, source, opts = {})
 //   const r = awardXp(p, source, { ...opts, career: c, mentor: <mentorMult om online> });
 //   saveCareer(p.charKey, c); return r;
 //   Mentorbonusen läser gameState (isOnline och players).
+export function roomMin()
+//   roomMinLevel(gameState.players): rummets lägsta mänskliga nivå, eller null i solo.
+//   Skickas som { roomMin } till isUnlocked/lockInfo och till raceLevel för gränserna.
 ```
 
 ### 9.2 `src/game/state.js`
@@ -568,6 +608,7 @@ export function grantXp(p, source, opts = {})
 
 | Funktion (ungefärlig rad i dag) | Ändring |
 |---|---|
+| konstruktorn / `open` | `this.roomMin` från `stan.js` (null i solo). `this.raceL()` = `raceLevel(this.level(), this.roomMin)` används för allt som ger pengar nedan. |
 | `update` (249) | Efter nedräkningen av `beef`: XP för opps när en bevakad beef går till 0. Betala `pendingHeistXp` med `gainXp('bank')` när `stars === 0` och `state === 'play'`; spärren på 10 min ligger i källan. |
 | `netSnapshot` (322) | Nytt fält `lv: this.level()` |
 | `onNet 'pvp'` (348) | Om `killer === me && e.xp` körs `gainXp('pvp', { amount: e.xp })` (ingen mentorbonus, milstolpen `firstPvp` är standard). Ny gren `'rank'` som skriver i flödet och visar Gudfader-bannern. |
@@ -576,30 +617,33 @@ export function grantXp(p, source, opts = {})
 | `shoot` (973) | `b.base = w.dmg`, `b.dmg = w.dmg × dmgMult(L)` |
 | `bulletHitPed` (1053) | Chans till kritisk träff när `b.from === 'player'` |
 | `bulletHitRemote` (1995) | Skicka `b.base ?? b.dmg` |
-| `hitPed` (1091) | Knuff `× knockMult(L)` när spelaren slår. `gainXp(koSource(ped))` vid `ped.hp <= 0 && mine && !ped.xpKO`. |
-| `knockPed` (1539) | XP för knockout när `v.driver === 'player'` (en gång per person) |
-| `tryRob` (1183) | `fight = robFightChance(fight, L, ped.type)`. `gainXp('rob')` eller `gainXp('loot')`. |
-| `updateMuggers` (1236) | `this.muggerT = muggerInterval(L, this.rnd())` |
+| `hitPed` (1091) | Knuff `× knockMult(L)` när spelaren slår. Vid `ped.hp <= 0 && mine && !ped.xpKO`: räkna `const src = koSource(ped)` **först i grenen**, innan `ped.mugger = false`, och kör sedan `gainXp(src)`. |
+| `knockPed` (1539) | Samma sak när `v.driver === 'player'`: `koSource(ped)` före raden som nollar `ped.mugger` (en gång per person) |
+| `tryRob` (1183) | `fight = robFightChance(fight, L, ped)`: skicka **peden**, inte `ped.type`. `gainXp('rob')` eller `gainXp('loot')`. |
+| `updateMuggers` / `spawnMugger` (1236 / 1246) | `this.muggerT = muggerInterval(L, this.rnd())`. `spawnMugger` sätter `ped.wasMugger = true` bredvid `ped.mugger = true`. |
 | `buyFromGunShop` (1284) | `weaponPurchase(prof, id, kind, { level, borrowed: this.borrowed })`. `gainXp('weapon', { once: 'weapon:'+id })`. |
 | `buyArmor` (2107) | Spärr `armor` (nivå 7). Pris `800 × gunDiscount(L)`. |
 | `applyGain` (1951) | Ett låst vapen läggs i `this.borrowed` och floatern får "(lånad)" |
 | `visitClub` (1305) | Spärr `date` (nivå 10) |
 | `endDate(true)` (1343) | `gainXp('date')` |
-| `sellTo` (1415) | `gainXp(rivalTurf ? 'sellRival' : 'sell')`. Pris +20 % på eget turf från nivå 60. Opps-chansen ×0,5 för rivalen från nivå 75. `adjustRespect(..., level)`. |
-| `spawnOpps` (1451) | `oppsCount`, `oppsArmed`, `hp: 35 × npcHpMult(L)`, `this.oppsWatch[gang] = true` |
+| `sellTo` (1415) | `gainXp(rivalTurf ? 'sellRival' : 'sell')`. Pris +20 % på eget turf från nivå 60 (`perk:turfprice`, med `{ roomMin }`). Opps-chansen ×0,5 för rivalen från nivå 75. `adjustRespect(..., level)`. |
+| `spawnOpps` (1451) | `oppsCount`, `oppsArmed`, `hp: 35` (oförändrat, se 6.2), `this.oppsWatch[gang] = true` |
 | `joinGang` (1510) | Nivåspärren ligger i `canJoin`. `gainXp('join')`. |
-| `answerPhone` (1797) | `phoneAccess(profile, gang, level)`. `createMission` får `types` (de upplåsta), `level` och `kapo` (eget gäng, nivå 51 eller mer, inte gjort denna runda; räknas inte mot `missionCap`). Saknade typer skickas med i eventet så att telefonen kan visa nästa. |
+| `answerPhone` (1797) | `phoneAccess(profile, gang, level)`. `createMission` får `types` (de upplåsta enligt `isUnlocked(p, 'mission:'+typ, { roomMin })`), `level` och `kapo` (eget gäng, `isUnlocked(p, 'perk:kapo', { roomMin })`, inte gjort denna runda; räknas inte mot `missionCap`). Saknade typer skickas med i eventet så att telefonen kan visa nästa. |
 | `fenceVehicle` (1834) | Spärr `fence` (nivå 3) och `fenceCap`. `gainXp('fence', { amount: fenceXp(value) })`. |
 | `collectBusiness` (1851) | `gainXp('collect')` |
 | `recruitOffers` / `recruit` / `hireBouncer` (1864 / 1866 / 2263) | Skicka `level` till `crewCandidates` och `canRecruit`. Sven har spärren `crew:bouncer`. `gainXp('recruit', { once: 'recruit:'+id })`. |
-| `hurtCrew` (1913) | `CREW_RECOVER` byts mot `crewRecover(L)` |
+| `crewMelee` / `crewShoot` (1899 / 1904) | Mot en ped: `crewNpcDamage(dmg, L, c.tier)`. Mot en spelare eller ett annat crew: basskadan `dmg` oförändrad. |
+| `hurtCrew` (1913) | `CREW_RECOVER` byts mot `crewRecover(L)`. Skada från en ped går genom `crewNpcHurt(dmg, c.tier)`; skada från en spelare dras av rakt. |
+| `doctor` (2092) | Priset `× doctorMult(L)` |
+| `callBackup` / `bribeCops` (nya) | Antal per runda och pris från `backupPerRound(L)` och `bribeCops(L)` |
 | `taxi` (2077) | Från nivå 70 (`perk:chauffeur`) är priset 0 och taxin kör även med 1 stjärna |
 | `buyProperty` (2126) | Spärr `prop:stripclub`. `netAsk('buy', 'buyProp', { prop, money, lv })`. |
 | `placeInfo` (2413) | `rob` kräver `rob:shop`. Tjänsterna kräver `svc:*` om man inte äger verksamheten. `buyhouse` kräver `house:<id>`. `robbank` kräver `rob:bank`. `nightvip` kräver `svc:vip`. Låsta knappar får `disabled` och noten `lockLabel`. |
-| `placeAction` (2478) | XP för `buy` (`buyBiz`), `rob` (`shopRob`), tjänsterna (`service.*`) och `buyhouse` (`house`). `robbank` sätter `pendingHeistXp = XP.bank`. |
+| `placeAction` (2478) | XP för `buy` (`buyBiz`), `rob` (`shopRob`), tjänsterna (`service.*`) och `buyhouse` (`house`). `robbank` sätter `pendingHeistXp = XP.bank`. Spärrarna för `rob:shop` och `rob:bank` tar `{ roomMin }`. |
 | `updateMissionState` (2586) | `gainXp('mission.'+m.type, { amount: missionXp(m, { member, kapo }) })`. `rewardFor` och `applyRespect` får `level`. |
-| `copGetsOut` (2624) | `hp: 40 × npcHpMult(L)` |
-| `updateWantedState` (2645) | Följ `chaseMax` och betala `gainXp('chase', { amount: chaseXp(chaseMax) })`. `respray`, frisyren, hacket och `hide` nollställer `chaseMax`. |
+| `copGetsOut` (2624) | `hp: 40 × copHpMult(L)` |
+| `updateWantedState` (2645) | Följ `chaseMax` och betala `gainXp('chase', { amount: chaseXp(chaseMax) })`. `respray`, frisyren, hacket och `hide` nollställer `chaseMax`. `lostTrack(w)` i `wanted.js` får en multiplikator: `w.seenT > LOST_AFTER · lostTrackMult(L)`. |
 | `busted` / `wasted` (2666 / 2677) | `pendingHeistXp = 0` och `applyRespect(..., false, level)` |
 | `pvpDefeat` (2036) | `lost = 0` om `newbieShield(lastAttacker-nivå, min nivå)` |
 | Nya: `callBackup()` (nivå 31), `bribeCops()` (nivå 35) | `callBackup`: 2 peds från det egna gänget (`gangPedOpts`) med `ped.ally = true` och 60 s livslängd. De går på närmaste ped som anfaller dig, annars följer de dig (en liten gren i `updatePeds`). `bribeCops`: `setStars(s − 1)` för 1 000 kr per stjärna. Båda högst 1 gång per runda (`cityDone`). |
@@ -621,13 +665,13 @@ export function grantXp(p, source, opts = {})
   - Ammo till ett lånat vapen nekas.
   - `cost × gunDiscount(level)`.
 - **`crew.js`:**
-  - `crewCandidates(charKey, round, level = 1)`: nivån bestämmer om kandidaterna är veteraner (×1,2, kostnad ×1,5, namnprefixet "Veteran", `crew:veteran`) eller elit (×1,4, kostnad ×2, "Elit", `crew:elite`).
+  - `crewCandidates(charKey, round, level = 1)`: `crewTier(level)` bestämmer om kandidaterna är veteraner (kostnad ×1,5, namnprefixet "Veteran") eller elit (kostnad ×2, "Elit"). Kandidaten får `tier`, men `hp` och `dmg` förblir rollens bas · egenskap; klassen läggs bara på mot NPC:er (se 6.1).
   - `canRecruit(profile, cand, level = 100)` kontrollerar `crewMax(level)`, `crew:gunner` och `crew:bouncer`. Felmeddelandet är `lockLabel`.
 - **`items.js`:** `itemGain(profile, type, armor, borrowed)`. Ammolådor och vapen man redan har ger ingen ammo till lånade vapen.
 - **`brawl.js`** (byggs nu, så lägg in efter den grenen):
   - `playerPunch` får `npcDamage` (dmgMult och kritisk träff).
   - `knockOut` ger `brawlKo.guest` / `brawlKo.guard` när `by === 'player'` eller en i crewet (`n.xpKO`).
-  - `calmDown` ger `brawlWin`.
+  - `updateBrawl` ger `brawlWin` i grenen `fighters === 0 && F.quietT > 2`, precis där `F.on = false` sätts, och bara om spelaren deltog, `F.kos > 0` och spelaren inte blev utslängd. `calmDown` ger **ingen** XP: den körs när bråket rinner ut med folk kvar i slagsmål, alltså när ingen vann.
 - **`hud.js`:** XP-raden, flyttade rader, kön för nivå-upp (`onEvent('levelUp')` och `onEvent('xp')`), "+N" vid respekten och bannern för ny titel.
 - **`render.js`:** `drawTags` får nivårutan, guld och krona (nivån tas från `remote.lv` och hos dig själv från `world.level()`). `drawFloaters` får `f.size`. Samma namnskyltar i `render3d` när den grenen är klar.
 - **`minimap.js`:** guldkant och krona för nivå 85 och uppåt (fas 1, enkelt).
@@ -647,15 +691,15 @@ export function grantXp(p, source, opts = {})
   - `updateHUD` (9) fyller `#hud-level` och `#hud-xp` med `levelFromXp(p.xp)`.
   - `updateTurnBar` (429) får nivån.
   - `runAITurn` (467) ger `p.xp += AI_TURN_XP`.
-- **`features.js`:** `renderMarket` och `doMarketDeal` får spärrarna `bm:*` och källan `market`.
+- **`features.js`:** `renderMarket` och `doMarketDeal` får spärrarna `bm:*` (med `{ roomMin }`) och källan `market`.
 - **`garage.js`:** `renderGarage`, `buyGarageCar` och `pimpCar` får spärrarna `car:*` och `pimp:*`, siluetten och källorna `buyCar` (`carXp`, `once: 'car:'+id`) och `pimp`.
 - **`phone.js`:**
-  - `phoneOpenDeals` och `doPhoneDeal` får spärrarna `deal:*` och källan `phoneDeal`.
+  - `phoneOpenDeals` och `doPhoneDeal` får spärrarna `deal:*` (med `{ roomMin }`) och källan `phoneDeal`.
   - `phoneOpenCars` och `buyCar` får samma spärrar som garaget.
   - `renderDashboard` får nivån.
 - **`stan.js`:**
   - `renderStanPanel` får Karriär-kortet först och gränser som räknas från nivån.
-  - `goToCity` skickar `maxMissions: missionCap(L)`, `maxGoods: goodsCap(L)` och `maxFence: fenceCap(L)`.
+  - `goToCity` skickar `roomMin` och `maxMissions: missionCap(RL)`, `maxGoods: goodsCap(RL)` och `maxFence: fenceCap(RL)`, där `RL = raceLevel(L, roomMin)`.
   - `onCityClosed` lägger på Advokaten (nivå 63), visar BEFORDRAN för `result.levelUps` med titelbyte, sätter `lvSeen` och kör sedan `saveGame` och synk som i dag.
 - **`main.js`:**
   - HUD-markupen (rad 123–125) får `#hud-level` och `#hud-xp` och elementet `#overlay-level`.
@@ -669,12 +713,13 @@ export function grantXp(p, source, opts = {})
 - **`authority.js`:**
   - `validateHit(att, tgt, kind, dmg, now, log, attackerId, mult = 1)` returnerar `dmg: min(rule.max, n) × mult`.
   - `PROPERTIES.stripclub.minLevel = requiredLevel('prop:stripclub')` (28).
-  - `validateBuy(owners, prop, buyer, money, level = 100)` nekar med "Kräver nivå 28 · Torped".
+  - `validateBuy(owners, prop, buyer, money, level = 100)` nekar med "Kräver nivå 28 · Torped". Värden skickar köparens `raceLevel(lvOf(from), rummets lägsta)`.
 - **`citynet.js`:**
   - `sanitizePos` får `lv: clampLevel(p.lv)`.
   - Ny hjälpare `lvOf(id)`: `host.players.get(id)?.lv`, i andra hand `levelOf(gameState.players…xp)`.
   - `hit` får `mult = pvpMult(...) × (newbieShield(...) ? NEWBIE_SHIELD : 1)`, och `host.aggro` uppdateras vid varje träff.
-  - `down` räknar `pvpXp` med `pvpXpGate(host.pvpXp, killer, victim, now)`, skickar `xp` i `pvp` och kapar `amount` till 0 vid nybörjarskydd.
+  - `down` räknar XP med `pvpReward(host.pvpXp, { killer, victim, killerLevel, victimLevel, shielded }, now)`, som kör `pvpXp` först och grinden sedan, skickar `xp` i `pvp` och kapar `amount` till 0 vid nybörjarskydd.
+  - `hit` från ett crew (`src >= 0`) kapar skadan vid rollens max · 1,25 (största egenskapen, "Hårda nävar"). Rollen finns redan i den tvättade positionen (`att.crew[src].r`). Då når klassen aldrig PvP.
   - `buyProp` skickar `lvOf(from)` till `validateBuy`.
   - Ny typ `rank`: kräver att `lv` ligger mellan 1 och 100 och är högre än förra kända, högst 1 gång per 5 s, och sprids med `toAll({ type: 'rank', id, lv, name })`. Den läggs i listan med `onMessage`-typer (rad 222).
   - `playerInfo` får `lv`.
@@ -696,18 +741,20 @@ export function grantXp(p, source, opts = {})
 
 ### 9.7 Tester
 
-- **`tests/levels.test.js`** (klar, 63 tester):
-  - `XP_TOTAL[100] === 175 220`, strikt växande `need` i femsteg och designens nyckelnivåer.
-  - `levelFromXp` vid gränserna (44 ger 1, 45 ger 2, 175 220 ger 100), nivå 100 som tak och rundtur mot `xpForLevel`.
+- **`tests/levels.test.js`** (klar, 79 tester):
+  - `XP_TOTAL[85] === 87 935`, `XP_TOTAL[100] === 138 475`, strikt växande `need` i femsteg och designens nyckelnivåer.
+  - `levelFromXp` vid gränserna (44 ger 1, 45 ger 2, 138 475 ger 100), nivå 100 som tak och rundtur mot `xpForLevel`.
   - Titelbanden täcker 1–100 utan luckor eller överlapp och har rätt titlar i ändarna.
-  - `UNLOCKS` är sorterade, unika, har giltiga nivåer och följer designens id-lista.
-  - Gränsfunktionerna stämmer med upplåsningslistan.
-  - `pvpMult` håller sig inom 0,9–1,1, `dmgMult(100) ≤ 1,5`, kritiska träffar och skadetabellen.
-  - `scaleRespectDelta` (förluster oförändrade) och de andra respektformlerna.
-  - `bucketTake`: påfyllning, tak, delutdelning, klockan bakåt.
-  - `awardXp`: nivå-upp med upplåsningar, rykte och titelrespekt, once, milstolpar, hinkar, spärrar för bankrån (10 min) och vinst (2 h), mentorbonus, AI och trasiga belopp.
-  - `pvpXp`: 0 vid 30 nivåers skillnad och vid nybörjarskydd. `pvpXpGate`: par och timme.
-  - `normalizeLevelFields`, `normalizeCareer` och `retroXp` (taket vid `XP_TOTAL[30]`).
+  - `UNLOCKS` är sorterade, unika, har giltiga nivåer och följer designens id-lista. Fas 2 firas aldrig som upplåst, och det finns något nytt i fas 1 minst var fjärde nivå ända till 100.
+  - Racet: `raceLevel`, `roomMinLevel`, `isUnlocked`/`lockInfo` med `roomMin` och vilka poster som är `race`.
+  - Gränsfunktionerna och perkfunktionerna stämmer med upplåsningslistan.
+  - `pvpMult` håller sig inom 0,9–1,1, `dmgMult(100) ≤ 1,5`, kritiska träffar, skadetabellen, att skadan märks mot opps och snutar, `levelStats` och crewets klass bara mot NPC:er.
+  - Nybörjarskyddet till och med nivå 15.
+  - `scaleRespectDelta` (förluster oförändrade), `robFightChance` med ped (snut, tuffing och rånare slåss fortfarande på nivå 80) och de andra respektformlerna.
+  - `bucketTake`: påfyllning, tak, delutdelning, klockan bakåt. `cooldownOk` flyttar en stämpel från framtiden.
+  - `awardXp`: nivå-upp med upplåsningar, rykte och titelrespekt, respektsteg från titelrespekten, once (förbrukas inte av en tom hink), milstolpar, hinkar, spärrar för bankrån (10 min) och vinst (2 h), mentorbonus, AI, trasiga belopp och ärvda nyckelnamn (`toString`, `constructor`, `__proto__`).
+  - `pvpXp`: 0 vid 30 nivåers skillnad och vid nybörjarskydd. `pvpXpGate`: par och timme, och 0-XP-kills stämplar ingenting. `pvpReward`.
+  - `koSource` med `wasMugger`, `normalizeLevelFields`, `normalizeCareer` och `retroXp` (taket vid `XP_TOTAL[30]`).
 - **Ny `tests/career.test.js`:** med minneslagring.
   - `grantXp` sparar hinkar och milstolpar mellan anrop (omladdning hjälper inte).
   - Mentorbonusen från `gameState`.
@@ -723,21 +770,23 @@ export function grantXp(p, source, opts = {})
 
 ## 10. Risker och öppna frågor
 
-1. **Karriär mot racet till 1 miljon.** Mot veteraner skyddar fyra saker:
+1. **Karriär mot racet till 1 miljon.** Mot veteraner skyddar fem saker:
    - Verksamheterna spärras inte.
-   - Imperiets spärrar ligger lågt (allt senast på nivå 28).
-   - PvP-skadan ligger mellan 0,9 och 1,1, och nybörjare har skydd.
-   - Mentorbonusen upp till +75 %.
+   - Allt som ger pengar räknas på `raceLevel`: högst rummets lägsta nivå + 10 när minst två människor spelar (avsnitt 0). Utan den regeln tjänade en spelare på nivå 40 ungefär fem gånger mer per runda i stan än en nybörjare.
+   - PvP-skadan ligger mellan 0,9 och 1,1, och nybörjare upp till nivå 15 har skydd.
+   - Crewets klass (veteran, elit) gäller bara mot NPC:er.
+   - Mentorbonusen upp till +75 % (bara XP, inte pengar).
 
-   Valfritt i fas 2: en rumsinställning "Lika villkor" som stänger av nivåspärrarna i en match.
+   Valfritt i fas 2: en rumsinställning "Lika villkor" som stänger av alla nivåspärrar i en match.
 2. **Solorundor är gratis.** Därför finns hinkarna och spärrarna i realtid. Allt måste räknas på `Date.now()`, aldrig på `world.time`.
-3. **Fusk.** XP ligger i klientens egen spelare och i localStorage, precis som pengarna. Värden räknar PvP-skada och PvP-XP, och nivån kan högst ge ±10 % i PvP. Värden kan dessutom logga orimliga hopp, till exempel mer än 3 000 XP mellan två synkar. För ett kompisspel räcker det. `awardXp` kapar dessutom varje enskild utdelning vid `MAX_AWARD` (1 000).
+3. **Fusk.** XP ligger i klientens egen spelare och i localStorage, precis som pengarna. Värden räknar PvP-skada och PvP-XP, och nivån kan högst ge ±10 % i PvP-skadeformeln. Värden kan dessutom logga orimliga hopp, till exempel mer än 3 000 XP mellan två synkar. För ett kompisspel räcker det. `awardXp` kapar dessutom varje enskild utdelning vid `MAX_AWARD` (1 000).
 4. **Nya spärrar på gammalt innehåll.** I dag kan alla köpa pistol och anställa crew direkt. Nya spelare får vänta 10–30 minuter, vilket är meningen. Det finns något nytt på nästan varje nivå upp till 23, och vapen på marken går alltid att låna. Gamla sparfiler behåller allt de äger.
 5. **Spelare som bara kör brädspelet** levlar långsamt (Kontoret ger 240 XP i timmen). Det är medvetet, eftersom nivåerna hör hemma i stan, och racet påverkas inte.
-6. **Skalningen** av opps och snutar mot `dmgMult` behöver speltestas runt nivå 40–60. Taket i `HIT_RULES` ska läggas **före** `pvpMult` (`pvpDamage` gör det).
+6. **Skalningen** av opps och snutar mot `dmgMult` behöver speltestas runt nivå 40–60. Opps-hälsan skalas inte längre, så det är antalet opps och skyttar som håller emot (avsnitt 6.2). Taket i `HIT_RULES` ska läggas **före** `pvpMult` (`pvpDamage` gör det).
 7. **Pågående arbete:** `git status` visar ändringar i `render3d/*` och de nya filerna `interiors-prison.js` och `render3d.js`, och barbråken byggs i `brawl.js`. Lägg krokarna för Kåken (rymnings-XP, och Advokaten som påverkar straffet), för barbråken (XP för knockout och vinst) och 3D-namnskyltarna **efter** de grenarna.
 8. **Nivå-upp mitt i strid:** i stan används bara kön och den kompakta varianten. Den stora BEFORDRAN-rutan visas först hemma.
-9. **Ett beslut ägaren behöver bekräfta:** att verksamheterna i Butik inte spärras, se avsnitt 0.
+9. **Beslut ägaren behöver bekräfta:** att verksamheterna i Butik inte spärras, och att det som ger pengar räknas på rummets lägsta nivå + 10 när flera människor spelar. Se avsnitt 0.
+10. **Nya fas 1-perks efter nivå 40** (backup ×2, halva och gratis doktorn, snuten tappar spåret snabbare, crewet reser sig efter 8 s, 6 uppdrag, billigare mutor, −30 % hos Pang-Pelle, 25 varor, 5 bilar, Don-stjärnan) är bara siffror i befintlig kod, men de behöver kopplas in som allt annat i 9.3. Utan dem gick det 26 timmar mellan Gudfadern och nivå 100 utan en enda upplåsning.
 
 ---
 
@@ -749,13 +798,14 @@ export function grantXp(p, source, opts = {})
 |---|---|
 | Konstanter | `MAX_LEVEL` (100), `XP_MAX` (10 000 000), `LEGEND_STAR_XP` (25 000), `MAX_AWARD` (1 000), `AI_TURN_XP` (120) |
 | Band | `RANKS` (11 frysta band `{ from, to, id, title, emoji, color, index }`), `rankOf(L)`, `rankIndex(L)`, `ranksBetween(from, to)`, `levelBadge(L)` → `"🔨 23 Torped"` |
-| Kurva | `XP_TOTAL` (index 1..100), `xpToNext(L)`, `xpForLevel(L)`, `levelOf(xp)` → heltal, `levelFromXp(xp)` → `{ xp, level, rank, rankIndex, title, emoji, color, xpInto, xpNeeded, xpLeft, progress, maxed, legendStars }` (alias `progress`), `legendStars(xp)`, `clampLevel(n)`, `cleanXp(xp)`, `playerLevel(spelare \| nivå)` |
-| Upplåsningar | `UNLOCKS` (`{ id, level, kind, label, status, fas }`), `getUnlock(id)`, `requiredLevel(id)` (alias `unlockLevel`), `isUnlocked(spelare \| nivå, id)`, `unlocksAt(L)`, `unlocksBetween(from, to)`, `nextUnlocks(L, n = 3)`, `lockLabel(id)`, `lockInfo(spelare \| nivå, id)` → `{ locked, need, rank, label, left, hint }` |
-| Gränser | `missionCap(L, base = 3)`, `goodsCap(L)`, `fenceCap(L)`, `crewMax(L)`, `crewRecover(L)`, `gunDiscount(L)` |
-| Skada | `dmgMult(L)` (alias `damageMultiplier`), `critChance(L)`, `npcDamage(bas, L, rnd)` → `{ dmg, crit }`, `meleeBase(roll, styrka)`, `crewDmgMult(L)`, `knockMult(L)`, `pvpMult(a, t)`, `newbieShield(a, t, aggro)`, `pvpDamage(bas, max, a, t, { aggro })`, `oppsCount(L)`, `oppsArmed(L, hasGun)`, `npcHpMult(L)`, samt `DMG_MULT_MAX`, `CRIT_MULT`, `CRIT_FROM`, `NEWBIE_SHIELD`, `PVP_LEVEL_SPREAD` |
-| Respekt | `respGain(L)` (alias `respectMultiplier`), `scaleRespectDelta(delta, L)`, `failRespect(L, base)`, `startRespect(L)`, `respectFloor(L, eget)`, `respectPayMult(respekt, L)`, `respectMilestones(före, efter)`, `fearMult(L)`, `robFightChance(bas, L, pedTyp)`, `shopRobKickChance(L)`, `muggerInterval(L, r)`, samt `TITLE_RESPECT`, `REP_PER_LEVEL`, `REP_PER_RANK`, `RESP_MILESTONES` |
+| Kurva | `XP_CUBIC` (0,0025), `XP_TOTAL` (index 1..100), `xpToNext(L)`, `xpForLevel(L)`, `levelOf(xp)` → heltal, `levelFromXp(xp)` → `{ xp, level, rank, rankIndex, title, emoji, color, xpInto, xpNeeded, xpLeft, progress, maxed, legendStars }` (alias `progress`), `legendStars(xp)`, `clampLevel(n)`, `cleanXp(xp)`, `playerLevel(spelare \| nivå)` |
+| Upplåsningar | `UNLOCKS` (`{ id, level, kind, label, status, fas, race }`), `ACTIVE_FAS` (1), `isActiveUnlock(u)`, `comingSoon()`, `getUnlock(id)`, `requiredLevel(id)` (alias `unlockLevel`), `isUnlocked(spelare \| nivå, id, { roomMin })`, `unlocksAt(L, { all })`, `unlocksBetween(from, to, { all })`, `nextUnlocks(L, n = 3, { all })`, `lockLabel(id)`, `lockInfo(spelare \| nivå, id, { roomMin })` → `{ locked, need, rank, label, left, hint, roomCapped }` |
+| Racet | `RACE_GAP` (10), `raceLevel(L, roomMin)`, `roomMinLevel(spelare)` → lägsta mänskliga nivå eller `null` med färre än två människor |
+| Gränser och perks | `missionCap(L, base = 3)`, `goodsCap(L)`, `fenceCap(L)`, `crewMax(L)`, `crewRecover(L)`, `gunDiscount(L)`, `backupPerRound(L)`, `bribeCops(L)` → `{ perRound, perStar }`, `doctorMult(L)`, `lostTrackMult(L)` |
+| Skada | `dmgMult(L)` (alias `damageMultiplier`), `critChance(L)`, `npcDamage(bas, L, rnd)` → `{ dmg, crit }`, `meleeBase(roll, styrka)`, `crewDmgMult(L)`, `CREW_TIERS`, `crewTier(L)`, `crewTierMult(tier)`, `crewNpcDamage(bas, L, tier)`, `crewNpcHurt(skada, tier)`, `knockMult(L)`, `pvpMult(a, t)`, `newbieShield(a, t, aggro)`, `pvpDamage(bas, max, a, t, { aggro })`, `oppsCount(L)`, `oppsArmed(L, hasGun)`, `copHpMult(L)`, `levelStats(L)` → `{ level, dmgPct, critPct, respPct, fearPct }`, samt `DMG_MULT_MAX`, `CRIT_MULT`, `CRIT_FROM`, `NEWBIE_SHIELD`, `NEWBIE_MAX_LEVEL` (15), `NEWBIE_GAP` (10), `PVP_LEVEL_SPREAD` |
+| Respekt | `respGain(L)` (alias `respectMultiplier`), `scaleRespectDelta(delta, L)`, `failRespect(L, base)`, `startRespect(L)`, `respectFloor(L, eget)`, `respectPayMult(respekt, L)`, `respectMilestones(före, efter)`, `fearMult(L)`, `isOrdinaryPed(ped)`, `robFightChance(bas, L, ped)`, `shopRobKickChance(L)`, `muggerInterval(L, r)`, samt `TITLE_RESPECT`, `REP_PER_LEVEL`, `REP_PER_RANK`, `RESP_MILESTONES` |
 | XP-tabeller | `XP` (designens tabell), `XP_SOURCES` (alla källor med `xp`, `bucket`, `label`, `mentor`, `milestone`, `once`, `cooldown`), `MILESTONES`, `BUCKETS`, `COOLDOWNS` |
-| Variabel XP | `missionXp(m, { member, kapo })`, `bizXp(pris)`, `upgradeXp(kostnad)`, `carXp(pris)`, `shopRobXp(slot)`, `fenceXp(värde)`, `chaseXp(maxStjärnor)`, `respMilestoneXp(steg)`, `koSource(ped)`, `pvpXp(k, v, skyddad)`, `pvpXpGate(state, mördare, offer, now)`, `mentorMult(min, rummetsMax)`, `aiStartXp(värdensNivå)` |
+| Variabel XP | `missionXp(m, { member, kapo })`, `bizXp(pris)`, `upgradeXp(kostnad)`, `carXp(pris)`, `shopRobXp(slot)`, `fenceXp(värde)`, `chaseXp(maxStjärnor)`, `respMilestoneXp(steg)`, `koSource(ped)`, `pvpXp(k, v, skyddad)`, `pvpXpGate(state, mördare, offer, xp, now)`, `pvpReward(state, { killer, victim, killerLevel, victimLevel, shielded }, now)`, `mentorMult(min, rummetsMax)`, `aiStartXp(värdensNivå)` |
 | Hinkar och karriär | `bucketTake(b, want, now, def)` → `{ got, b }` (ren), `bucketPeek(b, now, def)`, `cooldownOk(career, fält, ms, now)`, `createCareer(now)`, `normalizeCareer(raw, now)` |
 | Utdelning | `awardXp(spelare, källa, opts, now)`, `levelUpRewards(spelare, from, to, { applyRespect })` |
 | Sparfiler och firande | `normalizeLevelFields(spelare)`, `unseenLevels(spelare)`, `markLevelSeen(spelare)`, `retroXp(spelare)` |
@@ -765,16 +815,18 @@ export function grantXp(p, source, opts = {})
 Det här är den enda vägen för XP. Ordningen:
 
 1. AI-spelare (`blocked: 'ai'`) och okända källor utan `opts.amount` (`'unknown'`) får 0.
-2. Beloppet är `opts.amount` eller källans `xp`, ett heltal mellan 0 och `MAX_AWARD`.
-3. **Once:** en nyckel som redan finns i `player.xpOnce` ger 0 (`'once'`).
-4. **Spärr:** källans `cooldown` (eller `opts.cooldown`) kontrolleras med `cooldownOk` och stämplas bara när den godkänns (`'cooldown'`).
+2. Beloppet är `opts.amount` eller källans `xp`, ett heltal mellan 0 och `MAX_AWARD`. Källa, hink och milstolpe slås bara upp på **egna** nycklar, så `'toString'`, `'constructor'` och `'__proto__'` ignoreras (tidigare kunde de nolla `p.xp`).
+3. **Once:** en nyckel som redan finns i `player.xpOnce` ger 0 (`'once'`). Nyckeln kapas vid 40 tecken.
+4. **Spärr:** källans `cooldown` (eller `opts.cooldown`) kontrolleras med `cooldownOk` (`'cooldown'`). Den stämplar när den godkänner, och flyttar en stämpel som ligger i framtiden (klockan har gått bakåt) till nu, så spärren blir högst `ms` från nu.
 5. **Hink:** källans hink (eller `opts.bucket`) tar det som finns (`capped`). Är hinken tom blir det `'bucket'`.
 6. **Mentorbonus:** `opts.mentor` (1..1,75) läggs på det hinken gav, men inte för källor med `mentor: false`.
 7. **Milstolpe:** källans `milestone` (eller `opts.milestone`, där `null` stänger av) ges en gång per karriär, utanför hinken och utan mentorbonus.
-8. `player.xp` (kapad vid `XP_MAX`), `player.level` (cache), `player.xpOnce` och `career.xp` uppdateras.
-9. Vid nivå-upp anropas `levelUpRewards`: +1 ⭐ per nivå, +5 ⭐ och +5 respekt per ny titel hos alla gäng utom rivalen. `opts.levelRewards = false` stänger av det, och `opts.applyRespect = false` returnerar respekten utan att lägga på den.
+8. **Once-nyckeln förbrukas** bara när hela beloppet betalades (`got === amount`), se 4.1.
+9. `player.xp` (kapad vid `XP_MAX`, minskar aldrig), `player.level` (cache), `player.xpOnce` och `career.xp` uppdateras.
+10. Vid nivå-upp anropas `levelUpRewards`: +1 ⭐ per nivå, +5 ⭐ och +5 respekt per ny titel hos alla gäng utom rivalen. Passerar titelrespekten ett respektsteg betalas stegets XP (`resp:<gang>:<steg>`, med mentorbonus), och ger det en ny nivå upprepas steget. `opts.levelRewards = false` stänger av allt det, och `opts.applyRespect = false` returnerar respekten och stegen utan att lägga på dem.
+11. `unlocked` innehåller bara poster i byggd fas.
 
-Resultatet är `{ gained, base, bonus, from, to, levelsGained, unlocked, rankUp, rank, ranks, capped, blocked, milestone, rewards, source }`.
+Resultatet är `{ gained, base, bonus, from, to, levelsGained, unlocked, rankUp, rank, ranks, capped, blocked, milestone, rewards, respMilestones, source }`. `rewards` är `{ rep, respect, ranks, milestones }`.
 
 Utan `opts.career` håller modulen en karriär i minnet per spelarobjekt (en `WeakMap`), vilket räcker i tester. I spelet skickar `career.js` alltid in den sparade karriären.
 
@@ -786,5 +838,14 @@ Utan `opts.career` håller modulen en karriär i minnet per spelarobjekt (en `We
 - **Bankrånets spärr på 10 min** ligger i källan `bank` och stämplas först när XP:n betalas ut. Ett bankrån som slutar med BUSTED eller WASTED förbrukar alltså inte spärren. `world` sätter `pendingHeistXp` varje gång.
 - **Knockout-källorna** följer `ped.type` i koden: `ko.civ` i stället för "civil". `ko.opps` finns som alias (5), men `koSource` ger `ko.gang` för opps, eftersom de är gängpeds.
 - **Extra upplåsningsposter** för bonusar och kosmetik (`perk:crit`, `cap:*`, `perk:discount10/20`, `perk:paytier`, `perk:armoredride`, `perk:fastrecover`, `perk:turfprice`, `perk:nofailloss`, `cosm:*`, `prestige`), så att nivå-upp-rutan kan visa allt i tabellen i avsnitt 5.
-- **Tabellen i avsnitt 2:** nivå 2 → nästa är 60, inte 75 (se kommentaren under tabellen).
+- **Tabellen i avsnitt 2:** nivå 2 → nästa är 60, inte 75.
+- **Kurvan:** den kubiska koefficienten är 0,0025, inte 0,004. Designens tider (Gudfadern cirka 43 h, nivå 100 cirka 70 h) stämde bara för en flitig spelare; nu stämmer de för en vanlig.
+- **Opps-hälsan** skalas inte, och `npcHpMult` heter `copHpMult` och gäller bara snutar, med halva lutningen (L/600). Se 6.2.
+- **Nybörjarskyddet** gäller till och med nivå 15, inte 5. Se 6.3.
+- **Crewets klass** (veteran, elit) bakas inte in i hälsa och skada utan gäller bara mot NPC:er. Se 6.1.
+- **`robFightChance`** tar peden, inte `ped.type`. Se avsnitt 7.
+- **`pvpXpGate`** tar XP-beloppet som fjärde argument och nekar 0 utan att stämpla; `pvpReward` gör hela PvP-belöningen i ett anrop.
+- **`cooldownOk`** flyttar en stämpel från framtiden (se steg 4 ovan). Det är inget hål, eftersom väntan i realtid fortfarande blir `ms`.
+- **Racet:** `raceLevel` och `race: true` är nya (avsnitt 0).
+- **Nya fas 1-poster** efter nivå 40 och `ACTIVE_FAS` (avsnitt 5, regel 5–7).
 - **Importer:** utöver `src/city/constants.js` importerar modulen `SHOPS` från `src/data/gameData.js` för `retroXp`. Båda är ren data utan DOM.
